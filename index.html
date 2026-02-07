@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Hex Strategy Game</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: #0d0d1a;
+      color: #ccc;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100%;
+      overflow: hidden;
+      touch-action: none;
+    }
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      position: relative;
+    }
+
+    /* ── Top bar (overlay) ── */
+    .top-bar {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(17,17,34,0.85);
+      backdrop-filter: blur(4px);
+      z-index: 20;
+    }
+    .top-bar .turn-info {
+      font-size: 16px;
+      font-weight: bold;
+    }
+    .top-bar .aura-info {
+      font-size: 14px;
+      font-weight: bold;
+      margin-left: 12px;
+    }
+    .top-bar .unit-info {
+      font-size: 11px;
+      color: #aaa;
+      text-align: right;
+      max-width: 55%;
+    }
+
+    /* ── Canvas area (full screen) ── */
+    .canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+    }
+
+    /* ── Zoom controls ── */
+    .zoom-controls {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 20;
+    }
+    .zoom-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 2px solid #555;
+      background: rgba(20,20,40,0.85);
+      color: #fff;
+      font-size: 22px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .zoom-btn:active { background: rgba(50,50,80,0.9); }
+
+    /* ── Bottom overlay ── */
+    .bottom-overlay {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px;
+      gap: 6px;
+      pointer-events: none;
+      z-index: 20;
+    }
+    .bottom-overlay > * {
+      pointer-events: auto;
+    }
+
+    /* ── Action buttons (inline) ── */
+    .action-row {
+      display: flex;
+      gap: 8px;
+    }
+    .action-btn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #555;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+      backdrop-filter: blur(4px);
+    }
+    #endTurnBtn {
+      background: rgba(60,60,100,0.85);
+      color: #fff;
+      border-color: #668;
+    }
+    #endTurnBtn:active { background: rgba(80,80,130,0.9); }
+    #restartBtn {
+      background: rgba(100,60,60,0.85);
+      color: #fff;
+      border-color: #866;
+      display: none;
+    }
+    #restartBtn:active { background: rgba(130,80,80,0.9); }
+
+    /* ── Capture button ── */
+    #captureBtn {
+      display: none;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #c80;
+      border-radius: 8px;
+      background: rgba(100,70,20,0.85);
+      color: #fda;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    #captureBtn:active { background: rgba(130,90,30,0.9); }
+
+    /* ── Spawn bar ── */
+    .spawn-bar {
+      display: none;
+      gap: 6px;
+    }
+    .spawn-btn {
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: bold;
+      border: 2px solid #585;
+      border-radius: 8px;
+      background: rgba(30,50,30,0.85);
+      color: #cfc;
+      cursor: pointer;
+      text-align: center;
+      backdrop-filter: blur(4px);
+    }
+    .spawn-btn:active { background: rgba(50,70,50,0.9); }
+    .spawn-btn.disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      border-color: #444;
+    }
+
+    /* ── Combat log (collapsible) ── */
+    .log-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      font-size: 12px;
+      color: #888;
+      cursor: pointer;
+      background: rgba(17,17,34,0.8);
+      border-radius: 6px;
+      backdrop-filter: blur(4px);
+    }
+    .log-toggle:active { background: rgba(30,30,50,0.9); }
+    #combatLog {
+      max-height: 0;
+      overflow-y: auto;
+      transition: max-height 0.3s ease;
+      font-size: 11px;
+      line-height: 1.4;
+      color: #aaa;
+      background: rgba(17,17,34,0.85);
+      border-radius: 6px;
+      width: 100%;
+      max-width: 400px;
+      backdrop-filter: blur(4px);
+    }
+    #combatLog.open {
+      max-height: 120px;
+      padding: 6px 12px;
+    }
+    #combatLog div { border-bottom: 1px solid #1a1a2e; padding: 2px 0; }
+
+    /* ── Desktop tweaks ── */
+    @media (min-width: 768px) {
+      .bottom-overlay {
+        align-items: flex-start;
+        padding: 12px;
+      }
+      #combatLog.open {
+        max-height: 200px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="top-bar">
+      <div style="display:flex;align-items:center">
+        <div class="turn-info" id="turnInfo">Player 1's Turn</div>
+        <div class="aura-info" id="auraInfo">⚡2</div>
+      </div>
+      <div class="unit-info" id="unitInfo"></div>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="gameCanvas"></canvas>
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoomInBtn">+</button>
+        <button class="zoom-btn" id="zoomOutBtn">−</button>
+      </div>
+    </div>
+    <div class="bottom-overlay">
+      <div class="spawn-bar" id="spawnBar">
+        <button class="spawn-btn" id="spawnWarrior">⚔ Warrior (1)</button>
+        <button class="spawn-btn" id="spawnArcher">🏹 Archer (2)</button>
+        <button class="spawn-btn" id="spawnBomber">💣 Bomber (4)</button>
+      </div>
+      <button id="captureBtn">⚔ Capture Temple</button>
+      <div class="action-row">
+        <button class="action-btn" id="endTurnBtn">End Turn</button>
+        <button class="action-btn" id="restartBtn">Restart</button>
+      </div>
+      <div class="log-toggle" id="logToggle">
+        <span>Combat Log</span>
+        <span id="logArrow">▲</span>
+      </div>
+      <div id="combatLog"></div>
+    </div>
+  </div>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>
