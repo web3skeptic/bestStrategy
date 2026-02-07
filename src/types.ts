@@ -4,7 +4,7 @@ export interface HexCoord {
   r: number;
 }
 
-export type UnitType = 'warrior' | 'archer' | 'bomber';
+export type UnitType = 'warrior' | 'archer' | 'bomber' | 'sniper';
 
 export interface UnitStats {
   maxHp: number;
@@ -15,13 +15,18 @@ export interface UnitStats {
   splash: number;   // splash radius (0 = no splash)
   splashFactor: number; // splash damage multiplier (e.g. 0.5 = 50%)
   canBeRevenged: boolean; // whether the target can hit back after being hit
+  vision: number;   // exploration/visibility radius
+  cantShootAfterMove: boolean; // whether the unit cannot attack on a turn it moved
 }
 
 export const UNIT_COSTS: Record<UnitType, number> = {
   warrior: 1,
   archer: 2,
   bomber: 4,
+  sniper: 8,
 };
+
+export const HILL_DEFENSE_BONUS = 2;
 
 export interface Unit {
   id: string;
@@ -55,6 +60,9 @@ export interface GameState {
   players: Player[];
   units: Unit[];
   temples: Temple[];
+  hills: Set<string>;       // hex keys of hill tiles
+  walls: Set<string>;       // hex keys of impassable tiles
+  explored: Set<string>[];  // per-player set of explored hex keys
   currentPlayerIndex: number;
   phase: GamePhase;
   mapRadius: number;

@@ -1,5 +1,5 @@
 import { GameState, UnitType, UNIT_COSTS } from './types';
-import { pixelToHex, hexEqual } from './hex';
+import { pixelToHex, hexEqual, hexKey } from './hex';
 import { Renderer } from './renderer';
 import {
   createGameState,
@@ -16,8 +16,14 @@ import {
   spawnUnit,
   endTurn,
   calculateEncirclement,
+  getEffectiveDefense,
+  getCurrentPlayerVisible,
   canAfford,
 } from './game';
+import { runAITurn } from './ai';
+
+const AI_PLAYER_ID = 1;
+const AI_DELAY_MS = 600; // delay before AI acts (so player sees the transition)
 
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 
@@ -35,6 +41,7 @@ const spawnBar = document.getElementById('spawnBar')!;
 const spawnWarriorBtn = document.getElementById('spawnWarrior')!;
 const spawnArcherBtn = document.getElementById('spawnArcher')!;
 const spawnBomberBtn = document.getElementById('spawnBomber')!;
+const spawnSniperBtn = document.getElementById('spawnSniper')!;
 const captureBtn = document.getElementById('captureBtn')!;
 const logToggle = document.getElementById('logToggle')!;
 const logArrow = document.getElementById('logArrow')!;
@@ -49,7 +56,8 @@ function updateUI(): void {
   const player = getCurrentPlayer(state);
   turnInfoEl.style.color = player.color;
   turnInfoEl.textContent = `${player.name}'s Turn`;
-  auraInfoEl.textContent = `⚡${player.aura}`;
+  const income = state.temples.filter(t => t.ownerId === player.id).length;
+  auraInfoEl.textContent = `⚡${player.aura} (+${income}/turn)`;
   auraInfoEl.style.color = player.color;
 
   if (state.phase === 'gameOver') {
@@ -66,7 +74,9 @@ function updateUI(): void {
       const typeName = unit.type.charAt(0).toUpperCase() + unit.type.slice(1);
       const enc = calculateEncirclement(state, unit);
       const encStr = enc.attackMultiplier > 1 ? ` | Enc x${enc.attackMultiplier.toFixed(1)}` : '';
-      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${unit.stats.attack} DEF:${unit.stats.defense} RNG:${unit.stats.range}${encStr}`;
+      const effDef = getEffectiveDefense(state, unit);
+      const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+2)` : `${effDef}`;
+      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${unit.stats.attack} DEF:${defStr} RNG:${unit.stats.range}${encStr}`;
 
       // Show capture button if unit can capture a temple
       const capturable = canCaptureTemple(state, unit);
@@ -98,6 +108,7 @@ function updateUI(): void {
       updateSpawnBtn(spawnWarriorBtn, 'warrior');
       updateSpawnBtn(spawnArcherBtn, 'archer');
       updateSpawnBtn(spawnBomberBtn, 'bomber');
+      updateSpawnBtn(spawnSniperBtn, 'sniper');
     } else {
       spawnBar.style.display = 'none';
     }
@@ -132,6 +143,8 @@ function canvasEventToHex(clientX: number, clientY: number) {
 
 function handleHexClick(clientX: number, clientY: number): void {
   if (state.phase === 'gameOver') return;
+  if (aiRunning) return;
+  if (getCurrentPlayer(state).id === AI_PLAYER_ID) return;
   const hex = canvasEventToHex(clientX, clientY);
   const currentPlayer = getCurrentPlayer(state);
 
@@ -209,6 +222,7 @@ function handleSpawnBtn(type: UnitType): void {
 spawnWarriorBtn.addEventListener('click', () => handleSpawnBtn('warrior'));
 spawnArcherBtn.addEventListener('click', () => handleSpawnBtn('archer'));
 spawnBomberBtn.addEventListener('click', () => handleSpawnBtn('bomber'));
+spawnSniperBtn.addEventListener('click', () => handleSpawnBtn('sniper'));
 
 // ── Capture button ──
 captureBtn.addEventListener('click', () => {
@@ -393,11 +407,45 @@ logToggle.addEventListener('click', () => {
 });
 
 // ── Helpers ──
+let aiRunning = false;
+
 function doEndTurn(): void {
+  if (aiRunning) return;
   const prevPlayer = getCurrentPlayer(state).name;
   endTurn(state);
   const newPlayer = getCurrentPlayer(state);
   logCombat(`${prevPlayer} ended turn → ${newPlayer.name} (Aura: ${newPlayer.aura})`);
+  render();
+
+  // If it's now AI's turn, run AI after a short delay
+  if (newPlayer.id === AI_PLAYER_ID && state.phase !== 'gameOver') {
+    aiRunning = true;
+    setTimeout(() => {
+      runAI();
+      aiRunning = false;
+    }, AI_DELAY_MS);
+  }
+}
+
+function runAI(): void {
+  if (state.phase === 'gameOver') return;
+
+  // Get player 0's visible hexes BEFORE AI acts (to know what player can "see")
+  const playerVisible = getCurrentPlayerVisible(state);
+
+  const actions = runAITurn(state);
+  for (const action of actions) {
+    // Only log actions the human player can see
+    if (playerVisible.has(hexKey(action.pos))) {
+      logCombat(action.description);
+    }
+  }
+
+  // AI ends its turn
+  const aiName = getCurrentPlayer(state).name;
+  endTurn(state);
+  const nextPlayer = getCurrentPlayer(state);
+  logCombat(`${aiName} ended turn → ${nextPlayer.name} (Aura: ${nextPlayer.aura})`);
   render();
 }
 

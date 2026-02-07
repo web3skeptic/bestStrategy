@@ -47,32 +47,45 @@ export function generateHexMap(radius: number): HexCoord[] {
   return hexes;
 }
 
-// Get all reachable hexes within `speed` steps (BFS), excluding occupied hexes
+// Get all reachable hexes within `speed` steps (BFS), excluding occupied hexes.
+// Hills restrict movement: stepping onto or off a hill costs all remaining movement
+// (effectively limits that step to 1 tile range).
 export function getReachableHexes(
   start: HexCoord,
   speed: number,
   mapRadius: number,
-  occupied: HexCoord[]
+  occupied: HexCoord[],
+  hills?: Set<string>
 ): HexCoord[] {
   const result: HexCoord[] = [];
-  const visited = new Set<string>();
-  const queue: { hex: HexCoord; dist: number }[] = [{ hex: start, dist: 0 }];
-  visited.add(hexKey(start));
+  const visited = new Map<string, number>(); // key → best cost to reach
+  const queue: { hex: HexCoord; cost: number }[] = [{ hex: start, cost: 0 }];
+  visited.set(hexKey(start), 0);
 
   while (queue.length > 0) {
     const current = queue.shift()!;
-    if (current.dist > 0) {
+    if (current.cost > 0) {
       result.push(current.hex);
     }
-    if (current.dist >= speed) continue;
+    if (current.cost >= speed) continue;
+
+    const currentIsHill = hills ? hills.has(hexKey(current.hex)) : false;
 
     for (const n of hexNeighbors(current.hex)) {
       const key = hexKey(n);
-      if (visited.has(key)) continue;
       if (hexDistance({ q: 0, r: 0 }, n) > mapRadius) continue;
       if (occupied.some(o => hexEqual(o, n))) continue;
-      visited.add(key);
-      queue.push({ hex: n, dist: current.dist + 1 });
+
+      const neighborIsHill = hills ? hills.has(key) : false;
+      // Moving onto or off a hill costs full speed (only 1 tile of hill movement per turn)
+      const stepCost = (currentIsHill || neighborIsHill) ? speed : 1;
+      const newCost = current.cost + stepCost;
+
+      if (newCost > speed) continue;
+      const prev = visited.get(key);
+      if (prev !== undefined && prev <= newCost) continue;
+      visited.set(key, newCost);
+      queue.push({ hex: n, cost: newCost });
     }
   }
   return result;

@@ -1,6 +1,6 @@
-import { GameState, HexCoord, Unit, Temple, UNIT_COSTS } from './types';
+import { GameState, HexCoord, Unit, Temple, UNIT_COSTS, HILL_DEFENSE_BONUS } from './types';
 import { generateHexMap, hexToPixel, hexEqual, hexKey } from './hex';
-import { getCurrentPlayer, calculateEncirclement } from './game';
+import { getCurrentPlayer, calculateEncirclement, getCurrentPlayerVisible } from './game';
 
 const BASE_HEX_SIZE = 48;
 const MIN_ZOOM = 0.4;
@@ -12,7 +12,7 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private mapHexes: HexCoord[] = [];
   private _zoom = 1.0;
-  private _panX = 0; // pan offset in canvas pixels
+  private _panX = 0;
   private _panY = 0;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -34,7 +34,6 @@ export class Renderer {
 
   zoomOut(): void {
     this._zoom = Math.max(MIN_ZOOM, this._zoom - ZOOM_STEP);
-    // Reset pan if zoomed back to 1x or below
     if (this._zoom <= 1.0) {
       this._panX = 0;
       this._panY = 0;
@@ -53,7 +52,6 @@ export class Renderer {
   get centerX(): number { return this.canvas.width / 2 + this._panX; }
   get centerY(): number { return this.canvas.height / 2 + this._panY; }
 
-  // Resize canvas to match its CSS layout size (retina-aware)
   resizeToContainer(): void {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -79,29 +77,73 @@ export class Renderer {
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
     const attackSet = new Set(state.attackHexes.map(h => hexKey(h)));
 
+    const playerId = getCurrentPlayer(state).id;
+    const explored = state.explored[playerId]!;
+    const visible = getCurrentPlayerVisible(state);
+
     // Draw hex tiles
     for (const hex of this.mapHexes) {
       const { x, y } = hexToPixel(hex, size, cx, cy);
       const key = hexKey(hex);
+      const isExplored = explored.has(key);
+      const isVisible = visible.has(key);
+      const isHill = state.hills.has(key);
+      const isWall = state.walls.has(key);
 
-      let fillColor = '#2a2a4a';
-      if (attackSet.has(key)) {
-        fillColor = '#553333';
-      } else if (moveSet.has(key)) {
-        fillColor = '#335533';
+      if (!isExplored) {
+        this.drawHex(x, y, size, '#111122', '#222233');
+        continue;
       }
 
-      this.drawHex(x, y, size, fillColor, '#444466');
+      // Base color
+      let fillColor: string;
+      if (isWall) {
+        fillColor = '#1a1a1a';
+      } else if (isHill) {
+        fillColor = '#3a3a2a';
+      } else {
+        fillColor = '#2a2a4a';
+      }
+
+      if (!isWall) {
+        if (attackSet.has(key)) {
+          fillColor = '#553333';
+        } else if (moveSet.has(key)) {
+          fillColor = '#335533';
+        }
+      }
+
+      this.drawHex(x, y, size, fillColor, isWall ? '#333333' : '#444466');
+
+      // Wall marker — rocky cross pattern
+      if (isWall) {
+        this.drawWallMarker(x, y, size);
+      }
+
+      // Hill indicator
+      if (isHill) {
+        this.drawHillMarker(x, y, size);
+      }
+
+      // Fog overlay for explored but not currently visible
+      if (!isVisible) {
+        this.drawHex(x, y, size, 'rgba(0,0,0,0.45)', 'transparent');
+      }
     }
 
-    // Draw temples
+    // Draw temples (only if explored)
     for (const temple of state.temples) {
+      const key = hexKey(temple.pos);
+      if (!explored.has(key)) continue;
       this.drawTemple(temple, state, size, cx, cy);
     }
 
     // Draw units
     const aliveUnits = state.units.filter(u => u.hp > 0);
     for (const unit of aliveUnits) {
+      const key = hexKey(unit.pos);
+      // Show own units always, enemy units only if visible
+      if (unit.playerId !== playerId && !visible.has(key)) continue;
       this.drawUnit(unit, state, size, cx, cy);
     }
 
@@ -135,7 +177,38 @@ export class Renderer {
     ctx.closePath();
     ctx.fillStyle = fill;
     ctx.fill();
-    ctx.strokeStyle = stroke;
+    if (stroke !== 'transparent') {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  private drawWallMarker(x: number, y: number, size: number): void {
+    const ctx = this.ctx;
+    const s = size * 0.3;
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    // X pattern
+    ctx.beginPath();
+    ctx.moveTo(x - s, y - s);
+    ctx.lineTo(x + s, y + s);
+    ctx.moveTo(x + s, y - s);
+    ctx.lineTo(x - s, y + s);
+    ctx.stroke();
+  }
+
+  private drawHillMarker(x: number, y: number, size: number): void {
+    const ctx = this.ctx;
+    const s = size * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(x, y - s);
+    ctx.lineTo(x - s * 0.8, y + s * 0.4);
+    ctx.lineTo(x + s * 0.8, y + s * 0.4);
+    ctx.closePath();
+    ctx.fillStyle = '#6a6a3a';
+    ctx.fill();
+    ctx.strokeStyle = '#8a8a5a';
     ctx.lineWidth = 1;
     ctx.stroke();
   }
@@ -145,7 +218,7 @@ export class Renderer {
     const { x, y } = hexToPixel(unit.pos, size, cx, cy);
     const player = state.players.find(p => p.id === unit.playerId)!;
     const isSelected = state.selectedUnitId === unit.id;
-    const s = size; // scale factor
+    const s = size;
 
     // Selection ring
     if (isSelected) {
@@ -165,11 +238,27 @@ export class Renderer {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Unit type icon (scale with zoom)
+    // Unit type icon
     const iconScale = s / BASE_HEX_SIZE;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
-    if (unit.type === 'bomber') {
+    if (unit.type === 'sniper') {
+      // Crosshair icon
+      ctx.beginPath();
+      ctx.arc(x, y, 7 * iconScale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x - 10 * iconScale, y);
+      ctx.lineTo(x + 10 * iconScale, y);
+      ctx.moveTo(x, y - 10 * iconScale);
+      ctx.lineTo(x, y + 10 * iconScale);
+      ctx.stroke();
+      // Center dot
+      ctx.fillStyle = '#ff4444';
+      ctx.beginPath();
+      ctx.arc(x, y, 2 * iconScale, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (unit.type === 'bomber') {
       ctx.beginPath();
       ctx.arc(x, y + 1 * iconScale, 6 * iconScale, 0, Math.PI * 2);
       ctx.stroke();
@@ -213,6 +302,14 @@ export class Renderer {
     ctx.fillStyle = hpRatio > 0.5 ? '#44cc44' : hpRatio > 0.25 ? '#cccc44' : '#cc4444';
     ctx.fillRect(barX, barY, barWidth * hpRatio, barHeight);
 
+    // Hill defense indicator
+    if (state.hills.has(hexKey(unit.pos))) {
+      ctx.font = `bold ${Math.max(8, 10 * iconScale)}px sans-serif`;
+      ctx.fillStyle = '#aaffaa';
+      ctx.textAlign = 'center';
+      ctx.fillText(`+${HILL_DEFENSE_BONUS}`, x, barY + barHeight + Math.max(10, 12 * iconScale));
+    }
+
     // Dimmed overlay if unit already acted
     if (unit.playerId === getCurrentPlayer(state).id && unit.hasAttacked) {
       ctx.beginPath();
@@ -229,11 +326,9 @@ export class Renderer {
     const iconScale = s / BASE_HEX_SIZE;
     const isSelected = state.selectedTempleId === temple.id;
 
-    // Owner color or neutral grey
     const owner = temple.ownerId !== null ? state.players.find(p => p.id === temple.ownerId) : null;
     const color = owner ? owner.color : '#888888';
 
-    // Selection ring
     if (isSelected) {
       ctx.beginPath();
       ctx.arc(x, y, s * 0.65, 0, Math.PI * 2);
@@ -242,7 +337,6 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // Temple base (triangle/pyramid shape)
     ctx.beginPath();
     ctx.moveTo(x, y - s * 0.45);
     ctx.lineTo(x - s * 0.35, y + s * 0.25);
@@ -254,7 +348,6 @@ export class Renderer {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Inner eye/symbol
     ctx.beginPath();
     ctx.arc(x, y - 2 * iconScale, 4 * iconScale, 0, Math.PI * 2);
     ctx.fillStyle = '#fff';
