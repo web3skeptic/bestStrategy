@@ -132,7 +132,6 @@
       display: none;
     }
     #restartBtn:active { background: rgba(130,80,80,0.9); }
-
     /* ── Capture button ── */
     #captureBtn {
       display: none;
@@ -148,10 +147,56 @@
     }
     #captureBtn:active { background: rgba(130,90,30,0.9); }
 
+    /* ── Tile actions (terraform) ── */
+    .tile-actions {
+      display: none;
+      gap: 6px;
+    }
+    .tile-btn {
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: bold;
+      border: 2px solid #c80;
+      border-radius: 8px;
+      background: rgba(80,60,20,0.85);
+      color: #fda;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    .tile-btn:active { background: rgba(110,80,30,0.9); }
+    .tile-btn.disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      border-color: #444;
+    }
+
+    /* ── Upgrade temple button ── */
+    #upgradeTempleBtn {
+      display: none;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #88f;
+      border-radius: 8px;
+      background: rgba(40,40,100,0.85);
+      color: #ccf;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    #upgradeTempleBtn:active { background: rgba(60,60,130,0.9); }
+    #upgradeTempleBtn.disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      border-color: #444;
+    }
+
     /* ── Spawn bar ── */
     .spawn-bar {
       display: none;
       gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 420px;
     }
     .spawn-btn {
       padding: 10px 14px;
@@ -205,6 +250,76 @@
     }
     #combatLog div { border-bottom: 1px solid #1a1a2e; padding: 2px 0; }
 
+    /* ── Menu overlay ── */
+    .menu-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(10, 10, 26, 0.95);
+      backdrop-filter: blur(8px);
+      gap: 20px;
+    }
+    .menu-overlay.hidden { display: none; }
+    .menu-title {
+      font-size: 32px;
+      font-weight: bold;
+      color: #dde;
+      letter-spacing: 2px;
+      text-shadow: 0 0 20px rgba(100,100,255,0.3);
+    }
+    .menu-subtitle {
+      font-size: 14px;
+      color: #667;
+      margin-top: -12px;
+    }
+    .menu-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 220px;
+    }
+    .menu-btn {
+      padding: 16px 32px;
+      font-size: 18px;
+      font-weight: bold;
+      border: 2px solid #555;
+      border-radius: 12px;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .menu-btn:active { transform: scale(0.97); }
+    #menuVsAI {
+      background: rgba(60,60,120,0.8);
+      color: #ccf;
+      border-color: #669;
+    }
+    #menuVsAI:hover { background: rgba(80,80,150,0.9); border-color: #88b; }
+    #menu2P {
+      background: rgba(60,100,60,0.8);
+      color: #cfc;
+      border-color: #585;
+    }
+    #menu2P:hover { background: rgba(80,120,80,0.9); border-color: #7a7; }
+
+    /* ── Menu button in game (top bar) ── */
+    #menuBtn {
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid #555;
+      border-radius: 6px;
+      background: rgba(40,40,60,0.85);
+      color: #aab;
+      cursor: pointer;
+      margin-left: 12px;
+    }
+    #menuBtn:active { background: rgba(60,60,80,0.9); }
+
     /* ── Desktop tweaks ── */
     @media (min-width: 768px) {
       .bottom-overlay {
@@ -219,10 +334,22 @@
 </head>
 <body>
   <div class="app">
+    <!-- Menu overlay -->
+    <div class="menu-overlay" id="menuOverlay">
+      <div class="menu-title">Hex Strategy</div>
+      <div class="menu-subtitle">Choose game mode</div>
+      <div class="menu-buttons">
+        <button class="menu-btn" id="menuVsAI">⚔ vs AI</button>
+        <button class="menu-btn" id="menu2P">👥 2 Players</button>
+      </div>
+    </div>
+
     <div class="top-bar">
       <div style="display:flex;align-items:center">
         <div class="turn-info" id="turnInfo">Player 1's Turn</div>
         <div class="aura-info" id="auraInfo">⚡2</div>
+        <div class="aura-info" id="popInfo" style="margin-left:8px;font-size:12px">Pop:0/0</div>
+        <button id="menuBtn">Menu</button>
       </div>
       <div class="unit-info" id="unitInfo"></div>
     </div>
@@ -237,9 +364,15 @@
       <div class="spawn-bar" id="spawnBar">
         <button class="spawn-btn" id="spawnWarrior">⚔ Warrior (1)</button>
         <button class="spawn-btn" id="spawnArcher">🏹 Archer (2)</button>
-        <button class="spawn-btn" id="spawnBomber">💣 Bomber (4)</button>
-        <button class="spawn-btn" id="spawnSniper">🎯 Sniper (8)</button>
+        <button class="spawn-btn" id="spawnCatapult">💣 Catapult (4)</button>
+        <button class="spawn-btn" id="spawnHorserider">🐎 Horserider (3)</button>
+        <button class="spawn-btn" id="spawnHeavyknight">🛡 H.Knight (7)</button>
+        <button class="spawn-btn" id="spawnSpearsman">🗡 Spearsman (3)</button>
+        <button class="spawn-btn" id="spawnHealer">✚ Healer (3)</button>
+        <button class="spawn-btn" id="spawnDamageBooster">🔥 Dmg+ (3)</button>
+        <button class="spawn-btn" id="spawnRangeBooster">↔ Rng+ (3)</button>
       </div>
+      <button id="upgradeTempleBtn" style="display:none">⬆ Upgrade Temple</button>
       <button id="captureBtn">⚔ Capture Temple</button>
       <div class="action-row">
         <button class="action-btn" id="endTurnBtn">End Turn</button>

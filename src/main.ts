@@ -1,4 +1,4 @@
-import { GameState, UnitType, UNIT_COSTS } from './types';
+import { GameState, UnitType, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE } from './types';
 import { pixelToHex, hexEqual, hexKey } from './hex';
 import { Renderer } from './renderer';
 import {
@@ -17,13 +17,25 @@ import {
   endTurn,
   calculateEncirclement,
   getEffectiveDefense,
+  getEffectiveAttack,
+  getEffectiveRange,
   getCurrentPlayerVisible,
   canAfford,
+  upgradeTemple,
+  canUpgradeTemple,
+  getPopulationCap,
+  getPopulationCount,
+  HEALER_HEAL_AMOUNT,
+  DAMAGE_BOOST_AMOUNT,
+  RANGE_BOOST_AMOUNT,
 } from './game';
 import { runAITurn } from './ai';
 
 const AI_PLAYER_ID = 1;
-const AI_DELAY_MS = 600; // delay before AI acts (so player sees the transition)
+const AI_DELAY_MS = 600;
+
+let aiEnabled = true;
+let gameStarted = false;
 
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 
@@ -32,20 +44,62 @@ const renderer = new Renderer(canvas);
 renderer.init(state.mapRadius);
 
 // ── UI elements ──
+const menuOverlay = document.getElementById('menuOverlay')!;
+const menuVsAI = document.getElementById('menuVsAI')!;
+const menu2P = document.getElementById('menu2P')!;
+const menuBtn = document.getElementById('menuBtn')!;
 const turnInfoEl = document.getElementById('turnInfo')!;
 const unitInfoEl = document.getElementById('unitInfo')!;
 const auraInfoEl = document.getElementById('auraInfo')!;
+const popInfoEl = document.getElementById('popInfo')!;
 const endTurnBtn = document.getElementById('endTurnBtn')!;
 const restartBtn = document.getElementById('restartBtn') as HTMLButtonElement;
 const spawnBar = document.getElementById('spawnBar')!;
 const spawnWarriorBtn = document.getElementById('spawnWarrior')!;
 const spawnArcherBtn = document.getElementById('spawnArcher')!;
-const spawnBomberBtn = document.getElementById('spawnBomber')!;
-const spawnSniperBtn = document.getElementById('spawnSniper')!;
+const spawnCatapultBtn = document.getElementById('spawnCatapult')!;
+const spawnHorseriderBtn = document.getElementById('spawnHorserider')!;
+const spawnHeavyknightBtn = document.getElementById('spawnHeavyknight')!;
+const spawnSpearsmanBtn = document.getElementById('spawnSpearsman')!;
+const spawnHealerBtn = document.getElementById('spawnHealer')!;
+const spawnDamageBoosterBtn = document.getElementById('spawnDamageBooster')!;
+const spawnRangeBoosterBtn = document.getElementById('spawnRangeBooster')!;
 const captureBtn = document.getElementById('captureBtn')!;
+const upgradeTempleBtn = document.getElementById('upgradeTempleBtn')!;
 const logToggle = document.getElementById('logToggle')!;
 const logArrow = document.getElementById('logArrow')!;
 const combatLog = document.getElementById('combatLog')!;
+
+// ── Menu ──
+
+function showMenu(): void {
+  menuOverlay.classList.remove('hidden');
+}
+
+function hideMenu(): void {
+  menuOverlay.classList.add('hidden');
+}
+
+function startGame(vsAI: boolean): void {
+  aiEnabled = vsAI;
+  const players = aiEnabled
+    ? [{ name: 'Player 1', color: '#ff4444' }, { name: 'AI', color: '#4488ff' }]
+    : [{ name: 'Player 1', color: '#ff4444' }, { name: 'Player 2', color: '#4488ff' }];
+  state = createGameState(players);
+  renderer.init(state.mapRadius);
+  gameStarted = true;
+  hideMenu();
+  combatLog.innerHTML = '';
+  logCombat(`--- New Game (${aiEnabled ? 'vs AI' : '2 Players'}) ---`);
+  logCombat('Player 1 goes first.');
+  render();
+}
+
+menuVsAI.addEventListener('click', () => startGame(true));
+menu2P.addEventListener('click', () => startGame(false));
+menuBtn.addEventListener('click', () => showMenu());
+
+// ── Render & UI ──
 
 function render(): void {
   renderer.render(state);
@@ -56,9 +110,16 @@ function updateUI(): void {
   const player = getCurrentPlayer(state);
   turnInfoEl.style.color = player.color;
   turnInfoEl.textContent = `${player.name}'s Turn`;
-  const income = state.temples.filter(t => t.ownerId === player.id).length;
-  auraInfoEl.textContent = `⚡${player.aura} (+${income}/turn)`;
+
+  const ownedTemples = state.temples.filter(t => t.ownerId === player.id);
+  const income = ownedTemples.reduce((sum, t) => sum + t.level * TEMPLE_AURA_PER_LEVEL, 0);
+  auraInfoEl.textContent = `⚡${player.aura} (+${income}/t)`;
   auraInfoEl.style.color = player.color;
+
+  const popCap = getPopulationCap(state, player.id);
+  const popCount = getPopulationCount(state, player.id);
+  popInfoEl.textContent = `Pop:${popCount}/${popCap}`;
+  popInfoEl.style.color = popCount >= popCap ? '#ff8888' : '#aaa';
 
   if (state.phase === 'gameOver') {
     turnInfoEl.textContent = state.winner ? `${state.winner.name} Wins!` : 'Draw!';
@@ -71,14 +132,26 @@ function updateUI(): void {
   if (state.selectionMode === 'unit' && state.selectedUnitId) {
     const unit = state.units.find(u => u.id === state.selectedUnitId);
     if (unit) {
-      const typeName = unit.type.charAt(0).toUpperCase() + unit.type.slice(1);
+      const TYPE_NAMES: Partial<Record<UnitType, string>> = {
+        damageBooster: 'Dmg Booster',
+        rangeBooster: 'Rng Booster',
+      };
+      const typeName = TYPE_NAMES[unit.type] ?? (unit.type.charAt(0).toUpperCase() + unit.type.slice(1));
       const enc = calculateEncirclement(state, unit);
       const encStr = enc.attackMultiplier > 1 ? ` | Enc x${enc.attackMultiplier.toFixed(1)}` : '';
       const effDef = getEffectiveDefense(state, unit);
+      const effAtk = getEffectiveAttack(state, unit);
+      const effRng = getEffectiveRange(state, unit);
       const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+2)` : `${effDef}`;
-      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${unit.stats.attack} DEF:${defStr} RNG:${unit.stats.range}${encStr}`;
+      const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
+      const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
+      const bonusNote = unit.stats.bonusAgainst ? ' [spear bonus]' : '';
+      let supportNote = '';
+      if (unit.type === 'healer') supportNote = ` | ✚${HEALER_HEAL_AMOUNT}HP/t (r${SUPPORT_RANGE})`;
+      if (unit.type === 'damageBooster') supportNote = ` | +${DAMAGE_BOOST_AMOUNT}ATK (r${SUPPORT_RANGE})`;
+      if (unit.type === 'rangeBooster') supportNote = ` | +${RANGE_BOOST_AMOUNT}RNG (r${SUPPORT_RANGE})`;
+      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${bonusNote}${supportNote}`;
 
-      // Show capture button if unit can capture a temple
       const capturable = canCaptureTemple(state, unit);
       if (capturable) {
         captureBtn.style.display = 'block';
@@ -91,29 +164,56 @@ function updateUI(): void {
     const temple = state.temples.find(t => t.id === state.selectedTempleId);
     if (temple) {
       const unitOnTemple = getUnitAt(state, temple.pos);
-      unitInfoEl.textContent = unitOnTemple ? 'Temple (occupied)' : 'Temple — Pick unit to spawn';
+      const income = temple.level * TEMPLE_AURA_PER_LEVEL;
+      if (unitOnTemple) {
+        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied) — ⚡${income}/turn`;
+      } else {
+        unitInfoEl.textContent = `Temple Lv.${temple.level} — ⚡${income}/turn — Spawn unit`;
+      }
+
+      // Upgrade button
+      const upgradeCost = templeUpgradeCost(temple.level);
+      if (upgradeCost !== null) {
+        upgradeTempleBtn.style.display = 'block';
+        upgradeTempleBtn.textContent = `⬆ Upgrade Lv.${temple.level}→${temple.level + 1} (${upgradeCost}⚡)`;
+        upgradeTempleBtn.classList.toggle('disabled', player.aura < upgradeCost);
+      } else {
+        upgradeTempleBtn.style.display = 'none';
+      }
     }
     captureBtn.style.display = 'none';
   } else {
     unitInfoEl.textContent = '';
     captureBtn.style.display = 'none';
+    upgradeTempleBtn.style.display = 'none';
   }
 
-  // Spawn bar visibility — only when temple selected AND no unit on it
+  // Spawn bar
   if (state.selectionMode === 'temple' && state.selectedTempleId) {
     const temple = state.temples.find(t => t.id === state.selectedTempleId);
     const unitOnTemple = temple ? getUnitAt(state, temple.pos) : true;
-    if (!unitOnTemple) {
+    const alreadySpawned = temple ? state.spawnedTempleIds.has(temple.id) : false;
+    if (!unitOnTemple && !alreadySpawned) {
       spawnBar.style.display = 'flex';
       updateSpawnBtn(spawnWarriorBtn, 'warrior');
       updateSpawnBtn(spawnArcherBtn, 'archer');
-      updateSpawnBtn(spawnBomberBtn, 'bomber');
-      updateSpawnBtn(spawnSniperBtn, 'sniper');
+      updateSpawnBtn(spawnCatapultBtn, 'catapult');
+      updateSpawnBtn(spawnHorseriderBtn, 'horserider');
+      updateSpawnBtn(spawnHeavyknightBtn, 'heavyknight');
+      updateSpawnBtn(spawnSpearsmanBtn, 'spearsman');
+      updateSpawnBtn(spawnHealerBtn, 'healer');
+      updateSpawnBtn(spawnDamageBoosterBtn, 'damageBooster');
+      updateSpawnBtn(spawnRangeBoosterBtn, 'rangeBooster');
     } else {
       spawnBar.style.display = 'none';
     }
   } else {
     spawnBar.style.display = 'none';
+  }
+
+  // Hide upgrade btn when no temple selected
+  if (state.selectionMode !== 'temple') {
+    upgradeTempleBtn.style.display = 'none';
   }
 }
 
@@ -131,7 +231,7 @@ function logCombat(msg: string): void {
   }
 }
 
-// ── Canvas click/tap → game coordinates ──
+// ── Canvas click/tap -> game coordinates ──
 function canvasEventToHex(clientX: number, clientY: number) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
@@ -142,9 +242,10 @@ function canvasEventToHex(clientX: number, clientY: number) {
 }
 
 function handleHexClick(clientX: number, clientY: number): void {
+  if (!gameStarted) return;
   if (state.phase === 'gameOver') return;
   if (aiRunning) return;
-  if (getCurrentPlayer(state).id === AI_PLAYER_ID) return;
+  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
   const hex = canvasEventToHex(clientX, clientY);
   const currentPlayer = getCurrentPlayer(state);
 
@@ -154,9 +255,10 @@ function handleHexClick(clientX: number, clientY: number): void {
     if (result) {
       const tEnc = result.targetEncirclement;
       const aEnc = result.attackerEncirclement;
-      const tEncStr = tEnc.attackMultiplier > 1 ? ` [target x${tEnc.attackMultiplier.toFixed(2)}]` : '';
-      const aEncStr = aEnc.attackMultiplier > 1 ? ` [attacker x${aEnc.attackMultiplier.toFixed(2)}]` : '';
-      logCombat(`Attack!${tEncStr} Dealt ${result.damageDealt} dmg${result.targetKilled ? ' (KILLED!)' : ''}, received ${result.damageReceived} revenge${aEncStr}${result.attackerKilled ? ' (KILLED!)' : ''}`);
+      const tEncStr = tEnc.attackMultiplier > 1 ? ` [enc x${tEnc.attackMultiplier.toFixed(2)}]` : '';
+      const aEncStr = aEnc.attackMultiplier > 1 ? ` [enc x${aEnc.attackMultiplier.toFixed(2)}]` : '';
+      const bonusStr = result.typeBonus > 1 ? ` [spear x${result.typeBonus}]` : '';
+      logCombat(`Attack!${bonusStr}${tEncStr} Dealt ${result.damageDealt} dmg${result.targetKilled ? ' (KILLED!)' : ''}, received ${result.damageReceived} revenge${aEncStr}${result.attackerKilled ? ' (KILLED!)' : ''}`);
       for (const splash of result.splashHits) {
         logCombat(`  Splash: ${splash.damage} dmg${splash.killed ? ' (KILLED!)' : ''}`);
       }
@@ -167,7 +269,8 @@ function handleHexClick(clientX: number, clientY: number): void {
 
   // ── Unit mode: try move ──
   if (state.selectionMode === 'unit' && state.moveHexes.some(h => hexEqual(h, hex))) {
-    if (moveUnit(state, hex)) {
+    const moveResult = moveUnit(state, hex);
+    if (moveResult.moved) {
       const temple = getTempleAt(state, hex);
       if (temple && temple.ownerId !== currentPlayer.id) {
         logCombat(`Moved onto temple at (${hex.q},${hex.r}) — capture next turn!`);
@@ -187,7 +290,6 @@ function handleHexClick(clientX: number, clientY: number): void {
     return;
   }
 
-  // Click on owned temple (only if no unit on it, otherwise we selected the unit above)
   const temple = getTempleAt(state, hex);
   if (temple && temple.ownerId === currentPlayer.id && !getUnitAt(state, hex)) {
     selectTemple(state, temple.id);
@@ -207,7 +309,6 @@ function handleSpawnBtn(type: UnitType): void {
 
   if (spawnUnit(state, state.selectedTempleId, type)) {
     logCombat(`Spawned ${type} for ${UNIT_COSTS[type]} aura`);
-    // After spawn, select the new unit so player can move/attack immediately
     const temple = state.temples.find(t => t.id === state.selectedTempleId);
     if (temple) {
       const newUnit = getUnitAt(state, temple.pos);
@@ -221,8 +322,25 @@ function handleSpawnBtn(type: UnitType): void {
 
 spawnWarriorBtn.addEventListener('click', () => handleSpawnBtn('warrior'));
 spawnArcherBtn.addEventListener('click', () => handleSpawnBtn('archer'));
-spawnBomberBtn.addEventListener('click', () => handleSpawnBtn('bomber'));
-spawnSniperBtn.addEventListener('click', () => handleSpawnBtn('sniper'));
+spawnCatapultBtn.addEventListener('click', () => handleSpawnBtn('catapult'));
+spawnHorseriderBtn.addEventListener('click', () => handleSpawnBtn('horserider'));
+spawnHeavyknightBtn.addEventListener('click', () => handleSpawnBtn('heavyknight'));
+spawnSpearsmanBtn.addEventListener('click', () => handleSpawnBtn('spearsman'));
+spawnHealerBtn.addEventListener('click', () => handleSpawnBtn('healer'));
+spawnDamageBoosterBtn.addEventListener('click', () => handleSpawnBtn('damageBooster'));
+spawnRangeBoosterBtn.addEventListener('click', () => handleSpawnBtn('rangeBooster'));
+
+// ── Upgrade temple button ──
+upgradeTempleBtn.addEventListener('click', () => {
+  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
+  const temple = state.temples.find(t => t.id === state.selectedTempleId);
+  if (!temple) return;
+  const prevLevel = temple.level;
+  if (upgradeTemple(state, state.selectedTempleId)) {
+    logCombat(`Temple upgraded Lv.${prevLevel}→${temple.level}!`);
+    render();
+  }
+});
 
 // ── Capture button ──
 captureBtn.addEventListener('click', () => {
@@ -272,7 +390,6 @@ window.addEventListener('mouseup', () => {
   mouseDragging = false;
 });
 
-// Suppress click after drag
 canvas.addEventListener('click', (e) => {
   if (mouseDragDist > 10) {
     e.stopImmediatePropagation();
@@ -366,15 +483,18 @@ document.getElementById('zoomOutBtn')!.addEventListener('click', () => {
 
 // ── Keyboard ──
 document.addEventListener('keydown', (e) => {
-  if (state.phase === 'gameOver') {
-    if (e.key === 'r' || e.key === 'R') restartGame();
+  if (e.key === 'Escape') {
+    if (menuOverlay.classList.contains('hidden')) {
+      showMenu();
+    } else {
+      if (gameStarted) hideMenu();
+    }
     return;
   }
+  if (!menuOverlay.classList.contains('hidden')) return;
+
+  if (state.phase === 'gameOver') return;
   switch (e.key) {
-    case 'Escape':
-      deselectAll(state);
-      render();
-      break;
     case 'Enter':
       doEndTurn();
       break;
@@ -396,7 +516,7 @@ endTurnBtn.addEventListener('click', () => {
   doEndTurn();
 });
 
-restartBtn.addEventListener('click', restartGame);
+restartBtn.addEventListener('click', () => showMenu());
 
 // ── Combat log toggle ──
 let logOpen = false;
@@ -417,8 +537,7 @@ function doEndTurn(): void {
   logCombat(`${prevPlayer} ended turn → ${newPlayer.name} (Aura: ${newPlayer.aura})`);
   render();
 
-  // If it's now AI's turn, run AI after a short delay
-  if (newPlayer.id === AI_PLAYER_ID && state.phase !== 'gameOver') {
+  if (aiEnabled && newPlayer.id === AI_PLAYER_ID && state.phase !== 'gameOver') {
     aiRunning = true;
     setTimeout(() => {
       runAI();
@@ -430,18 +549,15 @@ function doEndTurn(): void {
 function runAI(): void {
   if (state.phase === 'gameOver') return;
 
-  // Get player 0's visible hexes BEFORE AI acts (to know what player can "see")
   const playerVisible = getCurrentPlayerVisible(state);
 
   const actions = runAITurn(state);
   for (const action of actions) {
-    // Only log actions the human player can see
     if (playerVisible.has(hexKey(action.pos))) {
       logCombat(action.description);
     }
   }
 
-  // AI ends its turn
   const aiName = getCurrentPlayer(state).name;
   endTurn(state);
   const nextPlayer = getCurrentPlayer(state);
@@ -449,16 +565,10 @@ function runAI(): void {
   render();
 }
 
-function restartGame(): void {
-  state = createGameState();
-  renderer.init(state.mapRadius);
-  logCombat('--- New Game ---');
-  render();
-}
-
 // ── Resize handling ──
-window.addEventListener('resize', () => render());
+window.addEventListener('resize', () => {
+  if (gameStarted) render();
+});
 
-// ── Initial render ──
-render();
-logCombat('Game started! Player 1 goes first.');
+// ── Initial state: show menu ──
+showMenu();

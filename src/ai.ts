@@ -1,17 +1,21 @@
 import { GameState, HexCoord, Unit, UnitType, UNIT_COSTS } from './types';
 import { hexDistance, getReachableHexes } from './hex';
-import { getCurrentPlayer, getUnitAt, spawnUnit, calculateEncirclement, getEffectiveDefense } from './game';
+import { getCurrentPlayer, getUnitAt, spawnUnit, calculateEncirclement, getEffectiveDefense, getEffectiveAttack, getEffectiveRange, isForestUnitRevealed, getPopulationCap, getPopulationCount } from './game';
+import { hexKey, hexEqual } from './hex';
 
 const AI_PLAYER_ID = 1;
 
 export interface AIAction {
-  type: 'spawn' | 'move' | 'attack' | 'move+attack';
-  pos: HexCoord; // where the action happens (for visibility check)
+  type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
+  pos: HexCoord;
   description: string;
 }
 
 function findNearestEnemy(state: GameState, pos: HexCoord, playerId: number): Unit | null {
-  const enemies = state.units.filter(u => u.hp > 0 && u.playerId !== playerId);
+  const enemies = state.units.filter(u =>
+    u.hp > 0 && u.playerId !== playerId &&
+    isForestUnitRevealed(state, u.pos, playerId)
+  );
   if (enemies.length === 0) return null;
   let best: Unit | null = null;
   let bestDist = Infinity;
@@ -38,11 +42,13 @@ function bestMoveToward(state: GameState, unit: Unit, target: HexCoord): HexCoor
 }
 
 function findAttackTarget(state: GameState, unit: Unit): Unit | null {
+  const effRange = getEffectiveRange(state, unit);
   const enemies = state.units.filter(u => u.hp > 0 && u.playerId !== unit.playerId);
   let best: Unit | null = null;
   let bestHp = Infinity;
   for (const e of enemies) {
-    if (hexDistance(unit.pos, e.pos) <= unit.stats.range) {
+    if (hexDistance(unit.pos, e.pos) <= effRange) {
+      if (!isForestUnitRevealed(state, e.pos, unit.playerId)) continue;
       if (e.hp < bestHp) { bestHp = e.hp; best = e; }
     }
   }
@@ -64,7 +70,10 @@ function doAIAttack(state: GameState, attacker: Unit, target: Unit): void {
   const targetDef = getEffectiveDefense(state, target);
   const attackerDef = getEffectiveDefense(state, attacker);
 
-  const dmg = calcDamage(attacker.stats.attack, targetDef, targetEnc.attackMultiplier);
+  // Apply type bonus multiplier
+  const typeBonus = attacker.stats.bonusAgainst?.[target.type] ?? 1;
+
+  const dmg = Math.round(calcDamage(getEffectiveAttack(state, attacker), targetDef, targetEnc.attackMultiplier) * typeBonus);
   target.hp -= dmg;
   if (target.hp <= 0) target.hp = 0;
 
@@ -88,14 +97,15 @@ function doAIAttack(state: GameState, attacker: Unit, target: Unit): void {
   // Revenge
   if (!targetKilled && attacker.stats.canBeRevenged) {
     const dist = hexDistance(attacker.pos, target.pos);
-    if (dist <= target.stats.range) {
-      const revDmg = calcDamage(target.stats.attack, attackerDef, attackerEnc.attackMultiplier);
+    const targetEffRange = getEffectiveRange(state, target);
+    if (dist <= targetEffRange) {
+      const revDmg = calcDamage(getEffectiveAttack(state, target), attackerDef, attackerEnc.attackMultiplier);
       attacker.hp -= revDmg;
       if (attacker.hp <= 0) attacker.hp = 0;
     }
   }
 
-  // Warrior steps onto killed unit's tile (melee only)
+  // Melee unit steps onto killed unit's tile
   if (targetKilled && attacker.hp > 0 && attacker.stats.range === 1) {
     attacker.pos = { ...target.pos };
   }
@@ -110,16 +120,30 @@ export function runAITurn(state: GameState): AIAction[] {
   const player = getCurrentPlayer(state);
   if (player.id !== AI_PLAYER_ID) return actions;
 
-  // 1. Spawn — prefer archer, fallback warrior
+  // 1. Spawn — pick best affordable unit within population cap
   const aiTemples = state.temples.filter(t => t.ownerId === AI_PLAYER_ID);
+  const cap = getPopulationCap(state, AI_PLAYER_ID);
+  const count = getPopulationCount(state, AI_PLAYER_ID);
+
   for (const temple of aiTemples) {
     if (getUnitAt(state, temple.pos)) continue;
+    if (getPopulationCount(state, AI_PLAYER_ID) >= getPopulationCap(state, AI_PLAYER_ID)) break;
 
     let spawnType: UnitType | null = null;
-    if (player.aura >= UNIT_COSTS.sniper && Math.random() < 0.3) {
-      spawnType = 'sniper';
-    } else if (player.aura >= UNIT_COSTS.bomber && Math.random() < 0.25) {
-      spawnType = 'bomber';
+    if (player.aura >= UNIT_COSTS.heavyknight && Math.random() < 0.2) {
+      spawnType = 'heavyknight';
+    } else if (player.aura >= UNIT_COSTS.catapult && Math.random() < 0.2) {
+      spawnType = 'catapult';
+    } else if (player.aura >= UNIT_COSTS.horserider && Math.random() < 0.25) {
+      spawnType = 'horserider';
+    } else if (player.aura >= UNIT_COSTS.spearsman && Math.random() < 0.25) {
+      spawnType = 'spearsman';
+    } else if (player.aura >= UNIT_COSTS.healer && Math.random() < 0.15) {
+      spawnType = 'healer';
+    } else if (player.aura >= UNIT_COSTS.damageBooster && Math.random() < 0.15) {
+      spawnType = 'damageBooster';
+    } else if (player.aura >= UNIT_COSTS.rangeBooster && Math.random() < 0.15) {
+      spawnType = 'rangeBooster';
     } else if (player.aura >= UNIT_COSTS.archer) {
       spawnType = 'archer';
     } else if (player.aura >= UNIT_COSTS.warrior) {
@@ -142,7 +166,6 @@ export function runAITurn(state: GameState): AIAction[] {
   for (const unit of aiUnits) {
     if (unit.hasAttacked) continue;
 
-    // Try attack from current position
     const immediateTarget = findAttackTarget(state, unit);
     if (immediateTarget) {
       doAIAttack(state, unit, immediateTarget);
@@ -154,7 +177,6 @@ export function runAITurn(state: GameState): AIAction[] {
       continue;
     }
 
-    // Move toward nearest enemy
     if (unit.hasMoved) continue;
     const nearestEnemy = findNearestEnemy(state, unit.pos, AI_PLAYER_ID);
     if (!nearestEnemy) continue;
@@ -164,7 +186,6 @@ export function runAITurn(state: GameState): AIAction[] {
       unit.pos = { ...moveHex };
       unit.hasMoved = true;
 
-      // cantShootAfterMove: skip attack after moving
       if (unit.stats.cantShootAfterMove) {
         actions.push({
           type: 'move',
@@ -172,7 +193,6 @@ export function runAITurn(state: GameState): AIAction[] {
           description: `AI ${unit.type} moves to (${moveHex.q},${moveHex.r})`,
         });
       } else {
-        // Try attack after move
         const targetAfterMove = findAttackTarget(state, unit);
         if (targetAfterMove) {
           doAIAttack(state, unit, targetAfterMove);

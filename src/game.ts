@@ -1,5 +1,13 @@
-import { GameState, Unit, UnitStats, UnitType, Player, HexCoord, Temple, UNIT_COSTS, HILL_DEFENSE_BONUS } from './types';
-import { hexDistance, hexEqual, hexNeighbors, getReachableHexes, hexKey, generateHexMap, DIRECTIONS, OPPOSING_PAIRS } from './hex';
+import {
+  GameState, Unit, UnitStats, UnitType, Player, HexCoord, Temple,
+  UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
+  TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, templeUpgradeCost,
+  SUPPORT_RANGE,
+} from './types';
+import {
+  hexDistance, hexEqual, hexNeighbors, getReachableHexes,
+  hexKey, generateHexMap, DIRECTIONS, OPPOSING_PAIRS, hexLineDraw,
+} from './hex';
 
 // ── Unit stats ──
 
@@ -13,21 +21,56 @@ const ARCHER_STATS: UnitStats = {
   range: 3, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 4, cantShootAfterMove: false,
 };
 
-const BOMBER_STATS: UnitStats = {
+const CATAPULT_STATS: UnitStats = {
   maxHp: 10, attack: 20, defense: 1, speed: 1,
   range: 3, splash: 1, splashFactor: 0.5, canBeRevenged: false, vision: 4, cantShootAfterMove: false,
 };
 
-const SNIPER_STATS: UnitStats = {
-  maxHp: 10, attack: 30, defense: 1, speed: 1,
-  range: 6, splash: 0, splashFactor: 0, canBeRevenged: false, vision: 8, cantShootAfterMove: true,
+const HORSERIDER_STATS: UnitStats = {
+  maxHp: 10, attack: 8, defense: 2, speed: 4,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
+const HEAVYKNIGHT_STATS: UnitStats = {
+  maxHp: 30, attack: 20, defense: 8, speed: 3,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
+};
+
+const SPEARSMAN_STATS: UnitStats = {
+  maxHp: 20, attack: 15, defense: 5, speed: 2,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
+  bonusAgainst: { horserider: 2.5, heavyknight: 1.5 },
+};
+
+const HEALER_STATS: UnitStats = {
+  maxHp: 12, attack: 4, defense: 2, speed: 2,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+};
+
+const DAMAGE_BOOSTER_STATS: UnitStats = {
+  maxHp: 12, attack: 4, defense: 2, speed: 2,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+};
+
+const RANGE_BOOSTER_STATS: UnitStats = {
+  maxHp: 12, attack: 4, defense: 2, speed: 2,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+};
+
+export const HEALER_HEAL_AMOUNT = 5;
+export const DAMAGE_BOOST_AMOUNT = 5;
+export const RANGE_BOOST_AMOUNT = 1;
+
 const UNIT_STATS: Record<UnitType, UnitStats> = {
-  warrior: WARRIOR_STATS,
-  archer: ARCHER_STATS,
-  bomber: BOMBER_STATS,
-  sniper: SNIPER_STATS,
+  warrior:      WARRIOR_STATS,
+  archer:       ARCHER_STATS,
+  catapult:     CATAPULT_STATS,
+  horserider:   HORSERIDER_STATS,
+  heavyknight:  HEAVYKNIGHT_STATS,
+  spearsman:    SPEARSMAN_STATS,
+  healer:       HEALER_STATS,
+  damageBooster: DAMAGE_BOOSTER_STATS,
+  rangeBooster:  RANGE_BOOSTER_STATS,
 };
 
 // ── Factories ──
@@ -53,6 +96,7 @@ function createTemple(pos: HexCoord, ownerId: number | null): Temple {
     id: `temple_${templeIdCounter++}`,
     pos: { ...pos },
     ownerId,
+    level: 1,
   };
 }
 
@@ -70,13 +114,38 @@ const DEFAULT_PLAYERS: PlayerConfig[] = [
 
 // ── Visibility ──
 
-export function getVisibleHexes(pos: HexCoord, visionRange: number, mapRadius: number): HexCoord[] {
+function hasLineOfSight(from: HexCoord, to: HexCoord, forests: Set<string>, hills: Set<string>): boolean {
+  const dist = hexDistance(from, to);
+  if (dist <= 1) return true;
+
+  if (forests.has(hexKey(from))) return false;
+
+  const observerOnHill = hills.has(hexKey(from));
+
+  const line = hexLineDraw(from, to);
+  for (let i = 1; i < line.length - 1; i++) {
+    const key = hexKey(line[i]!);
+    if (forests.has(key)) return false;
+    if (hills.has(key) && !observerOnHill) return false;
+  }
+  return true;
+}
+
+export function getVisibleHexes(pos: HexCoord, visionRange: number, mapRadius: number, forests?: Set<string>, hills?: Set<string>): HexCoord[] {
   const result: HexCoord[] = [];
-  for (let dq = -visionRange; dq <= visionRange; dq++) {
-    for (let dr = Math.max(-visionRange, -dq - visionRange); dr <= Math.min(visionRange, -dq + visionRange); dr++) {
+  let effectiveRange = visionRange;
+  if (forests && forests.has(hexKey(pos))) {
+    effectiveRange = 1;
+  } else if (hills && hills.has(hexKey(pos))) {
+    effectiveRange = visionRange + HILL_VISION_BONUS;
+  }
+  for (let dq = -effectiveRange; dq <= effectiveRange; dq++) {
+    for (let dr = Math.max(-effectiveRange, -dq - effectiveRange); dr <= Math.min(effectiveRange, -dq + effectiveRange); dr++) {
       const hex: HexCoord = { q: pos.q + dq, r: pos.r + dr };
       if (hexDistance({ q: 0, r: 0 }, hex) <= mapRadius) {
-        result.push(hex);
+        if (!forests || hasLineOfSight(pos, hex, forests, hills || new Set())) {
+          result.push(hex);
+        }
       }
     }
   }
@@ -84,7 +153,7 @@ export function getVisibleHexes(pos: HexCoord, visionRange: number, mapRadius: n
 }
 
 function revealForPlayer(state: GameState, playerId: number, pos: HexCoord, visionRange: number): void {
-  const visible = getVisibleHexes(pos, visionRange, state.mapRadius);
+  const visible = getVisibleHexes(pos, visionRange, state.mapRadius, state.forests, state.hills);
   for (const hex of visible) {
     state.explored[playerId]!.add(hexKey(hex));
   }
@@ -95,26 +164,37 @@ export function updateVisibility(state: GameState, playerId: number): void {
   for (const unit of units) {
     revealForPlayer(state, playerId, unit.pos, unit.stats.vision);
   }
-  // Temples also give vision (radius 2)
   const temples = state.temples.filter(t => t.ownerId === playerId);
   for (const temple of temples) {
     revealForPlayer(state, playerId, temple.pos, 2);
   }
 }
 
+export function isForestUnitRevealed(state: GameState, unitPos: HexCoord, observerPlayerId: number): boolean {
+  if (!state.forests.has(hexKey(unitPos))) return true;
+  const friendlies = state.units.filter(u => u.hp > 0 && u.playerId === observerPlayerId);
+  for (const f of friendlies) {
+    if (hexDistance(f.pos, unitPos) <= 1) return true;
+  }
+  const ownedTemples = state.temples.filter(t => t.ownerId === observerPlayerId);
+  for (const t of ownedTemples) {
+    if (hexDistance(t.pos, unitPos) <= 1) return true;
+  }
+  return false;
+}
+
 export function getCurrentPlayerVisible(state: GameState): Set<string> {
-  // Currently visible hexes (not just explored — for fog of war)
   const visible = new Set<string>();
   const playerId = getCurrentPlayer(state).id;
   const units = state.units.filter(u => u.hp > 0 && u.playerId === playerId);
   for (const unit of units) {
-    for (const hex of getVisibleHexes(unit.pos, unit.stats.vision, state.mapRadius)) {
+    for (const hex of getVisibleHexes(unit.pos, unit.stats.vision, state.mapRadius, state.forests, state.hills)) {
       visible.add(hexKey(hex));
     }
   }
   const temples = state.temples.filter(t => t.ownerId === playerId);
   for (const temple of temples) {
-    for (const hex of getVisibleHexes(temple.pos, 2, state.mapRadius)) {
+    for (const hex of getVisibleHexes(temple.pos, 2, state.mapRadius, state.forests, state.hills)) {
       visible.add(hexKey(hex));
     }
   }
@@ -123,16 +203,16 @@ export function getCurrentPlayerVisible(state: GameState): Set<string> {
 
 // ── Terrain generation ──
 
-function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[]): { hills: Set<string>; walls: Set<string> } {
+function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[]): { hills: Set<string>; walls: Set<string>; forests: Set<string> } {
   const hills = new Set<string>();
   const walls = new Set<string>();
+  const forests = new Set<string>();
   const allHexes = generateHexMap(mapRadius);
   const allKeys = new Set(allHexes.map(h => hexKey(h)));
   const reserved = new Set([
     ...templePositions.map(p => hexKey(p)),
     ...unitPositions.map(p => hexKey(p)),
   ]);
-  // Also reserve neighbors of temples/units so clusters don't block them
   const reservedBuffer = new Set(reserved);
   for (const pos of [...templePositions, ...unitPositions]) {
     for (const n of hexNeighbors(pos)) {
@@ -162,23 +242,20 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
     }
   }
 
-  // Pick random seed points for wall clusters (mountain ranges)
-  const wallSeeds = 3 + Math.floor(Math.random() * 3); // 3-5 clusters
+  const wallSeeds = 3 + Math.floor(Math.random() * 3);
   for (let i = 0; i < wallSeeds; i++) {
     const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
     if (reservedBuffer.has(hexKey(seed))) continue;
     growCluster(seed, walls, 3 + Math.floor(Math.random() * 4), 0.55);
   }
 
-  // Pick random seed points for hill clusters
-  const hillSeeds = 4 + Math.floor(Math.random() * 4); // 4-7 clusters
+  const hillSeeds = 4 + Math.floor(Math.random() * 4);
   for (let i = 0; i < hillSeeds; i++) {
     const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
     if (reservedBuffer.has(hexKey(seed)) || used.has(hexKey(seed))) continue;
     growCluster(seed, hills, 3 + Math.floor(Math.random() * 5), 0.6);
   }
 
-  // Add scattered hills around wall edges (foothills effect)
   for (const wk of walls) {
     const [q, r] = wk.split(',').map(Number);
     for (const n of hexNeighbors({ q: q!, r: r! })) {
@@ -190,14 +267,77 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
     }
   }
 
-  return { hills, walls };
+  const forestSeeds = 5 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < forestSeeds; i++) {
+    const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
+    const sk = hexKey(seed);
+    if (reserved.has(sk) || walls.has(sk) || hills.has(sk) || forests.has(sk)) continue;
+    const queue: HexCoord[] = [seed];
+    const maxSize = 3 + Math.floor(Math.random() * 5);
+    let placed = 0;
+    while (queue.length > 0 && placed < maxSize) {
+      const idx = Math.floor(Math.random() * queue.length);
+      const hex = queue.splice(idx, 1)[0]!;
+      const key = hexKey(hex);
+      if (reserved.has(key) || walls.has(key) || hills.has(key) || forests.has(key) || !allKeys.has(key)) continue;
+      forests.add(key);
+      placed++;
+      for (const n of hexNeighbors(hex)) {
+        const nk = hexKey(n);
+        if (!reserved.has(nk) && !walls.has(nk) && !hills.has(nk) && !forests.has(nk) && allKeys.has(nk) && Math.random() < 0.6) {
+          queue.push(n);
+        }
+      }
+    }
+  }
+
+  return { hills, walls, forests };
 }
 
-// ── Effective defense (with hill bonus) ──
+// ── Support boosts ──
+
+export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageBonus: number; rangeBonus: number } {
+  let damageBonus = 0;
+  let rangeBonus = 0;
+  for (const ally of state.units) {
+    if (ally.hp <= 0 || ally.playerId !== unit.playerId || ally.id === unit.id) continue;
+    const dist = hexDistance(ally.pos, unit.pos);
+    if (dist > SUPPORT_RANGE) continue;
+    if (ally.type === 'damageBooster') damageBonus += DAMAGE_BOOST_AMOUNT;
+    if (ally.type === 'rangeBooster') rangeBonus += RANGE_BOOST_AMOUNT;
+  }
+  return { damageBonus, rangeBonus };
+}
+
+// ── Effective stats (with hill + support bonuses) ──
 
 export function getEffectiveDefense(state: GameState, unit: Unit): number {
   const onHill = state.hills.has(hexKey(unit.pos));
   return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0);
+}
+
+export function getEffectiveAttack(state: GameState, unit: Unit): number {
+  const { damageBonus } = getSupportBoostsForUnit(state, unit);
+  return unit.stats.attack + damageBonus;
+}
+
+export function getEffectiveRange(state: GameState, unit: Unit): number {
+  const onHill = state.hills.has(hexKey(unit.pos));
+  const hillBonus = (onHill && unit.stats.range > 1) ? HILL_RANGE_BONUS : 0;
+  const { rangeBonus } = getSupportBoostsForUnit(state, unit);
+  return unit.stats.range + hillBonus + rangeBonus;
+}
+
+// ── Population cap ──
+
+export function getPopulationCap(state: GameState, playerId: number): number {
+  return state.temples
+    .filter(t => t.ownerId === playerId)
+    .reduce((sum, t) => sum + t.level * TEMPLE_POP_CAP_PER_LEVEL, 0);
+}
+
+export function getPopulationCount(state: GameState, playerId: number): number {
+  return state.units.filter(u => u.hp > 0 && u.playerId === playerId).length;
 }
 
 // ── Game creation ──
@@ -211,9 +351,8 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   }));
 
   const temples: Temple[] = [
-    createTemple({ q: -4, r: 2 }, 0),   // Red home
-    createTemple({ q: 4, r: -2 }, 1),   // Blue home
-    createTemple({ q: 0, r: 0 }, null),  // Neutral
+    createTemple({ q: -4, r: 2 }, 0),
+    createTemple({ q: 4, r: -2 }, 1),
     createTemple({ q: -2, r: -2 }, null),
     createTemple({ q: 2, r: 2 }, null),
   ];
@@ -223,7 +362,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     { q: 3, r: -1 }, { q: 3, r: -2 },
   ];
 
-  const { hills, walls } = generateTerrain(mapRadius, temples.map(t => t.pos), unitPositions);
+  const { hills, walls, forests } = generateTerrain(mapRadius, temples.map(t => t.pos), unitPositions);
 
   const units: Unit[] = [
     createUnit('warrior', 0, unitPositions[0]!),
@@ -232,18 +371,17 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     createUnit('warrior', 1, unitPositions[3]!),
   ];
 
-  // Per-player explored sets
   const explored: Set<string>[] = players.map(() => new Set<string>());
 
   const state: GameState = {
-    players, units, temples, hills, walls, explored,
+    players, units, temples, hills, walls, forests, explored,
     currentPlayerIndex: 0, phase: 'playing', mapRadius,
     winner: null,
     selectedUnitId: null, selectedTempleId: null, selectionMode: null,
-    moveHexes: [], attackHexes: [],
+    moveHexes: [], attackHexes: [], supportHexes: [],
+    spawnedTempleIds: new Set(),
   };
 
-  // Reveal initial vision for all players
   for (const player of players) {
     updateVisibility(state, player.id);
   }
@@ -283,26 +421,61 @@ export function captureTemple(state: GameState, unit: Unit, temple: Temple): voi
   checkWinCondition(state);
 }
 
+// ── Temple upgrade ──
+
+export function canUpgradeTemple(state: GameState, templeId: string): number | null {
+  const temple = state.temples.find(t => t.id === templeId);
+  if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return null;
+  const cost = templeUpgradeCost(temple.level);
+  if (cost === null) return null;
+  if (getCurrentPlayer(state).aura < cost) return null;
+  return cost;
+}
+
+export function upgradeTemple(state: GameState, templeId: string): boolean {
+  const cost = canUpgradeTemple(state, templeId);
+  if (cost === null) return false;
+  const temple = state.temples.find(t => t.id === templeId)!;
+  getCurrentPlayer(state).aura -= cost;
+  temple.level++;
+  return true;
+}
+
 // ── Spawning ──
 
 export function canAfford(state: GameState, unitType: UnitType): boolean {
-  return getCurrentPlayer(state).aura >= UNIT_COSTS[unitType];
+  const player = getCurrentPlayer(state);
+  if (player.aura < UNIT_COSTS[unitType]) return false;
+  // Check population cap
+  const cap = getPopulationCap(state, player.id);
+  const count = getPopulationCount(state, player.id);
+  return count < cap;
 }
 
 export function spawnUnit(state: GameState, templeId: string, unitType: UnitType): boolean {
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return false;
 
+  // Each temple may only spawn once per turn
+  if (state.spawnedTempleIds.has(templeId)) return false;
+
   const player = getCurrentPlayer(state);
   const cost = UNIT_COSTS[unitType];
   if (player.aura < cost) return false;
+
+  // Population cap check
+  const cap = getPopulationCap(state, player.id);
+  const count = getPopulationCount(state, player.id);
+  if (count >= cap) return false;
 
   if (getUnitAt(state, temple.pos)) return false;
 
   player.aura -= cost;
   const unit = createUnit(unitType, player.id, temple.pos);
-  unit.hasMoved = true;      // just spawned — can't move this turn
-  unit.hasAttacked = false;  // can still attack this turn
+  // Unit may move and attack on the turn it is spawned
+  unit.hasMoved = false;
+  unit.hasAttacked = false;
+  state.spawnedTempleIds.add(templeId);
   state.units.push(unit);
 
   revealForPlayer(state, player.id, unit.pos, unit.stats.vision);
@@ -412,16 +585,29 @@ export function calculateEncirclement(state: GameState, targetUnit: Unit): Encir
 
 // ── Highlights ──
 
+const SUPPORT_UNIT_TYPES: Set<UnitType> = new Set(['healer', 'damageBooster', 'rangeBooster']);
+
 function updateHighlights(state: GameState): void {
   state.moveHexes = [];
   state.attackHexes = [];
+  state.supportHexes = [];
 
-  if (state.selectionMode === 'temple') {
-    return;
-  }
+  if (state.selectionMode === 'temple') return;
 
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit) return;
+
+  // Support area: always show for support units when selected
+  if (SUPPORT_UNIT_TYPES.has(unit.type)) {
+    for (let dq = -SUPPORT_RANGE; dq <= SUPPORT_RANGE; dq++) {
+      for (let dr = Math.max(-SUPPORT_RANGE, -dq - SUPPORT_RANGE); dr <= Math.min(SUPPORT_RANGE, -dq + SUPPORT_RANGE); dr++) {
+        const hex: HexCoord = { q: unit.pos.q + dq, r: unit.pos.r + dr };
+        if (hexDistance({ q: 0, r: 0 }, hex) <= state.mapRadius) {
+          state.supportHexes.push(hex);
+        }
+      }
+    }
+  }
 
   if (!unit.hasMoved && !unit.hasAttacked) {
     const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
@@ -429,12 +615,13 @@ function updateHighlights(state: GameState): void {
     state.moveHexes = getReachableHexes(unit.pos, unit.stats.speed, state.mapRadius, [...occupied, ...wallPositions], state.hills);
   }
 
-  // cantShootAfterMove: if unit moved this turn, no attack highlights
   const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
   if (canAttack) {
+    const effectiveRange = getEffectiveRange(state, unit);
     const enemies = state.units.filter(u => u.hp > 0 && u.playerId !== unit.playerId);
     state.attackHexes = enemies
-      .filter(e => hexDistance(unit.pos, e.pos) <= unit.stats.range)
+      .filter(e => hexDistance(unit.pos, e.pos) <= effectiveRange)
+      .filter(e => isForestUnitRevealed(state, e.pos, unit.playerId))
       .map(e => e.pos);
   }
 }
@@ -463,23 +650,27 @@ export function deselectAll(state: GameState): void {
   state.selectionMode = null;
   state.moveHexes = [];
   state.attackHexes = [];
+  state.supportHexes = [];
 }
 
-export function moveUnit(state: GameState, dest: HexCoord): boolean {
+export interface MoveResult {
+  moved: boolean;
+}
+
+export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
   const unit = state.units.find(u => u.id === state.selectedUnitId);
-  if (!unit || unit.hasMoved || unit.hasAttacked) return false;
+  if (!unit || unit.hasMoved || unit.hasAttacked) return { moved: false };
 
   const isValid = state.moveHexes.some(h => hexEqual(h, dest));
-  if (!isValid) return false;
+  if (!isValid) return { moved: false };
 
   unit.pos = { ...dest };
   unit.hasMoved = true;
 
-  // Reveal vision
   revealForPlayer(state, unit.playerId, unit.pos, unit.stats.vision);
-
   updateHighlights(state);
-  return true;
+
+  return { moved: true };
 }
 
 // ── Combat ──
@@ -492,9 +683,16 @@ function randomMultiplier(): number {
   return Math.max(0.5, Math.min(1.5, value));
 }
 
-function calculateDamage(attackerAtk: number, defenderDef: number, encirclementMultiplier: number): number {
+function getTypeBonusMultiplier(attacker: Unit, target: Unit): number {
+  if (attacker.stats.bonusAgainst) {
+    return attacker.stats.bonusAgainst[target.type] ?? 1;
+  }
+  return 1;
+}
+
+function calculateDamage(attackerAtk: number, defenderDef: number, encirclementMultiplier: number, typeBonus = 1): number {
   const multiplier = randomMultiplier();
-  const raw = multiplier * encirclementMultiplier * (attackerAtk - defenderDef);
+  const raw = multiplier * encirclementMultiplier * typeBonus * (attackerAtk - defenderDef);
   return Math.max(0, Math.round(raw));
 }
 
@@ -512,12 +710,12 @@ export interface CombatResult {
   targetEncirclement: EncirclementInfo;
   attackerEncirclement: EncirclementInfo;
   splashHits: SplashHit[];
+  typeBonus: number;
 }
 
 export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult | null {
   const attacker = state.units.find(u => u.id === state.selectedUnitId);
   if (!attacker || attacker.hasAttacked) return null;
-  // cantShootAfterMove: block attack if unit already moved this turn
   if (attacker.stats.cantShootAfterMove && attacker.hasMoved) return null;
 
   const isValid = state.attackHexes.some(h => hexEqual(h, targetPos));
@@ -529,11 +727,11 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   const targetEncirclement = calculateEncirclement(state, target);
   const attackerEncirclement = calculateEncirclement(state, attacker);
 
-  // Use effective defense (hill bonus)
   const targetDef = getEffectiveDefense(state, target);
   const attackerDef = getEffectiveDefense(state, attacker);
 
-  const damageDealt = calculateDamage(attacker.stats.attack, targetDef, targetEncirclement.attackMultiplier);
+  const typeBonus = getTypeBonusMultiplier(attacker, target);
+  const damageDealt = calculateDamage(getEffectiveAttack(state, attacker), targetDef, targetEncirclement.attackMultiplier, typeBonus);
   target.hp -= damageDealt;
 
   const targetKilled = target.hp <= 0;
@@ -565,15 +763,16 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
 
   if (!targetKilled && attacker.stats.canBeRevenged) {
     const dist = hexDistance(attacker.pos, target.pos);
-    if (dist <= target.stats.range) {
-      damageReceived = calculateDamage(target.stats.attack, attackerDef, attackerEncirclement.attackMultiplier);
+    const targetEffRange = getEffectiveRange(state, target);
+    if (dist <= targetEffRange) {
+      damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier);
       attacker.hp -= damageReceived;
       attackerKilled = attacker.hp <= 0;
       if (attackerKilled) attacker.hp = 0;
     }
   }
 
-  // Warrior steps onto killed unit's tile (melee only)
+  // Melee unit steps onto killed unit's tile
   if (targetKilled && !attackerKilled && attacker.stats.range === 1) {
     attacker.pos = { ...targetPos };
     revealForPlayer(state, attacker.playerId, attacker.pos, attacker.stats.vision);
@@ -584,17 +783,19 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   updateHighlights(state);
   checkWinCondition(state);
 
-  return { damageDealt, damageReceived, targetKilled, attackerKilled, targetEncirclement, attackerEncirclement, splashHits };
+  return { damageDealt, damageReceived, targetKilled, attackerKilled, targetEncirclement, attackerEncirclement, splashHits, typeBonus };
 }
 
 // ── Win condition ──
 
 function checkWinCondition(state: GameState): void {
-  for (const player of state.players) {
-    if (state.temples.every(t => t.ownerId === player.id)) {
-      state.phase = 'gameOver';
-      state.winner = player;
-      return;
+  if (state.temples.length > 0) {
+    for (const player of state.players) {
+      if (state.temples.every(t => t.ownerId === player.id)) {
+        state.phase = 'gameOver';
+        state.winner = player;
+        return;
+      }
     }
   }
 
@@ -623,6 +824,7 @@ export function endTurn(state: GameState): void {
       u.hasAttacked = false;
     }
   });
+  state.spawnedTempleIds.clear();
 
   let next = (state.currentPlayerIndex + 1) % state.players.length;
   while (next !== state.currentPlayerIndex) {
@@ -633,11 +835,25 @@ export function endTurn(state: GameState): void {
   }
   state.currentPlayerIndex = next;
 
-  // Grant aura income: 2 per owned temple
+  // Grant aura income: level × TEMPLE_AURA_PER_LEVEL per owned temple (linear, no depletion)
   const newPlayer = getCurrentPlayer(state);
-  const templeCount = state.temples.filter(t => t.ownerId === newPlayer.id).length;
-  newPlayer.aura += templeCount * 2;
+  const ownedTemples = state.temples.filter(t => t.ownerId === newPlayer.id);
+  for (const temple of ownedTemples) {
+    newPlayer.aura += temple.level * TEMPLE_AURA_PER_LEVEL;
+  }
 
-  // Update visibility for new player
+  // Healer: restore HP to allies within SUPPORT_RANGE at start of their turn
+  const healers = state.units.filter(u => u.hp > 0 && u.playerId === newPlayer.id && u.type === 'healer');
+  for (const healer of healers) {
+    const nearby = state.units.filter(u =>
+      u.hp > 0 && u.playerId === newPlayer.id && u.id !== healer.id &&
+      hexDistance(healer.pos, u.pos) <= SUPPORT_RANGE
+    );
+    for (const ally of nearby) {
+      ally.hp = Math.min(ally.stats.maxHp, ally.hp + HEALER_HEAL_AMOUNT);
+    }
+  }
+
   updateVisibility(state, newPlayer.id);
+  checkWinCondition(state);
 }

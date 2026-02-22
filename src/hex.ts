@@ -110,6 +110,36 @@ export function pixelToHex(px: number, py: number, size: number, cx: number, cy:
   return hexRound({ q, r });
 }
 
+// Returns all hexes on the line from a to b (inclusive), used for line-of-sight
+export function hexLineDraw(a: HexCoord, b: HexCoord): HexCoord[] {
+  const N = hexDistance(a, b);
+  if (N === 0) return [a];
+  const results: HexCoord[] = [];
+  // Use cube coords with a tiny nudge to avoid ambiguous rounding on edges
+  const aq = a.q, ar = a.r, as_ = -a.q - a.r;
+  const bq = b.q, br = b.r, bs = -b.q - b.r;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const cq = aq + (bq - aq) * t + 1e-6;
+    const cr = ar + (br - ar) * t + 1e-6;
+    const cs = as_ + (bs - as_) * t - 2e-6;
+    // Cube round
+    let rq = Math.round(cq);
+    let rr = Math.round(cr);
+    let rs = Math.round(cs);
+    const dq = Math.abs(rq - cq);
+    const dr = Math.abs(rr - cr);
+    const ds = Math.abs(rs - cs);
+    if (dq > dr && dq > ds) {
+      rq = -rr - rs;
+    } else if (dr > ds) {
+      rr = -rq - rs;
+    }
+    results.push({ q: rq, r: rr });
+  }
+  return results;
+}
+
 function hexRound(h: { q: number; r: number }): HexCoord {
   const s = -h.q - h.r;
   let rq = Math.round(h.q);
