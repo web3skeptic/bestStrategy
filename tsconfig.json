@@ -4,7 +4,6 @@
     "target": "esnext",
     "strict": true,
     "outDir": "./dist",
-    "rootDir": "./src",
     "sourceMap": true,
     "declaration": false,
     "moduleResolution": "bundler",

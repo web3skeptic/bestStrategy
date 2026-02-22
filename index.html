@@ -305,6 +305,114 @@
       border-color: #585;
     }
     #menu2P:hover { background: rgba(80,120,80,0.9); border-color: #7a7; }
+    #menuOnline {
+      background: rgba(60,40,100,0.8);
+      color: #ddf;
+      border-color: #649;
+    }
+    #menuOnline:hover { background: rgba(80,60,130,0.9); border-color: #86b; }
+
+    /* ── Lobby panel ── */
+    .lobby-panel {
+      background: rgba(14,14,30,0.98);
+      border: 1px solid #334;
+      border-radius: 16px;
+      width: 320px;
+      max-width: 95vw;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .lobby-panel.hidden { display: none; }
+    .lobby-title {
+      font-size: 18px;
+      font-weight: bold;
+      color: #ccf;
+      margin-bottom: 4px;
+    }
+    .lobby-input {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      background: rgba(10,10,28,0.9);
+      border: 1px solid #445;
+      border-radius: 8px;
+      color: #cce;
+      outline: none;
+    }
+    .lobby-input:focus { border-color: #66a; }
+    .lobby-btn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #446;
+      border-radius: 8px;
+      background: rgba(40,35,80,0.85);
+      color: #ccf;
+      cursor: pointer;
+      text-align: center;
+    }
+    .lobby-btn:active { background: rgba(60,55,110,0.9); }
+    .lobby-btn.primary {
+      background: rgba(60,50,120,0.85);
+      border-color: #66a;
+    }
+    .lobby-status {
+      font-size: 12px;
+      color: #889;
+      min-height: 16px;
+    }
+    .lobby-status.ok  { color: #6c6; }
+    .lobby-status.err { color: #c66; }
+    .lobby-code {
+      font-size: 28px;
+      font-weight: bold;
+      color: #6ef;
+      letter-spacing: 6px;
+      text-align: center;
+      font-family: monospace;
+    }
+    .lobby-room-list {
+      max-height: 180px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .lobby-room-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      background: rgba(25,25,55,0.85);
+      border: 1px solid #334;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .lobby-room-item button {
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid #557;
+      border-radius: 6px;
+      background: rgba(50,45,90,0.85);
+      color: #ccf;
+      cursor: pointer;
+    }
+    .lobby-room-item button:active { background: rgba(70,65,120,0.9); }
+    .lobby-divider {
+      border: none;
+      border-top: 1px solid #223;
+      margin: 0;
+    }
+    .lobby-back {
+      font-size: 12px;
+      color: #668;
+      cursor: pointer;
+      text-align: center;
+    }
+    .lobby-back:hover { color: #99b; }
 
     /* ── Menu button in game (top bar) ── */
     #menuBtn {
@@ -319,6 +427,242 @@
       margin-left: 12px;
     }
     #menuBtn:active { background: rgba(60,60,80,0.9); }
+
+    /* ── Research button ── */
+    #techTreeBtn {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #557;
+      border-radius: 8px;
+      background: rgba(40,30,80,0.85);
+      color: #bbf;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    #techTreeBtn:active { background: rgba(60,50,110,0.9); }
+
+    /* ── Tech tree overlay ── */
+    .tech-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 150;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5,5,15,0.93);
+      backdrop-filter: blur(8px);
+    }
+    .tech-overlay.hidden { display: none; }
+    .tech-panel {
+      background: rgba(16,16,36,0.98);
+      border: 1px solid #334;
+      border-radius: 16px;
+      max-width: 660px;
+      width: 95%;
+      max-height: 88vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .tech-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    .tech-title { font-size: 20px; font-weight: bold; color: #ccf; }
+    .tech-aura  { font-size: 13px; color: #aaa; }
+    .tech-close {
+      background: none;
+      border: 1px solid #445;
+      color: #aaa;
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 4px 10px;
+    }
+    .tech-close:active { background: rgba(60,60,80,0.5); }
+    .tech-section { margin-bottom: 18px; }
+    .tech-section-title {
+      font-size: 11px;
+      font-weight: bold;
+      color: #778;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+    .tech-branch-label {
+      font-size: 11px;
+      color: #e90;
+      margin-bottom: 8px;
+    }
+    .tech-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tech-node {
+      flex: 1;
+      min-width: 140px;
+      max-width: 200px;
+      padding: 10px 12px;
+      border: 2px solid #334;
+      border-radius: 10px;
+      background: rgba(25,25,50,0.85);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched) {
+      border-color: #66a;
+      background: rgba(50,45,90,0.9);
+    }
+    .tech-node--researched {
+      border-color: #4a4;
+      background: rgba(18,38,18,0.9);
+      cursor: default;
+    }
+    .tech-node--locked { opacity: 0.38; cursor: not-allowed; }
+    .tech-node--poor   { border-color: #643; cursor: not-allowed; }
+    .tech-node-name  { font-size: 13px; font-weight: bold; color: #dde; margin-bottom: 3px; }
+    .tech-node-cost  { font-size: 11px; color: #999; margin-bottom: 4px; }
+    .tech-node-desc  { font-size: 10px; color: #778; line-height: 1.4; }
+    .tech-node-status { font-size: 11px; font-weight: bold; margin-top: 6px; }
+    .status-researched { color: #4c4; }
+    .status-available  { color: #aaf; }
+    .status-locked     { color: #556; }
+    .status-poor       { color: #a64; }
+
+    /* ── Build Teleport button ── */
+    #teleportBtn {
+      display: none;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #2ac;
+      border-radius: 8px;
+      background: rgba(10,50,70,0.85);
+      color: #6ef;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    #teleportBtn:active { background: rgba(20,70,100,0.9); }
+    #teleportBtn.active {
+      border-color: #0ef;
+      background: rgba(0,80,120,0.95);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(0,200,255,0.4);
+    }
+
+    /* ── Settings button ── */
+    #settingsBtn {
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid #555;
+      border-radius: 6px;
+      background: rgba(40,40,60,0.85);
+      color: #aab;
+      cursor: pointer;
+      margin-left: 6px;
+    }
+    #settingsBtn:active { background: rgba(60,60,80,0.9); }
+
+    /* ── Settings overlay ── */
+    .settings-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 150;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5,5,15,0.93);
+      backdrop-filter: blur(8px);
+    }
+    .settings-overlay.hidden { display: none; }
+    .settings-panel {
+      background: rgba(16,16,36,0.98);
+      border: 1px solid #334;
+      border-radius: 16px;
+      max-width: 600px;
+      width: 95%;
+      max-height: 88vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .settings-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      gap: 8px;
+    }
+    .settings-title { font-size: 20px; font-weight: bold; color: #ccf; }
+    .settings-close {
+      background: none;
+      border: 1px solid #445;
+      color: #aaa;
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 4px 10px;
+    }
+    .settings-close:active { background: rgba(60,60,80,0.5); }
+    .settings-reset {
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: bold;
+      border: 1px solid #643;
+      border-radius: 6px;
+      background: rgba(60,30,20,0.85);
+      color: #faa;
+      cursor: pointer;
+    }
+    .settings-reset:active { background: rgba(90,50,30,0.9); }
+    .settings-unit-card {
+      background: rgba(22,22,44,0.9);
+      border: 1px solid #334;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }
+    .settings-unit-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .settings-unit-name {
+      font-size: 14px;
+      font-weight: bold;
+      color: #dde;
+    }
+    .settings-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+      gap: 6px;
+    }
+    .settings-field {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      color: #778;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .settings-field input {
+      width: 100%;
+      padding: 6px 4px;
+      font-size: 13px;
+      text-align: center;
+      background: rgba(10,10,28,0.9);
+      border: 1px solid #445;
+      border-radius: 6px;
+      color: #cce;
+      outline: none;
+      -moz-appearance: textfield;
+    }
+    .settings-field input::-webkit-outer-spin-button,
+    .settings-field input::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .settings-field input:focus { border-color: #66a; }
 
     /* ── Desktop tweaks ── */
     @media (min-width: 768px) {
@@ -336,11 +680,52 @@
   <div class="app">
     <!-- Menu overlay -->
     <div class="menu-overlay" id="menuOverlay">
-      <div class="menu-title">Hex Strategy</div>
-      <div class="menu-subtitle">Choose game mode</div>
-      <div class="menu-buttons">
-        <button class="menu-btn" id="menuVsAI">⚔ vs AI</button>
-        <button class="menu-btn" id="menu2P">👥 2 Players</button>
+      <!-- Main menu -->
+      <div id="lobbyMain">
+        <div class="menu-title">Hex Strategy</div>
+        <div class="menu-subtitle">Choose game mode</div>
+        <div class="menu-buttons">
+          <button class="menu-btn" id="menuVsAI">⚔ vs AI</button>
+          <button class="menu-btn" id="menu2P">👥 2 Players</button>
+          <button class="menu-btn" id="menuOnline">🌐 Online Multiplayer</button>
+        </div>
+      </div>
+
+      <!-- Online lobby: login step -->
+      <div class="lobby-panel hidden" id="lobbyLogin">
+        <div class="lobby-title">🌐 Online Multiplayer</div>
+        <input class="lobby-input" id="lobbyUsernameInput" placeholder="Enter username…" maxlength="24" />
+        <button class="lobby-btn primary" id="lobbyLoginBtn">Connect</button>
+        <div class="lobby-status" id="lobbyLoginStatus"></div>
+        <div class="lobby-back" id="lobbyLoginBack">← Back</div>
+      </div>
+
+      <!-- Online lobby: main lobby (room list + create) -->
+      <div class="lobby-panel hidden" id="lobbyRoomList">
+        <div class="lobby-title">Lobby</div>
+        <div class="lobby-status ok" id="lobbyWelcomeMsg"></div>
+        <button class="lobby-btn primary" id="lobbyCreateRoomBtn">+ Create Room</button>
+        <hr class="lobby-divider" />
+        <div style="font-size:12px;color:#668;margin-bottom:2px">Open Rooms</div>
+        <div class="lobby-room-list" id="lobbyRoomListEl"></div>
+        <button class="lobby-btn" id="lobbyRefreshBtn">↻ Refresh</button>
+        <hr class="lobby-divider" />
+        <div style="font-size:12px;color:#668">Join by code</div>
+        <div style="display:flex;gap:8px">
+          <input class="lobby-input" id="lobbyJoinCodeInput" placeholder="Room code…" maxlength="4" style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center" />
+          <button class="lobby-btn" id="lobbyJoinCodeBtn" style="white-space:nowrap">Join</button>
+        </div>
+        <div class="lobby-status" id="lobbyRoomStatus"></div>
+        <div class="lobby-back" id="lobbyRoomBack">← Back to Menu</div>
+      </div>
+
+      <!-- Online lobby: waiting for opponent -->
+      <div class="lobby-panel hidden" id="lobbyWaiting">
+        <div class="lobby-title">Room Created</div>
+        <div style="font-size:13px;color:#889">Share this code with your opponent:</div>
+        <div class="lobby-code" id="lobbyRoomCode">----</div>
+        <div class="lobby-status" id="lobbyWaitingStatus">Waiting for opponent to join…</div>
+        <div class="lobby-back" id="lobbyWaitingBack">← Cancel</div>
       </div>
     </div>
 
@@ -349,6 +734,7 @@
         <div class="turn-info" id="turnInfo">Player 1's Turn</div>
         <div class="aura-info" id="auraInfo">⚡2</div>
         <div class="aura-info" id="popInfo" style="margin-left:8px;font-size:12px">Pop:0/0</div>
+        <button id="settingsBtn">⚙</button>
         <button id="menuBtn">Menu</button>
       </div>
       <div class="unit-info" id="unitInfo"></div>
@@ -374,8 +760,10 @@
       </div>
       <button id="upgradeTempleBtn" style="display:none">⬆ Upgrade Temple</button>
       <button id="captureBtn">⚔ Capture Temple</button>
+      <button id="teleportBtn">⬡ Teleport</button>
       <div class="action-row">
         <button class="action-btn" id="endTurnBtn">End Turn</button>
+        <button id="techTreeBtn">🔬 Research</button>
         <button class="action-btn" id="restartBtn">Restart</button>
       </div>
       <div class="log-toggle" id="logToggle">
@@ -383,6 +771,28 @@
         <span id="logArrow">▲</span>
       </div>
       <div id="combatLog"></div>
+    </div>
+    <!-- Settings overlay -->
+    <div class="settings-overlay hidden" id="settingsOverlay">
+      <div class="settings-panel">
+        <div class="settings-header">
+          <div class="settings-title">⚙ Unit Settings</div>
+          <button class="settings-reset" id="settingsResetBtn">↺ Reset</button>
+          <button class="settings-close" id="settingsCloseBtn">✕</button>
+        </div>
+        <div id="settingsBody"></div>
+      </div>
+    </div>
+    <!-- Tech tree overlay -->
+    <div class="tech-overlay hidden" id="techOverlay">
+      <div class="tech-panel">
+        <div class="tech-header">
+          <div class="tech-title">🔬 Research</div>
+          <div class="tech-aura" id="techAuraInfo"></div>
+          <button class="tech-close" id="techCloseBtn">✕</button>
+        </div>
+        <div id="techBody"></div>
+      </div>
     </div>
   </div>
   <script type="module" src="./src/main.ts"></script>

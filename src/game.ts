@@ -3,6 +3,8 @@ import {
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, templeUpgradeCost,
   SUPPORT_RANGE,
+  TechId, TechNode, TECH_NODES, PlayerTech,
+  TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
 } from './types';
 import {
   hexDistance, hexEqual, hexNeighbors, getReachableHexes,
@@ -17,8 +19,8 @@ const WARRIOR_STATS: UnitStats = {
 };
 
 const ARCHER_STATS: UnitStats = {
-  maxHp: 15, attack: 10, defense: 1, speed: 2,
-  range: 3, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 4, cantShootAfterMove: false,
+  maxHp: 10, attack: 10, defense: 1, speed: 2,
+  range: 2, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 4, cantShootAfterMove: false,
 };
 
 const CATAPULT_STATS: UnitStats = {
@@ -61,7 +63,7 @@ export const HEALER_HEAL_AMOUNT = 5;
 export const DAMAGE_BOOST_AMOUNT = 5;
 export const RANGE_BOOST_AMOUNT = 1;
 
-const UNIT_STATS: Record<UnitType, UnitStats> = {
+export const UNIT_STATS: Record<UnitType, UnitStats> = {
   warrior:      WARRIOR_STATS,
   archer:       ARCHER_STATS,
   catapult:     CATAPULT_STATS,
@@ -73,17 +75,49 @@ const UNIT_STATS: Record<UnitType, UnitStats> = {
   rangeBooster:  RANGE_BOOSTER_STATS,
 };
 
+// ── Tech helpers ──
+
+export const DEFAULT_UNLOCKED_UNITS: UnitType[] = ['warrior', 'archer', 'horserider'];
+
+export function getUnlockedUnits(tech: PlayerTech): Set<UnitType> {
+  const unlocked = new Set<UnitType>(DEFAULT_UNLOCKED_UNITS);
+  for (const node of TECH_NODES) {
+    if (node.unitUnlock && tech.researched.has(node.id)) {
+      unlocked.add(node.unitUnlock);
+    }
+  }
+  return unlocked;
+}
+
+function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): UnitStats {
+  const r = tech.researched;
+  if (r.has('roads')) stats.speed += 1;
+  if (r.has('infantry_move') && (type === 'warrior' || type === 'spearsman')) stats.speed += 1;
+  if (r.has('longrange_hp') && (type === 'archer' || type === 'catapult')) stats.maxHp += 5;
+  if (r.has('catapult_splash') && type === 'catapult') stats.splash += 1;
+  if (r.has('horse_sight') && (type === 'horserider' || type === 'heavyknight')) stats.vision += 1;
+  return stats;
+}
+
 // ── Factories ──
 
 let unitIdCounter = 0;
 let templeIdCounter = 0;
 
-function createUnit(type: UnitType, playerId: number, pos: HexCoord): Unit {
-  const stats = UNIT_STATS[type];
+// Called by server after deserializing saved state to prevent ID collisions
+export function resetCounters(unitMax: number, templeMax: number, tpMax: number): void {
+  unitIdCounter = unitMax;
+  templeIdCounter = templeMax;
+  teleportIdCounter = tpMax;
+}
+
+function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech): Unit {
+  const baseStats = UNIT_STATS[type];
+  const stats = tech ? applyTechToStats({ ...baseStats }, type, tech) : { ...baseStats };
   return {
     id: `unit_${unitIdCounter++}`,
     type, playerId,
-    stats: { ...stats },
+    stats,
     hp: stats.maxHp,
     pos: { ...pos },
     hasMoved: false,
@@ -172,6 +206,7 @@ export function updateVisibility(state: GameState, playerId: number): void {
 
 export function isForestUnitRevealed(state: GameState, unitPos: HexCoord, observerPlayerId: number): boolean {
   if (!state.forests.has(hexKey(unitPos))) return true;
+
   const friendlies = state.units.filter(u => u.hp > 0 && u.playerId === observerPlayerId);
   for (const f of friendlies) {
     if (hexDistance(f.pos, unitPos) <= 1) return true;
@@ -350,6 +385,8 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     id: i, name: cfg.name, color: cfg.color, aura: 2,
   }));
 
+  const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>() }));
+
   const temples: Temple[] = [
     createTemple({ q: -4, r: 2 }, 0),
     createTemple({ q: 4, r: -2 }, 1),
@@ -380,6 +417,9 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     selectedUnitId: null, selectedTempleId: null, selectionMode: null,
     moveHexes: [], attackHexes: [], supportHexes: [],
     spawnedTempleIds: new Set(),
+    playerTech,
+    teleportBuildings: [],
+    buildHexes: [],
   };
 
   for (const player of players) {
@@ -441,6 +481,39 @@ export function upgradeTemple(state: GameState, templeId: string): boolean {
   return true;
 }
 
+// ── Tech research ──
+
+export function canResearch(state: GameState, techId: TechId): boolean {
+  const player = getCurrentPlayer(state);
+  const tech = state.playerTech[player.id]!;
+  if (tech.researched.has(techId)) return false;
+
+  const node = TECH_NODES.find(n => n.id === techId);
+  if (!node) return false;
+
+  for (const prereq of node.prereqs) {
+    if (!tech.researched.has(prereq)) return false;
+  }
+
+  if (node.branch) {
+    const branchNodes = TECH_NODES.filter(n => n.branch === node.branch);
+    for (const bn of branchNodes) {
+      if (bn.id !== techId && tech.researched.has(bn.id)) return false;
+    }
+  }
+
+  return player.aura >= node.cost;
+}
+
+export function researchTech(state: GameState, techId: TechId): boolean {
+  if (!canResearch(state, techId)) return false;
+  const player = getCurrentPlayer(state);
+  const node = TECH_NODES.find(n => n.id === techId)!;
+  player.aura -= node.cost;
+  state.playerTech[player.id]!.researched.add(techId);
+  return true;
+}
+
 // ── Spawning ──
 
 export function canAfford(state: GameState, unitType: UnitType): boolean {
@@ -449,7 +522,10 @@ export function canAfford(state: GameState, unitType: UnitType): boolean {
   // Check population cap
   const cap = getPopulationCap(state, player.id);
   const count = getPopulationCount(state, player.id);
-  return count < cap;
+  if (count >= cap) return false;
+  // Check unit is unlocked via tech
+  const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
+  return unlocked.has(unitType);
 }
 
 export function spawnUnit(state: GameState, templeId: string, unitType: UnitType): boolean {
@@ -471,7 +547,7 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   if (getUnitAt(state, temple.pos)) return false;
 
   player.aura -= cost;
-  const unit = createUnit(unitType, player.id, temple.pos);
+  const unit = createUnit(unitType, player.id, temple.pos, state.playerTech[player.id]);
   // Unit may move and attack on the turn it is spawned
   unit.hasMoved = false;
   unit.hasAttacked = false;
@@ -667,6 +743,24 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
   unit.pos = { ...dest };
   unit.hasMoved = true;
 
+  // Auto-teleport: if unit stepped on a portal with a paired exit
+  const portal = getTeleportAt(state, unit.pos);
+  if (portal?.pairedId) {
+    const exit = state.teleportBuildings.find(t => t.id === portal.pairedId);
+    if (exit) {
+      // Land on a free neighbour of the exit portal, not the portal tile itself
+      const neighbours = hexNeighbors(exit.pos).filter(h => {
+        if (hexDistance({ q: 0, r: 0 }, h) > state.mapRadius) return false;
+        if (state.walls.has(hexKey(h))) return false;
+        if (getUnitAt(state, h)) return false;
+        return true;
+      });
+      if (neighbours.length > 0) {
+        unit.pos = { ...neighbours[0]! };
+      }
+    }
+  }
+
   revealForPlayer(state, unit.playerId, unit.pos, unit.stats.vision);
   updateHighlights(state);
 
@@ -856,4 +950,91 @@ export function endTurn(state: GameState): void {
 
   updateVisibility(state, newPlayer.id);
   checkWinCondition(state);
+}
+
+// ── Teleport buildings ──
+
+let teleportIdCounter = 0;
+
+export function getTeleportAt(state: GameState, pos: HexCoord): TeleportBuilding | undefined {
+  return state.teleportBuildings.find(t => hexEqual(t.pos, pos));
+}
+
+export function getValidTeleportHexes(state: GameState, templeId: string): HexCoord[] {
+  const temple = state.temples.find(t => t.id === templeId);
+  if (!temple) return [];
+  const result: HexCoord[] = [];
+  for (let dq = -TELEPORT_RADIUS; dq <= TELEPORT_RADIUS; dq++) {
+    for (let dr = Math.max(-TELEPORT_RADIUS, -dq - TELEPORT_RADIUS); dr <= Math.min(TELEPORT_RADIUS, -dq + TELEPORT_RADIUS); dr++) {
+      const hex: HexCoord = { q: temple.pos.q + dq, r: temple.pos.r + dr };
+      if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue;
+      const key = hexKey(hex);
+      if (state.hills.has(key)) continue;
+      if (state.forests.has(key)) continue;
+      if (state.walls.has(key)) continue;
+      if (hexEqual(hex, temple.pos)) continue;  // don't place on the temple itself
+      if (getTeleportAt(state, hex)) continue;   // already has a portal
+      result.push(hex);
+    }
+  }
+  return result;
+}
+
+// Valid hexes for the second portal: near any other owned temple that doesn't yet have a portal.
+export function getValidTeleportHexesForOtherTemples(state: GameState, excludeTempleId: string): HexCoord[] {
+  const player = getCurrentPlayer(state);
+  const result: HexCoord[] = [];
+  for (const temple of state.temples) {
+    if (temple.ownerId !== player.id) continue;
+    if (temple.id === excludeTempleId) continue;
+    const existing = state.teleportBuildings.filter(b => b.templeId === temple.id);
+    if (existing.length >= TELEPORT_MAX_PER_TEMPLE) continue;
+    result.push(...getValidTeleportHexes(state, temple.id));
+  }
+  return result;
+}
+
+export function canBuildTeleportPair(state: GameState, templeId: string): boolean {
+  const player = getCurrentPlayer(state);
+  const temple = state.temples.find(t => t.id === templeId);
+  if (!temple || temple.ownerId !== player.id) return false;
+  if (!state.playerTech[player.id]?.researched.has('teleports')) return false;
+  const existing = state.teleportBuildings.filter(t => t.templeId === templeId);
+  if (existing.length >= TELEPORT_MAX_PER_TEMPLE) return false;
+  if (player.aura < TELEPORT_BUILD_COST) return false;
+  if (getValidTeleportHexes(state, templeId).length < 1) return false;
+  return getValidTeleportHexesForOtherTemples(state, templeId).length >= 1;
+}
+
+export function buildTeleportPair(
+  state: GameState,
+  templeIdA: string,
+  posA: HexCoord,
+  posB: HexCoord,
+): boolean {
+  if (!canBuildTeleportPair(state, templeIdA)) return false;
+  const validHexesA = getValidTeleportHexes(state, templeIdA);
+  if (!validHexesA.some(h => hexEqual(h, posA))) return false;
+  const validHexesB = getValidTeleportHexesForOtherTemples(state, templeIdA);
+  if (!validHexesB.some(h => hexEqual(h, posB))) return false;
+  if (hexEqual(posA, posB)) return false;
+  // Determine which temple posB belongs to
+  const player = getCurrentPlayer(state);
+  const templeB = state.temples.find(t =>
+    t.ownerId === player.id &&
+    t.id !== templeIdA &&
+    state.teleportBuildings.filter(b => b.templeId === t.id).length < TELEPORT_MAX_PER_TEMPLE &&
+    hexDistance(t.pos, posB) <= TELEPORT_RADIUS &&
+    !state.hills.has(hexKey(posB)) &&
+    !state.forests.has(hexKey(posB)) &&
+    !state.walls.has(hexKey(posB)) &&
+    !hexEqual(posB, t.pos),
+  );
+  if (!templeB) return false;
+  player.aura -= TELEPORT_BUILD_COST;
+  const idA = `tp_${teleportIdCounter++}`;
+  const idB = `tp_${teleportIdCounter++}`;
+  state.teleportBuildings.push({ id: idA, pos: { ...posA }, builtByPlayerId: player.id, templeId: templeIdA, pairedId: idB });
+  state.teleportBuildings.push({ id: idB, pos: { ...posB }, builtByPlayerId: player.id, templeId: templeB.id, pairedId: idA });
+  return true;
 }

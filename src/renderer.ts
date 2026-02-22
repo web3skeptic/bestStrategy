@@ -1,4 +1,4 @@
-import { GameState, HexCoord, Unit, Temple, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS, TEMPLE_MAX_LEVEL, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost } from './types';
+import { GameState, HexCoord, Unit, Temple, TeleportBuilding, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS } from './types';
 import { generateHexMap, hexToPixel, hexEqual, hexKey, hexDistance } from './hex';
 import { getCurrentPlayer, calculateEncirclement, getCurrentPlayerVisible, isForestUnitRevealed, getSupportBoostsForUnit } from './game';
 
@@ -77,6 +77,7 @@ export class Renderer {
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
     const attackSet = new Set(state.attackHexes.map(h => hexKey(h)));
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
+    const buildSet = new Set(state.buildHexes.map(h => hexKey(h)));
 
     const playerId = getCurrentPlayer(state).id;
     const explored = state.explored[playerId]!;
@@ -113,6 +114,8 @@ export class Renderer {
           fillColor = '#553333';
         } else if (moveSet.has(key)) {
           fillColor = '#335533';
+        } else if (buildSet.has(key)) {
+          fillColor = '#1a3a44';
         } else if (supportSet.has(key)) {
           fillColor = '#334455';
         }
@@ -123,6 +126,11 @@ export class Renderer {
       if (isWall) this.drawWallMarker(x, y, size);
       if (isForest) this.drawForestMarker(x, y, size);
       if (isHill) this.drawHillMarker(x, y, size);
+
+      // Build placement highlight
+      if (buildSet.has(key)) {
+        this.drawHex(x, y, size, 'rgba(0,220,255,0.10)', '#2aaabb');
+      }
 
       // Support area ring
       if (supportSet.has(key) && !attackSet.has(key) && !moveSet.has(key)) {
@@ -139,6 +147,13 @@ export class Renderer {
       const key = hexKey(temple.pos);
       if (!explored.has(key)) continue;
       this.drawTemple(temple, state, size, cx, cy);
+    }
+
+    // Draw teleport buildings (visible if tile is explored)
+    for (const tp of state.teleportBuildings) {
+      if (!explored.has(hexKey(tp.pos))) continue;
+      const builder = state.players.find(p => p.id === tp.builtByPlayerId);
+      this.drawTeleportBuilding(tp, builder?.color ?? '#aaa', !!tp.pairedId, size, cx, cy, !visible.has(hexKey(tp.pos)));
     }
 
     // Draw units
@@ -465,29 +480,67 @@ export class Renderer {
     ctx.fillStyle = '#fff';
     ctx.fill();
 
-    // Level bar (fill = level / maxLevel)
-    const levelRatio = temple.level / TEMPLE_MAX_LEVEL;
-    const barWidth = s * 0.7;
-    const barHeight = Math.max(3, 3 * iconScale);
-    const barX = x - barWidth / 2;
-    const barY = y + s * 0.35;
-
-    ctx.fillStyle = '#333';
-    ctx.fillRect(barX, barY, barWidth, barHeight);
-    ctx.fillStyle = '#8888ff';
-    ctx.fillRect(barX, barY, barWidth * levelRatio, barHeight);
-
-    // Level text + income per turn
-    const income = temple.level * TEMPLE_AURA_PER_LEVEL;
-    const upgradeCost = templeUpgradeCost(temple.level);
-    const levelText = upgradeCost !== null
-      ? `Lv.${temple.level} ⚡${income}/t`
-      : `Lv.${temple.level} MAX`;
-
+    // Level label
+    const labelY = y + s * 0.5;
     ctx.font = `bold ${Math.max(8, 9 * iconScale)}px sans-serif`;
     ctx.fillStyle = '#ddd';
     ctx.textAlign = 'center';
-    ctx.fillText(levelText, x, barY + barHeight + Math.max(9, 10 * iconScale));
+    ctx.fillText(`Lv.${temple.level}`, x, labelY);
+  }
+
+  private drawTeleportBuilding(tp: TeleportBuilding, playerColor: string, isPaired: boolean, size: number, cx: number, cy: number, dimmed: boolean): void {
+    const ctx = this.ctx;
+    const { x, y } = hexToPixel(tp.pos, size, cx, cy);
+    const scale = size / BASE_HEX_SIZE;
+
+    ctx.save();
+    if (dimmed) ctx.globalAlpha = 0.45;
+
+    // Outer glow ring
+    const outerR = size * 0.38;
+    ctx.beginPath();
+    ctx.arc(x, y, outerR, 0, Math.PI * 2);
+    ctx.strokeStyle = isPaired ? playerColor : '#666';
+    ctx.lineWidth = 3 * scale;
+    ctx.stroke();
+
+    // Inner ring (cyan glow)
+    const innerR = size * 0.24;
+    ctx.beginPath();
+    ctx.arc(x, y, innerR, 0, Math.PI * 2);
+    ctx.strokeStyle = isPaired ? 'rgba(0,230,255,0.85)' : 'rgba(150,150,150,0.5)';
+    ctx.lineWidth = 2 * scale;
+    ctx.stroke();
+
+    // Fill centre with faint glow
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, innerR);
+    grad.addColorStop(0, isPaired ? 'rgba(0,200,255,0.35)' : 'rgba(100,100,100,0.15)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(x, y, innerR, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // ↔ symbol (two opposing arrows)
+    const arm = 7 * scale;
+    ctx.strokeStyle = isPaired ? '#00eeff' : '#888';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.beginPath();
+    // left arrow
+    ctx.moveTo(x - arm * 0.3, y);
+    ctx.lineTo(x - arm, y);
+    ctx.moveTo(x - arm * 0.65, y - arm * 0.4);
+    ctx.lineTo(x - arm, y);
+    ctx.lineTo(x - arm * 0.65, y + arm * 0.4);
+    // right arrow
+    ctx.moveTo(x + arm * 0.3, y);
+    ctx.lineTo(x + arm, y);
+    ctx.moveTo(x + arm * 0.65, y - arm * 0.4);
+    ctx.lineTo(x + arm, y);
+    ctx.lineTo(x + arm * 0.65, y + arm * 0.4);
+    ctx.stroke();
+
+    ctx.restore();
   }
 
   private hexToRgba(hex: string): string {

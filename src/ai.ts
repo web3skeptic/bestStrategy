@@ -1,6 +1,6 @@
 import { GameState, HexCoord, Unit, UnitType, UNIT_COSTS } from './types';
 import { hexDistance, getReachableHexes } from './hex';
-import { getCurrentPlayer, getUnitAt, spawnUnit, calculateEncirclement, getEffectiveDefense, getEffectiveAttack, getEffectiveRange, isForestUnitRevealed, getPopulationCap, getPopulationCount } from './game';
+import { getCurrentPlayer, getUnitAt, spawnUnit, calculateEncirclement, getEffectiveDefense, getEffectiveAttack, getEffectiveRange, isForestUnitRevealed, getPopulationCap, getPopulationCount, getUnlockedUnits } from './game';
 import { hexKey, hexEqual } from './hex';
 
 const AI_PLAYER_ID = 1;
@@ -125,28 +125,30 @@ export function runAITurn(state: GameState): AIAction[] {
   const cap = getPopulationCap(state, AI_PLAYER_ID);
   const count = getPopulationCount(state, AI_PLAYER_ID);
 
+  const aiUnlocked = getUnlockedUnits(state.playerTech[AI_PLAYER_ID]!);
+
   for (const temple of aiTemples) {
     if (getUnitAt(state, temple.pos)) continue;
     if (getPopulationCount(state, AI_PLAYER_ID) >= getPopulationCap(state, AI_PLAYER_ID)) break;
 
     let spawnType: UnitType | null = null;
-    if (player.aura >= UNIT_COSTS.heavyknight && Math.random() < 0.2) {
+    if (aiUnlocked.has('heavyknight') && player.aura >= UNIT_COSTS.heavyknight && Math.random() < 0.2) {
       spawnType = 'heavyknight';
-    } else if (player.aura >= UNIT_COSTS.catapult && Math.random() < 0.2) {
+    } else if (aiUnlocked.has('catapult') && player.aura >= UNIT_COSTS.catapult && Math.random() < 0.2) {
       spawnType = 'catapult';
-    } else if (player.aura >= UNIT_COSTS.horserider && Math.random() < 0.25) {
+    } else if (aiUnlocked.has('horserider') && player.aura >= UNIT_COSTS.horserider && Math.random() < 0.25) {
       spawnType = 'horserider';
-    } else if (player.aura >= UNIT_COSTS.spearsman && Math.random() < 0.25) {
+    } else if (aiUnlocked.has('spearsman') && player.aura >= UNIT_COSTS.spearsman && Math.random() < 0.25) {
       spawnType = 'spearsman';
-    } else if (player.aura >= UNIT_COSTS.healer && Math.random() < 0.15) {
+    } else if (aiUnlocked.has('healer') && player.aura >= UNIT_COSTS.healer && Math.random() < 0.15) {
       spawnType = 'healer';
-    } else if (player.aura >= UNIT_COSTS.damageBooster && Math.random() < 0.15) {
+    } else if (aiUnlocked.has('damageBooster') && player.aura >= UNIT_COSTS.damageBooster && Math.random() < 0.15) {
       spawnType = 'damageBooster';
-    } else if (player.aura >= UNIT_COSTS.rangeBooster && Math.random() < 0.15) {
+    } else if (aiUnlocked.has('rangeBooster') && player.aura >= UNIT_COSTS.rangeBooster && Math.random() < 0.15) {
       spawnType = 'rangeBooster';
-    } else if (player.aura >= UNIT_COSTS.archer) {
+    } else if (aiUnlocked.has('archer') && player.aura >= UNIT_COSTS.archer) {
       spawnType = 'archer';
-    } else if (player.aura >= UNIT_COSTS.warrior) {
+    } else if (aiUnlocked.has('warrior') && player.aura >= UNIT_COSTS.warrior) {
       spawnType = 'warrior';
     }
     if (!spawnType) continue;
