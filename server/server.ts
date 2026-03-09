@@ -4,7 +4,8 @@ import path from 'path';
 import { WebSocketServer } from 'ws';
 import { handleConnect, handleDisconnect, handleMessage } from './gameManager';
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+// Use PORT env var if set, otherwise bind to 0 (OS picks a free port)
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 0;
 const app = express();
 const server = http.createServer(app);
 
@@ -40,5 +41,8 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  const addr = server.address();
+  const port = typeof addr === 'object' && addr ? addr.port : PORT;
+  console.log(`\nServer running on http://localhost:${port}`);
+  console.log(`Cloudflare:  cloudflared tunnel --url http://localhost:${port}\n`);
 });

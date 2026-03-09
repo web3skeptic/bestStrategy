@@ -58,12 +58,35 @@ function resyncCounters(state: GameState): void {
 // toAll=true  → broadcast to both players (used on end_turn and game_over)
 // toAll=false → send only to the acting player (intermediate actions)
 
+// Strip selection/move highlight state — sent to the non-acting player
+// so they never see the opponent's in-progress selections or move hexes.
+function stripSelectionState(s: ReturnType<typeof serialize>): ReturnType<typeof serialize> {
+  return {
+    ...s,
+    selectedUnitId: null,
+    selectedTempleId: null,
+    selectionMode: null,
+    moveHexes: [],
+    attackHexes: [],
+    supportHexes: [],
+    buildHexes: [],
+  };
+}
+
 function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: 0 | 1, toAll: boolean): void {
   const serialized = serialize(room.state!);
   const gameOver = room.state!.phase === 'gameOver';
 
   if (toAll || gameOver) {
-    broadcast(room, { type: 'state_update', state: serialized, lastAction });
+    // Send each player their own view: acting player sees full state,
+    // opponent sees state with selection stripped.
+    const strippedForOpponent = stripSelectionState(serialized);
+    for (let slot = 0; slot < room.sessions.length; slot++) {
+      const sess = room.sessions[slot];
+      if (!sess) continue;
+      const payload = slot === actingSlot ? serialized : strippedForOpponent;
+      send(sess.ws, { type: 'state_update', state: payload, lastAction });
+    }
   } else {
     const actingSess = room.sessions[actingSlot];
     if (actingSess) send(actingSess.ws, { type: 'state_update', state: serialized, lastAction });
@@ -224,7 +247,12 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
   sess.playerSlot = slot;
 
   if (room.state) {
-    send(sess.ws, { type: 'game_start', playerSlot: slot, state: serialize(room.state) });
+    const currentTurnSlot = room.state.currentPlayerIndex as 0 | 1;
+    const serialized = serialize(room.state);
+    // If rejoining player is NOT the acting player, strip selections so they
+    // cannot see the opponent's in-progress moves from the saved state.
+    const payload = slot === currentTurnSlot ? serialized : stripSelectionState(serialized);
+    send(sess.ws, { type: 'game_start', playerSlot: slot, state: payload });
     const other = room.sessions[slot === 0 ? 1 : 0];
     if (other) send(other.ws, { type: 'opponent_reconnected' });
   }

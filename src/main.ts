@@ -96,6 +96,9 @@ const techOverlay = document.getElementById('techOverlay')!;
 const techCloseBtn = document.getElementById('techCloseBtn')!;
 const techBody = document.getElementById('techBody')!;
 const techAuraInfo = document.getElementById('techAuraInfo')!;
+const opponentTurnOverlay = document.getElementById('opponentTurnOverlay')!;
+const opponentTurnNameEl = document.getElementById('opponentTurnName')!;
+const myPlayerBadge = document.getElementById('myPlayerBadge')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
 const settingsOverlay = document.getElementById('settingsOverlay')!;
 const settingsCloseBtn = document.getElementById('settingsCloseBtn')!;
@@ -194,6 +197,8 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       hideMenu();
       closeTechTree();
       combatLog.innerHTML = '';
+      const myPlayer = state.players[myPlayerSlot];
+      console.log(`[MP] game_start: slot=${myPlayerSlot} name="${myPlayer?.name}" color=${myPlayer?.color} currentPlayerIndex=${state.currentPlayerIndex}`);
       logCombat(`--- Online Game started (you are Player ${myPlayerSlot + 1}) ---`);
       render();
       break;
@@ -318,7 +323,12 @@ menuBtn.addEventListener('click', () => showMenu());
 // ── Render & UI ──
 
 function render(): void {
-  renderer.render(state);
+  const waitingForOpponent = multiplayerMode
+    && state.phase !== 'gameOver'
+    && state.currentPlayerIndex !== myPlayerSlot;
+  if (!waitingForOpponent) {
+    renderer.render(state, multiplayerMode ? myPlayerSlot : undefined);
+  }
   updateUI();
 }
 
@@ -427,8 +437,7 @@ function updateUI(): void {
   if (state.selectionMode === 'temple' && state.selectedTempleId) {
     const temple = state.temples.find(t => t.id === state.selectedTempleId);
     const unitOnTemple = temple ? getUnitAt(state, temple.pos) : true;
-    const alreadySpawned = temple ? state.spawnedTempleIds.has(temple.id) : false;
-    if (!unitOnTemple && !alreadySpawned) {
+    if (!unitOnTemple) {
       spawnBar.style.display = 'flex';
       updateSpawnBtn(spawnWarriorBtn, 'warrior');
       updateSpawnBtn(spawnArcherBtn, 'archer');
@@ -450,6 +459,33 @@ function updateUI(): void {
   if (state.selectionMode !== 'temple') {
     upgradeTempleBtn.style.display = 'none';
   }
+
+  updateOpponentTurnOverlay();
+  updateMyPlayerBadge();
+}
+
+function updateOpponentTurnOverlay(): void {
+  const isOpponentTurn = multiplayerMode
+    && state.phase !== 'gameOver'
+    && state.currentPlayerIndex !== myPlayerSlot;
+  if (isOpponentTurn) {
+    opponentTurnNameEl.textContent = state.players[1 - myPlayerSlot].name;
+    opponentTurnOverlay.classList.remove('hidden');
+  } else {
+    opponentTurnOverlay.classList.add('hidden');
+  }
+}
+
+function updateMyPlayerBadge(): void {
+  if (!multiplayerMode || !gameStarted) {
+    myPlayerBadge.style.display = 'none';
+    return;
+  }
+  const me = state.players[myPlayerSlot];
+  if (!me) return;
+  myPlayerBadge.style.display = 'inline-block';
+  myPlayerBadge.style.color = me.color;
+  myPlayerBadge.textContent = `You: P${myPlayerSlot + 1}`;
 }
 
 const SPAWN_BTN_LABELS: Record<UnitType, string> = {

@@ -14,34 +14,34 @@ import {
 // ── Unit stats ──
 
 const WARRIOR_STATS: UnitStats = {
-  maxHp: 15, attack: 10, defense: 5, speed: 2,
-  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+  maxHp: 15, attack: 10, defense: 5, speed: 1,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
 };
 
 const ARCHER_STATS: UnitStats = {
-  maxHp: 10, attack: 10, defense: 1, speed: 2,
-  range: 2, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 4, cantShootAfterMove: false,
+  maxHp: 15, attack: 10, defense: 3, speed: 2,
+  range: 2, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
 };
 
 const CATAPULT_STATS: UnitStats = {
-  maxHp: 10, attack: 20, defense: 1, speed: 1,
-  range: 3, splash: 1, splashFactor: 0.5, canBeRevenged: false, vision: 4, cantShootAfterMove: false,
+  maxHp: 10, attack: 14, defense: 1, speed: 1,
+  range: 3, splash: 0, splashFactor: 0, canBeRevenged: false, vision: 4, cantShootAfterMove: false,
 };
 
 const HORSERIDER_STATS: UnitStats = {
-  maxHp: 10, attack: 8, defense: 2, speed: 4,
+  maxHp: 15, attack: 16, defense: 2, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
 const HEAVYKNIGHT_STATS: UnitStats = {
-  maxHp: 30, attack: 20, defense: 8, speed: 3,
+  maxHp: 22, attack: 20, defense: 8, speed: 3,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
 };
 
 const SPEARSMAN_STATS: UnitStats = {
   maxHp: 20, attack: 15, defense: 5, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
-  bonusAgainst: { horserider: 2.5, heavyknight: 1.5 },
+  bonusAgainst: { horserider: 3.0, heavyknight: 3.0 },
 };
 
 const HEALER_STATS: UnitStats = {
@@ -94,7 +94,7 @@ function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): U
   if (r.has('roads')) stats.speed += 1;
   if (r.has('infantry_move') && (type === 'warrior' || type === 'spearsman')) stats.speed += 1;
   if (r.has('longrange_hp') && (type === 'archer' || type === 'catapult')) stats.maxHp += 5;
-  if (r.has('catapult_splash') && type === 'catapult') stats.splash += 1;
+  if (r.has('catapult_splash') && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.5; }
   if (r.has('horse_sight') && (type === 'horserider' || type === 'heavyknight')) stats.vision += 1;
   return stats;
 }
@@ -216,6 +216,23 @@ export function isForestUnitRevealed(state: GameState, unitPos: HexCoord, observ
     if (hexDistance(t.pos, unitPos) <= 1) return true;
   }
   return false;
+}
+
+export function getPlayerVisible(state: GameState, playerId: number): Set<string> {
+  const visible = new Set<string>();
+  const units = state.units.filter(u => u.hp > 0 && u.playerId === playerId);
+  for (const unit of units) {
+    for (const hex of getVisibleHexes(unit.pos, unit.stats.vision, state.mapRadius, state.forests, state.hills)) {
+      visible.add(hexKey(hex));
+    }
+  }
+  const temples = state.temples.filter(t => t.ownerId === playerId);
+  for (const temple of temples) {
+    for (const hex of getVisibleHexes(temple.pos, 2, state.mapRadius, state.forests, state.hills)) {
+      visible.add(hexKey(hex));
+    }
+  }
+  return visible;
 }
 
 export function getCurrentPlayerVisible(state: GameState): Set<string> {
@@ -532,9 +549,6 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return false;
 
-  // Each temple may only spawn once per turn
-  if (state.spawnedTempleIds.has(templeId)) return false;
-
   const player = getCurrentPlayer(state);
   const cost = UNIT_COSTS[unitType];
   if (player.aura < cost) return false;
@@ -551,7 +565,6 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   // Unit may move and attack on the turn it is spawned
   unit.hasMoved = false;
   unit.hasAttacked = false;
-  state.spawnedTempleIds.add(templeId);
   state.units.push(unit);
 
   revealForPlayer(state, player.id, unit.pos, unit.stats.vision);

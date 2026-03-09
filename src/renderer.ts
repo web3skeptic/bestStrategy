@@ -1,6 +1,6 @@
 import { GameState, HexCoord, Unit, Temple, TeleportBuilding, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS } from './types';
 import { generateHexMap, hexToPixel, hexEqual, hexKey, hexDistance } from './hex';
-import { getCurrentPlayer, calculateEncirclement, getCurrentPlayerVisible, isForestUnitRevealed, getSupportBoostsForUnit } from './game';
+import { getCurrentPlayer, calculateEncirclement, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getSupportBoostsForUnit } from './game';
 
 const BASE_HEX_SIZE = 48;
 const MIN_ZOOM = 0.4;
@@ -63,7 +63,7 @@ export class Renderer {
     }
   }
 
-  render(state: GameState): void {
+  render(state: GameState, viewerPlayerId?: number): void {
     this.resizeToContainer();
     const ctx = this.ctx;
     const size = this.hexSize;
@@ -79,9 +79,9 @@ export class Renderer {
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
     const buildSet = new Set(state.buildHexes.map(h => hexKey(h)));
 
-    const playerId = getCurrentPlayer(state).id;
+    const playerId = viewerPlayerId ?? getCurrentPlayer(state).id;
     const explored = state.explored[playerId]!;
-    const visible = getCurrentPlayerVisible(state);
+    const visible = viewerPlayerId !== undefined ? getPlayerVisible(state, viewerPlayerId) : getCurrentPlayerVisible(state);
 
     // Draw hex tiles
     for (const hex of this.mapHexes) {
