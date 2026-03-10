@@ -246,9 +246,13 @@ lobbyLoginBtn.addEventListener('click', async () => {
   lobbyLoginStatus.textContent = 'Connecting…';
   lobbyLoginStatus.className = 'lobby-status';
 
-  const wsUrl = window.location.protocol === 'https:'
-    ? `wss://${window.location.host}`
-    : `ws://${window.location.host}`;
+  // VITE_WS_URL lets you point at a separately-hosted server (e.g. Railway/Render).
+  // Falls back to same-origin (works with Cloudflare Tunnel / local server).
+  const wsUrl = (import.meta.env.VITE_WS_URL as string | undefined) ?? (
+    window.location.protocol === 'https:'
+      ? `wss://${window.location.host}`
+      : `ws://${window.location.host}`
+  );
 
   if (!mpClient) {
     mpClient = new MultiplayerClient(wsUrl, handleMultiplayerEvent);
