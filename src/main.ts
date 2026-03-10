@@ -38,7 +38,7 @@ import {
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
 } from './game';
-import { runAITurn } from './ai';
+import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { deserialize } from './serializer';
 import type { ServerMessage } from './protocol';
@@ -53,6 +53,7 @@ const UNIT_STATS_DEFAULT: Record<UnitType, UnitStats> = Object.fromEntries(
 const UNIT_COSTS_DEFAULT: Record<UnitType, number> = { ...UNIT_COSTS };
 
 let aiEnabled = true;
+let aiDifficulty: 'normal' | 'hard' = 'normal';
 let gameStarted = false;
 let multiplayerMode = false;
 let myPlayerSlot: 0 | 1 = 0;
@@ -298,12 +299,14 @@ function hideMenu(): void {
   menuOverlay.classList.add('hidden');
 }
 
-function startGame(vsAI: boolean): void {
+function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
   multiplayerMode = false;
   aiEnabled = vsAI;
+  aiDifficulty = difficulty;
   buildingTeleport = null;
+  const aiLabel = difficulty === 'hard' ? 'Hard AI' : 'AI';
   const players = aiEnabled
-    ? [{ name: 'Player 1', color: '#ff4444' }, { name: 'AI', color: '#4488ff' }]
+    ? [{ name: 'Player 1', color: '#ff4444' }, { name: aiLabel, color: '#4488ff' }]
     : [{ name: 'Player 1', color: '#ff4444' }, { name: 'Player 2', color: '#4488ff' }];
   state = createGameState(players);
   renderer.init(state.mapRadius);
@@ -311,13 +314,14 @@ function startGame(vsAI: boolean): void {
   hideMenu();
   closeTechTree();
   combatLog.innerHTML = '';
-  logCombat(`--- New Game (${aiEnabled ? 'vs AI' : '2 Players'}) ---`);
+  logCombat(`--- New Game (${aiEnabled ? `vs ${aiLabel}` : '2 Players'}) ---`);
   logCombat('Player 1 goes first.');
   render();
 }
 
-menuVsAI.addEventListener('click', () => startGame(true));
+menuVsAI.addEventListener('click', () => startGame(true, 'normal'));
 menu2P.addEventListener('click', () => startGame(false));
+(document.getElementById('menuVsHardAI') as HTMLButtonElement).addEventListener('click', () => startGame(true, 'hard'));
 menuBtn.addEventListener('click', () => showMenu());
 
 // ── Render & UI ──
@@ -1159,7 +1163,7 @@ function runAI(): void {
 
   const playerVisible = getCurrentPlayerVisible(state);
 
-  const actions = runAITurn(state);
+  const actions = aiDifficulty === 'hard' ? runHardAITurn(state) : runAITurn(state);
   for (const action of actions) {
     if (playerVisible.has(hexKey(action.pos))) {
       logCombat(action.description);
