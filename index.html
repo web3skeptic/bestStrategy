@@ -940,6 +940,24 @@
       backdrop-filter: blur(8px);
     }
     .settings-overlay.hidden { display: none; }
+    /* ── City management panel ── */
+    #cityBody { padding: 4px 2px; }
+    .city-summary {
+      display: flex; gap: 12px; margin-bottom: 16px;
+    }
+    .city-stat {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      gap: 4px; padding: 14px 8px; border-radius: 10px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+    }
+    .city-stat-val { font-size: 26px; font-weight: 800; color: #ffd98a; }
+    .city-stat-lbl { font-size: 12px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
+    .city-list { display: flex; flex-direction: column; gap: 6px; }
+    .city-row {
+      display: flex; justify-content: space-between;
+      padding: 10px 14px; border-radius: 8px;
+      background: rgba(255,255,255,0.04); font-size: 14px;
+    }
     /* ── Opponent turn overlay ── */
     #opponentTurnOverlay {
       position: fixed;
@@ -1410,14 +1428,24 @@
         <div id="techBody"></div>
       </div>
     </div>
+    <!-- City management overlay -->
+    <div class="tech-overlay hidden" id="cityOverlay">
+      <div class="tech-panel">
+        <div class="tech-header">
+          <div class="tech-title">🏰 Operate the City</div>
+          <button class="tech-close" id="cityCloseBtn">✕</button>
+        </div>
+        <div id="cityBody"></div>
+      </div>
+    </div>
   </div>
   <!-- Opponent turn overlay -->
   <div id="opponentTurnOverlay" class="hidden">
     <div id="opponentTurnCard">
       <div class="spinner">⚙</div>
-      <div class="label">Opponent's Turn</div>
+      <div class="label">Another player is making a move…</div>
       <div class="opp-name" id="opponentTurnName"></div>
-      <div class="sublabel">Waiting for opponent to finish…</div>
+      <div class="sublabel">Please wait — the board is hidden during their turn.</div>
     </div>
   </div>
   <script type="module" src="./src/main.ts"></script>

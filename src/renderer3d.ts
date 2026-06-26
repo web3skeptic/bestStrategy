@@ -139,6 +139,22 @@ function buildHudIcon(kind: string): { group: THREE.Group; mats: THREE.MeshStand
     b1.position.set(1.6, -1.5, 2); group.add(b1);
     const b2 = new THREE.Mesh(new THREE.SphereGeometry(0.8, 6, 5), liquid);
     b2.position.set(-2, 0.6, 1.6); group.add(b2);
+  } else if (kind === 'city') { // 'city' — a little walled keep with a pitched roof
+    const wall = M(0xcdb38a, { roughness: 0.85 });
+    const roof = M(0xc25b4a, { roughness: 0.7 });
+    const door = M(0x6b4a2f, { roughness: 0.9 });
+    const keep = new THREE.Mesh(new THREE.BoxGeometry(16, 11, 8), wall);
+    keep.position.y = -2; group.add(keep);
+    const roofMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.001, 11.5, 7, 4), roof);
+    roofMesh.rotation.y = Math.PI / 4; roofMesh.position.y = 7; group.add(roofMesh);
+    const doorMesh = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 1.5), door);
+    doorMesh.position.set(0, -4, 4); group.add(doorMesh);
+    for (const dx of [-6.5, 6.5]) { // corner towers
+      const t = new THREE.Mesh(new THREE.BoxGeometry(4, 15, 4), wall);
+      t.position.set(dx, -0.5, 0); group.add(t);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.001, 3.4, 3.2, 4), roof);
+      cap.rotation.y = Math.PI / 4; cap.position.set(dx, 8.4, 0); group.add(cap);
+    }
   } else { // 'endturn' — forward arrow
     const gold = M(0xe7c24a, { roughness: 0.5 });
     const pts: [number, number][] = [[-11, -3.5], [2, -3.5], [2, -9], [12, 0], [2, 9], [2, 3.5], [-11, 3.5]];

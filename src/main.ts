@@ -94,6 +94,7 @@ renderer.init(state.mapRadius);
 renderer.setHudButtons([
   { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
   { id: 'research', label: 'Research', icon: 'flask' },
+  { id: 'city', label: 'Operate the City', icon: 'city' },
 ]);
 
 // ── UI elements ──
@@ -117,6 +118,9 @@ const combatLog = document.getElementById('combatLog')!;
 const techTreeBtn = document.getElementById('techTreeBtn')!;
 const techOverlay = document.getElementById('techOverlay')!;
 const techCloseBtn = document.getElementById('techCloseBtn')!;
+const cityOverlay = document.getElementById('cityOverlay')!;
+const cityCloseBtn = document.getElementById('cityCloseBtn')!;
+const cityBody = document.getElementById('cityBody')!;
 const techBody = document.getElementById('techBody')!;
 const techAuraInfo = document.getElementById('techAuraInfo')!;
 const opponentTurnOverlay = document.getElementById('opponentTurnOverlay')!;
@@ -444,10 +448,11 @@ function render(): void {
     updateUI();
     return;
   }
-  const waitingForOpponent = multiplayerMode
-    && state.phase !== 'gameOver'
-    && state.currentPlayerIndex !== myPlayerSlot;
-  if (!waitingForOpponent) {
+  // While an opponent (remote human OR the AI) is taking their turn, freeze the
+  // board on the local player's last frame so their private movements never get
+  // rendered — the curtain overlay covers it too, but this avoids ever syncing
+  // the enemy's perspective into the scene.
+  if (!isOpponentActive()) {
     renderer.render(state, multiplayerMode ? myPlayerSlot : undefined);
   }
   updateUI();
@@ -473,6 +478,7 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
+  renderer.updateHudButton('city', myTurn);
 
   // In spectator mode, hide all action controls
   if (spectatorMode) {
@@ -615,16 +621,19 @@ function updateUI(): void {
   updateMyPlayerBadge();
 }
 
+// True while the active turn belongs to someone other than the local human:
+// a remote opponent in online play, or the AI in single-player vs-AI (both
+// "normal" and "hard"). False in pure hotseat 2-player (no AI, no remote), so
+// the curtain never shows there.
+function isOpponentActive(): boolean {
+  if (spectatorMode || state.phase === 'gameOver') return false;
+  if (multiplayerMode) return state.currentPlayerIndex !== myPlayerSlot;
+  return aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID;
+}
+
 function updateOpponentTurnOverlay(): void {
-  if (spectatorMode) {
-    opponentTurnOverlay.classList.add('hidden');
-    return;
-  }
-  const isOpponentTurn = multiplayerMode
-    && state.phase !== 'gameOver'
-    && state.currentPlayerIndex !== myPlayerSlot;
-  if (isOpponentTurn) {
-    opponentTurnNameEl.textContent = state.players[1 - myPlayerSlot]?.name ?? '';
+  if (isOpponentActive()) {
+    opponentTurnNameEl.textContent = getCurrentPlayer(state).name;
     opponentTurnOverlay.classList.remove('hidden');
   } else {
     opponentTurnOverlay.classList.add('hidden');
@@ -1057,6 +1066,30 @@ techOverlay.addEventListener('click', (e) => {
   if (e.target === techOverlay) closeTechTree();
 });
 
+// ── City management ("Operate the City") ──
+function openCityPanel(): void {
+  if (!gameStarted || spectatorMode) return;
+  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
+  if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
+  const me = getCurrentPlayer(state);
+  const temples = state.temples.filter(t => t.ownerId === me.id);
+  const rows = temples.length
+    ? temples.map((t, i) => `<div class="city-row"><span>⛩ Temple ${i + 1}</span><span>Lvl ${t.level ?? 1}</span></div>`).join('')
+    : '<div class="city-row"><span>No temples held yet</span></div>';
+  cityBody.innerHTML = `
+    <div class="city-summary">
+      <div class="city-stat"><span class="city-stat-val">${me.aura}</span><span class="city-stat-lbl">Aura</span></div>
+      <div class="city-stat"><span class="city-stat-val">${temples.length}</span><span class="city-stat-lbl">Temples</span></div>
+    </div>
+    <div class="city-list">${rows}</div>`;
+  cityOverlay.classList.remove('hidden');
+}
+function closeCityPanel(): void { cityOverlay.classList.add('hidden'); }
+cityCloseBtn.addEventListener('click', closeCityPanel);
+cityOverlay.addEventListener('click', (e) => {
+  if (e.target === cityOverlay) closeCityPanel();
+});
+
 // ── Canvas click/tap -> game coordinates (raycast onto the 3D board) ──
 function canvasEventToHex(clientX: number, clientY: number) {
   return renderer.pickHex(clientX, clientY);
@@ -1252,6 +1285,7 @@ canvas.addEventListener('pointerup', (e) => {
 function handleHudClick(id: string): void {
   if (id === 'endTurn') { if (state.phase !== 'gameOver') doEndTurn(); }
   else if (id === 'research') openTechTree();
+  else if (id === 'city') openCityPanel();
 }
 
 canvas.addEventListener('pointercancel', () => { pointerActive = false; });
