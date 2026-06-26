@@ -11,11 +11,13 @@ export interface ClientSession {
   username: string | null;
   roomId: string | null;
   playerSlot: 0 | 1 | null;
+  isSpectator: boolean;
 }
 
 export interface RoomState {
   id: string;
   status: 'open' | 'active' | 'done';
   sessions: [ClientSession | null, ClientSession | null]; // slot 0, slot 1
+  spectators: ClientSession[];
   state: GameState | null;
 }

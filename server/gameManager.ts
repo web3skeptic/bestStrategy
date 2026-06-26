@@ -1,18 +1,45 @@
 import { WebSocket } from 'ws';
 import { ClientSession, RoomState } from './types';
-import { ClientMessage, ServerMessage, RoomSummary } from '../src/protocol';
+import { ClientMessage, ServerMessage, RoomSummary, ActiveGameSummary } from '../src/protocol';
 import {
   upsertPlayer, createRoom, joinRoom, setRoomStatus,
   getOpenRooms, getRoomById, saveGameState, loadGameState,
 } from './db';
 import { serialize, deserialize, SerializedGameState } from '../src/serializer';
-import { createGameState, resetCounters, selectUnit, selectTemple, deselectAll, moveUnit, attackUnit, canCaptureTemple, captureTemple, spawnUnit, endTurn, upgradeTemple, researchTech, buildTeleportPair } from '../src/game';
-import { GameState } from '../src/types';
+import { createGameState, selectUnit, selectTemple, deselectAll } from '../src/game';
+import { GameState, HexCoord, UnitType, TechId } from '../src/types';
+import { headlessSessions, setHeadlessSpectatorPush } from './headlessApi';
+import { resyncCounters } from './stateUtils';
+import {
+  executeAction,
+  UnifiedActionName,
+  computeUnitActions,
+  computePlayerLegalMoves,
+  buildRulesPayload,
+} from './actionDispatcher';
 
 // ── In-memory session/room store ──
 
 const sessions = new Map<WebSocket, ClientSession>();
 const rooms    = new Map<string, RoomState>();
+const hlSpectators = new Map<string, ClientSession[]>();
+
+// ── Push state updates to headless spectators ──
+
+export function pushHeadlessStateUpdate(gameId: string): void {
+  const specs = hlSpectators.get(gameId);
+  if (!specs || specs.length === 0) return;
+  const hl = headlessSessions.get(gameId);
+  if (!hl) return;
+  const serialized = serialize(hl.gameState);
+  const strippedState = stripSelectionState(serialized);
+  for (const spec of specs) {
+    send(spec.ws, { type: 'state_update', state: strippedState, lastAction: '' });
+  }
+}
+
+// Register spectator push callback with headlessApi
+setHeadlessSpectatorPush(pushHeadlessStateUpdate);
 
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
@@ -26,32 +53,19 @@ function broadcast(room: RoomState, msg: ServerMessage): void {
   }
 }
 
+function broadcastToSpectators(room: RoomState, msg: ServerMessage): void {
+  for (const spec of room.spectators) {
+    send(spec.ws, msg);
+  }
+}
+
 function getSession(ws: WebSocket): ClientSession {
   let sess = sessions.get(ws);
   if (!sess) {
-    sess = { ws, username: null, roomId: null, playerSlot: null };
+    sess = { ws, username: null, roomId: null, playerSlot: null, isSpectator: false };
     sessions.set(ws, sess);
   }
   return sess;
-}
-
-// ── Counter resync after deserialize ──
-
-function resyncCounters(state: GameState): void {
-  let unitMax = 0, templeMax = 0, tpMax = 0;
-  for (const u of state.units) {
-    const n = parseInt(u.id.replace('unit_', ''), 10);
-    if (!isNaN(n) && n >= unitMax) unitMax = n + 1;
-  }
-  for (const t of state.temples) {
-    const n = parseInt(t.id.replace('temple_', ''), 10);
-    if (!isNaN(n) && n >= templeMax) templeMax = n + 1;
-  }
-  for (const tp of state.teleportBuildings) {
-    const n = parseInt(tp.id.replace('tp_', ''), 10);
-    if (!isNaN(n) && n >= tpMax) tpMax = n + 1;
-  }
-  resetCounters(unitMax, templeMax, tpMax);
 }
 
 // ── Push state update ──
@@ -92,6 +106,10 @@ function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: 0 | 1,
     if (actingSess) send(actingSess.ws, { type: 'state_update', state: serialized, lastAction });
   }
 
+  // Always send full (stripped) state to spectators on any broadcast
+  const spectatorState = stripSelectionState(serialized);
+  broadcastToSpectators(room, { type: 'state_update', state: spectatorState, lastAction });
+
   saveGameState(room.id, JSON.stringify(serialized));
 
   if (gameOver) {
@@ -111,11 +129,23 @@ export function handleDisconnect(ws: WebSocket): void {
   if (sess?.roomId) {
     const room = rooms.get(sess.roomId);
     if (room) {
-      const other = room.sessions[sess.playerSlot === 0 ? 1 : 0];
-      if (other) send(other.ws, { type: 'opponent_disconnected' });
-      // Keep room in memory for rejoin; nullify the slot
-      room.sessions[sess.playerSlot!] = null;
+      if (sess.isSpectator) {
+        // Remove spectator from room
+        room.spectators = room.spectators.filter(s => s.ws !== ws);
+      } else {
+        const other = room.sessions[sess.playerSlot === 0 ? 1 : 0];
+        if (other) send(other.ws, { type: 'opponent_disconnected' });
+        // Keep room in memory for rejoin; nullify the slot
+        room.sessions[sess.playerSlot!] = null;
+      }
     }
+  }
+  // Headless spectators live in hlSpectators (keyed by headless gameId), not in
+  // `rooms`, so the cleanup above never reaches them. Remove this ws from any
+  // headless spectator list it appears in.
+  for (const [gameId, specs] of hlSpectators) {
+    const filtered = specs.filter(s => s.ws !== ws);
+    if (filtered.length !== specs.length) hlSpectators.set(gameId, filtered);
   }
   sessions.delete(ws);
 }
@@ -132,8 +162,49 @@ export function handleMessage(ws: WebSocket, raw: string): void {
     case 'join_room': return handleJoinRoom(sess, msg.roomId);
     case 'list_rooms': return handleListRooms(sess);
     case 'rejoin_room': return handleRejoinRoom(sess, msg.roomId);
+    case 'list_games': return handleListGames(sess);
+    case 'spectate': return handleSpectate(sess, msg.gameId);
+    case 'request_legal_moves': return handleLegalMovesQuery(sess, msg.unitId);
+    case 'request_rules': return handleRulesQuery(sess);
     default: return handleAction(sess, msg);
   }
+}
+
+// ── Read-only queries (no state mutation, no broadcast) ──
+
+function handleLegalMovesQuery(sess: ClientSession, unitId: string | undefined): void {
+  if (!sess.roomId || sess.playerSlot === null) {
+    send(sess.ws, { type: 'action_error', message: 'Not in a room' });
+    return;
+  }
+  const room = rooms.get(sess.roomId);
+  if (!room || !room.state) {
+    send(sess.ws, { type: 'action_error', message: 'Game not started' });
+    return;
+  }
+  const state = room.state;
+  if (unitId) {
+    // Per-unit query: only allowed for the requester's own unit.
+    const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+    if (!unit) {
+      send(sess.ws, { type: 'legal_moves', unitId, actions: [], legalMoves: null });
+      return;
+    }
+    if (unit.playerId !== sess.playerSlot) {
+      send(sess.ws, { type: 'action_error', message: 'Cannot query legal moves for opponent unit' });
+      return;
+    }
+    const actions = computeUnitActions(state, unit) as unknown as Record<string, unknown>[];
+    send(sess.ws, { type: 'legal_moves', unitId, actions, legalMoves: null });
+    return;
+  }
+  // Whole-player query.
+  const legalMoves = computePlayerLegalMoves(state, sess.playerSlot) as unknown as Record<string, unknown>;
+  send(sess.ws, { type: 'legal_moves', unitId: null, actions: [], legalMoves });
+}
+
+function handleRulesQuery(sess: ClientSession): void {
+  send(sess.ws, { type: 'rules', rules: buildRulesPayload() });
 }
 
 function handleLogin(sess: ClientSession, username: string): void {
@@ -154,6 +225,7 @@ function handleCreateRoom(sess: ClientSession): void {
     id: roomId,
     status: 'open',
     sessions: [sess, null],
+    spectators: [],
     state: null,
   };
   rooms.set(roomId, room);
@@ -177,7 +249,7 @@ function handleJoinRoom(sess: ClientSession, roomId: string): void {
 
   let room = rooms.get(roomId);
   if (!room) {
-    room = { id: roomId, status: 'active', sessions: [null, null], state: null };
+    room = { id: roomId, status: 'active', sessions: [null, null], spectators: [], state: null };
     rooms.set(roomId, room);
   }
   room.sessions[1] = sess;
@@ -228,7 +300,7 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
   if (slot === null) { send(sess.ws, { type: 'error', message: 'Not a player in this room' }); return; }
 
   if (!room) {
-    room = { id: roomId, status: dbRoom.status as 'open' | 'active' | 'done', sessions: [null, null], state: null };
+    room = { id: roomId, status: dbRoom.status as 'open' | 'active' | 'done', sessions: [null, null], spectators: [], state: null };
     rooms.set(roomId, room);
   }
 
@@ -258,7 +330,182 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
   }
 }
 
+// ── List active games (for spectator lobby) ──
+
+// Single source of truth for the active-games summary, built from both the
+// live PvP rooms and the headless sessions. Used by the WS list_games handler
+// and the REST getter below.
+function buildActiveGames(): ActiveGameSummary[] {
+  const games: ActiveGameSummary[] = [];
+  for (const [id, room] of rooms) {
+    if (!room.state || room.status === 'open') continue;
+    const p1 = room.state.players[0];
+    const p2 = room.state.players[1];
+    const currentPlayer = room.state.players[room.state.currentPlayerIndex];
+    games.push({
+      gameId: id,
+      player1Name: p1?.name ?? 'Player 1',
+      player2Name: p2?.name ?? 'Player 2',
+      turnNumber: room.state.turnNumber,
+      currentPlayerName: currentPlayer?.name ?? '?',
+      status: room.status as 'active' | 'done',
+      spectatorCount: room.spectators.length,
+    });
+  }
+  for (const [id, hl] of headlessSessions) {
+    const p1 = hl.gameState.players[0];
+    const p2 = hl.gameState.players[1];
+    const currentPlayer = hl.gameState.players[hl.gameState.currentPlayerIndex];
+    games.push({
+      gameId: id,
+      player1Name: p1?.name ?? 'Player 1',
+      player2Name: p2?.name ?? 'Player 2',
+      turnNumber: hl.gameState.turnNumber,
+      currentPlayerName: currentPlayer?.name ?? '?',
+      status: hl.gameState.phase === 'gameOver' ? 'done' : 'active',
+      spectatorCount: 0,
+    });
+  }
+  return games;
+}
+
+function handleListGames(sess: ClientSession): void {
+  send(sess.ws, { type: 'game_list', games: buildActiveGames() });
+}
+
+// ── Public getter for REST API ──
+
+export function getActiveGames(): ActiveGameSummary[] {
+  return buildActiveGames();
+}
+
+// ── Spectate a game ──
+
+function handleSpectate(sess: ClientSession, gameId: string): void {
+  if (!sess.username) { send(sess.ws, { type: 'error', message: 'Login first' }); return; }
+
+  // Check headless games first
+  const hl = headlessSessions.get(gameId);
+  if (hl) {
+    // Remove from old room if any
+    if (sess.roomId) {
+      const oldRoom = rooms.get(sess.roomId);
+      if (oldRoom && sess.isSpectator) {
+        oldRoom.spectators = oldRoom.spectators.filter(s => s.ws !== sess.ws);
+      }
+    }
+    sess.roomId = gameId;
+    sess.playerSlot = null;
+    sess.isSpectator = true;
+    // Store in a special headless spectators list (guard against duplicates)
+    if (!hlSpectators.has(gameId)) hlSpectators.set(gameId, []);
+    const hlList = hlSpectators.get(gameId)!;
+    if (!hlList.includes(sess)) hlList.push(sess);
+
+    const serialized = serialize(hl.gameState);
+    const strippedState = stripSelectionState(serialized);
+    send(sess.ws, {
+      type: 'spectate_start',
+      state: strippedState,
+      player1Name: hl.gameState.players[0]?.name ?? 'Player 1',
+      player2Name: hl.gameState.players[1]?.name ?? 'Player 2',
+    });
+    return;
+  }
+
+  const room = rooms.get(gameId);
+  if (!room || !room.state) {
+    send(sess.ws, { type: 'error', message: 'Game not found' });
+    return;
+  }
+
+  // If already spectating another room, remove from old room
+  if (sess.roomId) {
+    const oldRoom = rooms.get(sess.roomId);
+    if (oldRoom && sess.isSpectator) {
+      oldRoom.spectators = oldRoom.spectators.filter(s => s.ws !== sess.ws);
+    }
+  }
+
+  sess.roomId = gameId;
+  sess.playerSlot = null;
+  sess.isSpectator = true;
+  if (!room.spectators.includes(sess)) room.spectators.push(sess);
+
+  const serialized = serialize(room.state);
+  const strippedState = stripSelectionState(serialized);
+
+  send(sess.ws, {
+    type: 'spectate_start',
+    state: strippedState,
+    player1Name: room.state.players[0]?.name ?? 'Player 1',
+    player2Name: room.state.players[1]?.name ?? 'Player 2',
+  });
+}
+
+// ── Map a legacy WS message into a unified-dispatcher action ──
+// Returns null if the message is UI-only (select/deselect — handled separately).
+// Returns { error } if the legacy params are malformed (missing/ill-shaped
+// required fields) so the caller can surface an action_error instead of letting
+// a TypeError throw out of the handler.
+type LegacyMapResult =
+  | { action: UnifiedActionName; params: Record<string, unknown> }
+  | { error: string }
+  | null;
+
+// A HexCoord is valid when it has numeric q and r.
+function isHexCoord(v: unknown): v is HexCoord {
+  return typeof v === 'object' && v !== null
+    && typeof (v as { q?: unknown }).q === 'number'
+    && typeof (v as { r?: unknown }).r === 'number';
+}
+
+function legacyToUnified(
+  state: GameState,
+  msg: ClientMessage,
+): LegacyMapResult {
+  switch (msg.type) {
+    case 'action_move':
+      if (!isHexCoord(msg.dest)) return { error: 'Invalid move: missing destination hex' };
+      return { action: 'move', params: { unitId: state.selectedUnitId, to: msg.dest } };
+    case 'action_attack': {
+      if (!isHexCoord(msg.targetPos)) return { error: 'Invalid attack: missing target position' };
+      // Legacy carries targetPos; dispatcher wants targetId. Resolve here so
+      // the dispatcher contract stays uniform.
+      const target = state.units.find(u => u.hp > 0 && u.pos.q === msg.targetPos.q && u.pos.r === msg.targetPos.r);
+      return { action: 'attack', params: { unitId: state.selectedUnitId, targetId: target?.id } };
+    }
+    case 'action_spawn':
+      if (typeof msg.unitType !== 'string') return { error: 'Invalid spawn: missing unitType' };
+      if (typeof msg.templeId !== 'string') return { error: 'Invalid spawn: missing templeId' };
+      return { action: 'recruit', params: { unitType: msg.unitType, templeId: msg.templeId } };
+    case 'action_capture':
+      // Uses current selection; dispatcher will fall back to state.selectedUnitId.
+      return { action: 'capture', params: {} };
+    case 'action_upgrade_temple':
+      if (typeof msg.templeId !== 'string') return { error: 'Invalid upgrade: missing templeId' };
+      return { action: 'upgrade-temple', params: { templeId: msg.templeId } };
+    case 'action_research':
+      if (typeof msg.techId !== 'string') return { error: 'Invalid research: missing techId' };
+      return { action: 'research', params: { techId: msg.techId } };
+    case 'action_build_teleport':
+      if (typeof msg.templeIdA !== 'string') return { error: 'Invalid build-teleport: missing templeId' };
+      if (!isHexCoord(msg.posA) || !isHexCoord(msg.posB)) return { error: 'Invalid build-teleport: missing position(s)' };
+      return { action: 'build-teleport', params: { templeId: msg.templeIdA, pos: msg.posA, targetPos: msg.posB } };
+    case 'action_end_turn':
+      return { action: 'end-turn', params: {} };
+    case 'action_resign':
+      return { action: 'resign', params: {} };
+    default:
+      return null;
+  }
+}
+
 function handleAction(sess: ClientSession, msg: ClientMessage): void {
+  if (sess.isSpectator) {
+    send(sess.ws, { type: 'action_error', message: 'Spectators cannot perform actions' });
+    return;
+  }
   if (!sess.roomId || sess.playerSlot === null) {
     send(sess.ws, { type: 'action_error', message: 'Not in a room' });
     return;
@@ -268,82 +515,66 @@ function handleAction(sess: ClientSession, msg: ClientMessage): void {
     send(sess.ws, { type: 'action_error', message: 'Game not started' });
     return;
   }
+  const state = room.state;
 
-  // Turn guard
-  if (room.state.currentPlayerIndex !== sess.playerSlot) {
-    send(sess.ws, { type: 'action_error', message: 'Not your turn' });
+  // ── UI-only selection messages: not game-state mutations, so they don't
+  // broadcast to the opponent. Don't even need to run through the dispatcher.
+  if (msg.type === 'action_select_unit') {
+    if (state.currentPlayerIndex !== sess.playerSlot) {
+      send(sess.ws, { type: 'action_error', message: 'Not your turn' });
+      return;
+    }
+    selectUnit(state, msg.unitId);
+    pushStateUpdate(room, msg.type, sess.playerSlot, false);
+    return;
+  }
+  if (msg.type === 'action_select_temple') {
+    if (state.currentPlayerIndex !== sess.playerSlot) {
+      send(sess.ws, { type: 'action_error', message: 'Not your turn' });
+      return;
+    }
+    selectTemple(state, msg.templeId);
+    pushStateUpdate(room, msg.type, sess.playerSlot, false);
+    return;
+  }
+  if (msg.type === 'action_deselect') {
+    deselectAll(state);
+    pushStateUpdate(room, msg.type, sess.playerSlot, false);
     return;
   }
 
-  const state = room.state;
-  let lastAction: string = msg.type;
-
-  switch (msg.type) {
-    case 'action_select_unit':
-      selectUnit(state, msg.unitId);
-      break;
-    case 'action_select_temple':
-      selectTemple(state, msg.templeId);
-      break;
-    case 'action_deselect':
-      deselectAll(state);
-      break;
-    case 'action_move': {
-      const result = moveUnit(state, msg.dest);
-      if (!result.moved) { send(sess.ws, { type: 'action_error', message: 'Invalid move' }); return; }
-      lastAction = `move to (${msg.dest.q},${msg.dest.r})`;
-      break;
-    }
-    case 'action_attack': {
-      const result = attackUnit(state, msg.targetPos);
-      if (!result) { send(sess.ws, { type: 'action_error', message: 'Invalid attack' }); return; }
-      lastAction = `attack at (${msg.targetPos.q},${msg.targetPos.r}) — ${result.damageDealt} dmg`;
-      break;
-    }
-    case 'action_spawn': {
-      const ok = spawnUnit(state, msg.templeId, msg.unitType);
-      if (!ok) { send(sess.ws, { type: 'action_error', message: 'Cannot spawn unit' }); return; }
-      lastAction = `spawn ${msg.unitType}`;
-      break;
-    }
-    case 'action_capture': {
-      const unit = state.units.find(u => u.id === state.selectedUnitId);
-      if (!unit) { send(sess.ws, { type: 'action_error', message: 'No unit selected' }); return; }
-      const temple = canCaptureTemple(state, unit);
-      if (!temple) { send(sess.ws, { type: 'action_error', message: 'Cannot capture' }); return; }
-      captureTemple(state, unit, temple);
-      lastAction = `capture temple`;
-      break;
-    }
-    case 'action_upgrade_temple': {
-      const ok = upgradeTemple(state, msg.templeId);
-      if (!ok) { send(sess.ws, { type: 'action_error', message: 'Cannot upgrade' }); return; }
-      lastAction = `upgrade temple`;
-      break;
-    }
-    case 'action_research': {
-      const ok = researchTech(state, msg.techId);
-      if (!ok) { send(sess.ws, { type: 'action_error', message: 'Cannot research' }); return; }
-      lastAction = `research ${msg.techId}`;
-      break;
-    }
-    case 'action_build_teleport': {
-      const ok = buildTeleportPair(state, msg.templeIdA, msg.posA, msg.posB);
-      if (!ok) { send(sess.ws, { type: 'action_error', message: 'Cannot build teleport' }); return; }
-      lastAction = `build teleport pair`;
-      break;
-    }
-    case 'action_end_turn': {
-      endTurn(state);
-      lastAction = `end turn`;
-      pushStateUpdate(room, lastAction, sess.playerSlot, true); // broadcast to both
-      return;
-    }
-    default:
-      send(sess.ws, { type: 'action_error', message: 'Unknown action' });
-      return;
+  // ── Mutating actions go through the shared dispatcher. ──
+  // Accept both: (a) the new unified shape `{ type: 'action', action, params }`
+  // for bots/agents, and (b) all legacy `action_*` messages used by the FE.
+  let unified: { action: UnifiedActionName; params: Record<string, unknown> } | { error: string } | null;
+  if (msg.type === 'action') {
+    unified = { action: msg.action as UnifiedActionName, params: (msg.params ?? {}) as Record<string, unknown> };
+  } else {
+    unified = legacyToUnified(state, msg);
+  }
+  if (!unified) {
+    send(sess.ws, { type: 'action_error', message: `Unknown action: ${msg.type}` });
+    return;
+  }
+  if ('error' in unified) {
+    // Malformed legacy params — surface a proper action_error instead of
+    // letting a TypeError propagate out of the message handler.
+    send(sess.ws, { type: 'action_error', message: unified.error });
+    return;
   }
 
-  // Intermediate action: only send back to the acting player
-  pushStateUpdate(room, lastAction, sess.playerSlot, false);
+  const result = executeAction(state, sess.playerSlot, unified.action, unified.params);
+
+  if (!result.ok) {
+    // Enriched error: include legalMoves so agents can recover without polling.
+    send(sess.ws, {
+      type: 'action_error',
+      message: result.error,
+      legalMoves: result.legalMoves as unknown as Record<string, unknown>,
+    });
+    return;
+  }
+
+  const lastAction = result.log.join('; ') || unified.action;
+  pushStateUpdate(room, lastAction, sess.playerSlot, result.broadcastToBoth);
 }

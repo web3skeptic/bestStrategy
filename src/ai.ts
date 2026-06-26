@@ -55,12 +55,15 @@ function findAttackTarget(state: GameState, unit: Unit): Unit | null {
   return best;
 }
 
-function calcDamage(atk: number, def: number, encMult: number): number {
+// Mirrors src/game.ts calculateDamage exactly: a SINGLE round of
+// multiplier * enc * typeBonus * (atk - def). typeBonus is folded INTO the
+// round here so callers must NOT round again after applying a type bonus.
+function calcDamage(atk: number, def: number, encMult: number, typeBonus = 1): number {
   const u1 = Math.random();
   const u2 = Math.random();
   const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   const multiplier = Math.max(0.5, Math.min(1.5, 1.0 + z * 0.2));
-  return Math.max(0, Math.round(multiplier * encMult * (atk - def)));
+  return Math.max(0, Math.round(multiplier * encMult * typeBonus * (atk - def)));
 }
 
 function doAIAttack(state: GameState, attacker: Unit, target: Unit): void {
@@ -70,10 +73,12 @@ function doAIAttack(state: GameState, attacker: Unit, target: Unit): void {
   const targetDef = getEffectiveDefense(state, target);
   const attackerDef = getEffectiveDefense(state, attacker);
 
-  // Apply type bonus multiplier
-  const typeBonus = attacker.stats.bonusAgainst?.[target.type] ?? 1;
+  // Apply type bonus multipliers (attack bonus / defense bonus)
+  const typeBonus = (attacker.stats.attackBonusAgainst?.[target.type] ?? 1) / (target.stats.defenseBonusAgainst?.[attacker.type] ?? 1);
 
-  const dmg = Math.round(calcDamage(getEffectiveAttack(state, attacker), targetDef, targetEnc.attackMultiplier) * typeBonus);
+  // Fold typeBonus into the single round so this matches the engine's
+  // calculateDamage exactly: round(multiplier * enc * typeBonus * (atk - def)).
+  const dmg = calcDamage(getEffectiveAttack(state, attacker), targetDef, targetEnc.attackMultiplier, typeBonus);
   target.hp -= dmg;
   if (target.hp <= 0) target.hp = 0;
 
@@ -168,6 +173,18 @@ export function runAITurn(state: GameState): AIAction[] {
   for (const unit of aiUnits) {
     if (unit.hasAttacked) continue;
 
+    // Capture a temple we're standing on. captureTemple only sets hasCaptured
+    // (not hasMoved/hasAttacked), so fall through to still move+attack this turn.
+    const capturable = canCaptureTemple(state, unit);
+    if (capturable) {
+      captureTemple(state, unit, capturable);
+      actions.push({
+        type: 'upgrade',
+        pos: { ...unit.pos },
+        description: `AI captures temple at (${unit.pos.q},${unit.pos.r})`,
+      });
+    }
+
     const immediateTarget = findAttackTarget(state, unit);
     if (immediateTarget) {
       doAIAttack(state, unit, immediateTarget);
@@ -188,6 +205,7 @@ export function runAITurn(state: GameState): AIAction[] {
       unit.pos = { ...moveHex };
       unit.hasMoved = true;
 
+      // no current unit sets this; kept as a forward-compat hook
       if (unit.stats.cantShootAfterMove) {
         actions.push({
           type: 'move',
@@ -221,7 +239,7 @@ export function runAITurn(state: GameState): AIAction[] {
 //
 // Based on simulation results: Economic strategy wins ~99% of games.
 // Phase 1: Upgrade home temple toward level 3; keep ≥1 warrior as guard.
-// Phase 2 (home temple ≥ 3): Research unlock_spearman; spawn spearsmen+archers 2:1.
+// Phase 2 (home temple ≥ 3): Research unlock_spearsman; spawn spearsmen+archers 2:1.
 // Always: upgrade captured neutral temples to level 2; capture temples explicitly.
 
 export function runHardAITurn(state: GameState): AIAction[] {
@@ -230,14 +248,21 @@ export function runHardAITurn(state: GameState): AIAction[] {
   if (player.id !== AI_PLAYER_ID) return actions;
 
   const aiTemples = state.temples.filter(t => t.ownerId === AI_PLAYER_ID);
-  // AI's starting home temple (q:4, r:-2 per createGameState)
-  const homeTemple = aiTemples.find(t => t.pos.q === 4 && t.pos.r === -2) ?? aiTemples[0];
+  // Identify the AI's home (starting) temple. createGameState seeds player 1's
+  // start temple at {q:4, r:-2} — see createTemple({ q: 4, r: -2 }, 1) in
+  // game.ts. There's currently no ownedAtStart flag / stable temple id to key
+  // off, so we match the known home coordinate and fall back to the first owned
+  // temple if the map layout ever changes. (If a durable signal is added, prefer
+  // it here.)
+  const HOME_TEMPLE_POS: HexCoord = { q: 4, r: -2 };
+  const homeTemple =
+    aiTemples.find(t => t.pos.q === HOME_TEMPLE_POS.q && t.pos.r === HOME_TEMPLE_POS.r) ?? aiTemples[0];
   const homeLevel = homeTemple?.level ?? 0;
   const phase2 = homeLevel >= 3;
 
-  // 1. Research unlock_spearman once in phase 2
-  if (phase2 && canResearch(state, 'unlock_spearman')) {
-    researchTech(state, 'unlock_spearman');
+  // 1. Research unlock_spearsman once in phase 2
+  if (phase2 && canResearch(state, 'unlock_spearsman')) {
+    researchTech(state, 'unlock_spearsman');
   }
 
   // 2. Upgrade home temple toward level 3
@@ -302,7 +327,11 @@ export function runHardAITurn(state: GameState): AIAction[] {
   for (const unit of aiUnits) {
     if (unit.hasAttacked) continue;
 
-    // Explicit temple capture: if standing on capturable temple, capture it
+    // Explicit temple capture: if standing on capturable temple, capture it.
+    // captureTemple only sets hasCaptured (not hasMoved/hasAttacked), so we
+    // fall through to the normal attack/move logic and let this unit also act
+    // this turn instead of wasting its move+attack. canCaptureTemple returns
+    // null once hasCaptured is set, so no double-capture is possible.
     const capturableTemple = canCaptureTemple(state, unit);
     if (capturableTemple) {
       captureTemple(state, unit, capturableTemple);
@@ -311,7 +340,6 @@ export function runHardAITurn(state: GameState): AIAction[] {
         pos: { ...unit.pos },
         description: `Hard AI captures temple at (${unit.pos.q},${unit.pos.r})`,
       });
-      continue;
     }
 
     const immediateTarget = findAttackTarget(state, unit);
@@ -350,6 +378,7 @@ export function runHardAITurn(state: GameState): AIAction[] {
       unit.pos = { ...moveHex };
       unit.hasMoved = true;
 
+      // no current unit sets this; kept as a forward-compat hook
       if (unit.stats.cantShootAfterMove) {
         actions.push({
           type: 'move',

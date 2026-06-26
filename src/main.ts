@@ -1,6 +1,6 @@
-import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats } from './types';
-import { pixelToHex, hexEqual, hexKey } from './hex';
-import { Renderer } from './renderer';
+import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player } from './types';
+import { hexEqual, hexKey } from './hex';
+import { Renderer3D } from './renderer3d';
 import {
   createGameState,
   getCurrentPlayer,
@@ -38,10 +38,34 @@ import {
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
 } from './game';
+import { getUnitThumbnail, getTempleUpgradeThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { deserialize } from './serializer';
 import type { ServerMessage } from './protocol';
+
+// ── Unit artwork (bundled by Vite) — same sprites the board renderer uses ──
+import warriorImg from './assets/units/warrior/warrior_standing.png';
+import archerImg from './assets/units/archer/archer_standing.png';
+import catapultImg from './assets/units/catapult/catapult_standing.png';
+import horseriderImg from './assets/units/horserider/horserider_standing.png';
+import heavyknightImg from './assets/units/heavyknight/heavyknight_standing.png';
+import spearsmanImg from './assets/units/spearsman/spearsman_standing.png';
+import healerImg from './assets/units/healer/healer_standing.png';
+import damageBoosterImg from './assets/units/damagebooster/damagebooster_standing.png';
+import rangeBoosterImg from './assets/units/rangebooster/rangebooster_standing.png';
+
+const UNIT_ART: Record<UnitType, string> = {
+  warrior:      warriorImg,
+  archer:       archerImg,
+  catapult:     catapultImg,
+  horserider:   horseriderImg,
+  heavyknight:  heavyknightImg,
+  spearsman:    spearsmanImg,
+  healer:       healerImg,
+  damageBooster: damageBoosterImg,
+  rangeBooster:  rangeBoosterImg,
+};
 
 const AI_PLAYER_ID = 1;
 const AI_DELAY_MS = 600;
@@ -56,14 +80,21 @@ let aiEnabled = true;
 let aiDifficulty: 'normal' | 'hard' = 'normal';
 let gameStarted = false;
 let multiplayerMode = false;
+let spectatorMode = false;
 let myPlayerSlot: 0 | 1 = 0;
 let mpClient: MultiplayerClient | null = null;
 
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 
 let state: GameState = createGameState();
-const renderer = new Renderer(canvas);
+const renderer = new Renderer3D(canvas);
 renderer.init(state.mapRadius);
+// End Turn / Research are rendered as Three.js HUD buttons (bottom-centre) with
+// 3D icons instead of text: a forward arrow for End Turn, a flask for Research.
+renderer.setHudButtons([
+  { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
+  { id: 'research', label: 'Research', icon: 'flask' },
+]);
 
 // ── UI elements ──
 const menuOverlay = document.getElementById('menuOverlay')!;
@@ -77,15 +108,6 @@ const popInfoEl = document.getElementById('popInfo')!;
 const endTurnBtn = document.getElementById('endTurnBtn')!;
 const restartBtn = document.getElementById('restartBtn') as HTMLButtonElement;
 const spawnBar = document.getElementById('spawnBar')!;
-const spawnWarriorBtn = document.getElementById('spawnWarrior')!;
-const spawnArcherBtn = document.getElementById('spawnArcher')!;
-const spawnCatapultBtn = document.getElementById('spawnCatapult')!;
-const spawnHorseriderBtn = document.getElementById('spawnHorserider')!;
-const spawnHeavyknightBtn = document.getElementById('spawnHeavyknight')!;
-const spawnSpearsmanBtn = document.getElementById('spawnSpearsman')!;
-const spawnHealerBtn = document.getElementById('spawnHealer')!;
-const spawnDamageBoosterBtn = document.getElementById('spawnDamageBooster')!;
-const spawnRangeBoosterBtn = document.getElementById('spawnRangeBooster')!;
 const captureBtn = document.getElementById('captureBtn')!;
 const upgradeTempleBtn = document.getElementById('upgradeTempleBtn')!;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
@@ -127,6 +149,10 @@ const lobbyRoomBack = document.getElementById('lobbyRoomBack')!;
 const lobbyRoomCode = document.getElementById('lobbyRoomCode')!;
 const lobbyWaitingStatus = document.getElementById('lobbyWaitingStatus')!;
 const lobbyWaitingBack = document.getElementById('lobbyWaitingBack')!;
+const lobbyGameListEl = document.getElementById('lobbyGameListEl')!;
+const lobbyRefreshGamesBtn = document.getElementById('lobbyRefreshGamesBtn')!;
+const spectatorBanner = document.getElementById('spectatorBanner')!;
+const spectatorInfo = document.getElementById('spectatorInfo')!;
 
 function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting'): void {
   lobbyMain.classList.toggle('hidden', panel !== 'main');
@@ -155,6 +181,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       lobbyWelcomeMsg.textContent = `Logged in as ${event.username}`;
       showLobbyPanel('rooms');
       mpClient!.listRooms();
+      mpClient!.listGames();
       break;
     }
     case 'error': {
@@ -169,11 +196,12 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       break;
     }
     case 'room_list': {
+      const rooms = event.rooms ?? [];
       lobbyRoomListEl.innerHTML = '';
-      if (event.rooms.length === 0) {
+      if (rooms.length === 0) {
         lobbyRoomListEl.innerHTML = '<div style="color:#556;font-size:12px;padding:4px">No open rooms</div>';
       }
-      for (const room of event.rooms) {
+      for (const room of rooms) {
         const item = document.createElement('div');
         item.className = 'lobby-room-item';
         item.innerHTML = `<span>${room.id} — ${room.player1Name}</span>`;
@@ -188,6 +216,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       break;
     }
     case 'game_start': {
+      cancelAITurn();
       myPlayerSlot = event.playerSlot;
       multiplayerMode = true;
       aiEnabled = false;
@@ -222,6 +251,46 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       logCombat('Opponent reconnected.');
       break;
     }
+    case 'game_list': {
+      const games = event.games ?? [];
+      lobbyGameListEl.innerHTML = '';
+      if (games.length === 0) {
+        lobbyGameListEl.innerHTML = '<div style="color:#556;font-size:12px;padding:4px">No active games</div>';
+      }
+      for (const game of games) {
+        const item = document.createElement('div');
+        item.className = 'lobby-room-item';
+        const statusLabel = game.status === 'done' ? ' (finished)' : '';
+        const specLabel = game.spectatorCount > 0 ? ` [${game.spectatorCount} watching]` : '';
+        item.innerHTML = `<span>${game.player1Name} vs ${game.player2Name}${statusLabel}${specLabel}</span>`;
+        const btn = document.createElement('button');
+        btn.textContent = 'Watch';
+        btn.addEventListener('click', () => {
+          mpClient!.spectateGame(game.gameId);
+        });
+        item.appendChild(btn);
+        lobbyGameListEl.appendChild(item);
+      }
+      break;
+    }
+    case 'spectate_start': {
+      cancelAITurn();
+      spectatorMode = true;
+      multiplayerMode = true;
+      aiEnabled = false;
+      state = deserialize(event.state);
+      renderer.init(state.mapRadius);
+      gameStarted = true;
+      buildingTeleport = null;
+      hideMenu();
+      closeTechTree();
+      combatLog.innerHTML = '';
+      spectatorBanner.style.display = 'block';
+      spectatorInfo.textContent = `${event.player1Name} vs ${event.player2Name}`;
+      logCombat(`--- Spectating: ${event.player1Name} vs ${event.player2Name} ---`);
+      render();
+      break;
+    }
   }
 }
 
@@ -237,6 +306,8 @@ lobbyWaitingBack.addEventListener('click', () => {
   mpClient?.disconnect();
   mpClient = null;
   multiplayerMode = false;
+  spectatorMode = false;
+  spectatorBanner.style.display = 'none';
   showLobbyPanel('main');
 });
 
@@ -247,12 +318,11 @@ lobbyLoginBtn.addEventListener('click', async () => {
   lobbyLoginStatus.className = 'lobby-status';
 
   // VITE_WS_URL lets you point at a separately-hosted server (e.g. Railway/Render).
-  // Falls back to same-origin (works with Cloudflare Tunnel / local server).
-  const wsUrl = (import.meta.env.VITE_WS_URL as string | undefined) ?? (
-    window.location.protocol === 'https:'
-      ? `wss://${window.location.host}`
-      : `ws://${window.location.host}`
-  );
+  // Falls back to same-origin under the app's base path (BASE_URL ends in '/'),
+  // so it works at root ('/ws') and under a sub-path mount ('/game/ws').
+  const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = (import.meta.env.VITE_WS_URL as string | undefined) ??
+    `${wsScheme}://${window.location.host}${import.meta.env.BASE_URL}ws`;
 
   if (!mpClient) {
     mpClient = new MultiplayerClient(wsUrl, handleMultiplayerEvent);
@@ -263,6 +333,7 @@ lobbyLoginBtn.addEventListener('click', async () => {
   } catch {
     lobbyLoginStatus.textContent = 'Could not connect to server';
     lobbyLoginStatus.className = 'lobby-status err';
+    mpClient.disconnect();
     mpClient = null;
   }
 });
@@ -278,6 +349,11 @@ lobbyCreateRoomBtn.addEventListener('click', () => {
 lobbyRefreshBtn.addEventListener('click', () => {
   lobbyRoomStatus.textContent = '';
   mpClient!.listRooms();
+  mpClient!.listGames();
+});
+
+lobbyRefreshGamesBtn.addEventListener('click', () => {
+  mpClient!.listGames();
 });
 
 lobbyJoinCodeBtn.addEventListener('click', () => {
@@ -294,8 +370,33 @@ lobbyJoinCodeInput.addEventListener('keydown', (e) => {
 
 // ── Menu ──
 
+// Disconnect from any live multiplayer game (player or spectator) and reset the
+// multiplayer flags. Safe to call when not in a multiplayer game (no-op).
+function leaveActiveGame(): void {
+  if (mpClient) {
+    mpClient.disconnect();
+    mpClient = null;
+  }
+  multiplayerMode = false;
+  spectatorMode = false;
+}
+
 function showMenu(): void {
   menuOverlay.classList.remove('hidden');
+  if (spectatorMode) {
+    // Disconnect spectator and clean up
+    leaveActiveGame();
+    spectatorBanner.style.display = 'none';
+    gameStarted = false;
+    // Show action buttons again for next game
+    endTurnBtn.style.display = '';
+    techTreeBtn.style.display = '';
+    settingsBtn.style.display = '';
+  } else if (multiplayerMode) {
+    // Leaving a live multiplayer PLAYER game — disconnect the socket so its
+    // state_update can't clobber a subsequent local game.
+    leaveActiveGame();
+  }
   if (!gameStarted) showLobbyPanel('main');
 }
 
@@ -304,7 +405,11 @@ function hideMenu(): void {
 }
 
 function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
-  multiplayerMode = false;
+  // Cancel any pending AI turn from a prior game before swapping in new state,
+  // and disconnect any live multiplayer socket so it can't clobber this game.
+  cancelAITurn();
+  leaveActiveGame();
+  spectatorBanner.style.display = 'none';
   aiEnabled = vsAI;
   aiDifficulty = difficulty;
   buildingTeleport = null;
@@ -319,8 +424,10 @@ function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): voi
   closeTechTree();
   combatLog.innerHTML = '';
   logCombat(`--- New Game (${aiEnabled ? `vs ${aiLabel}` : '2 Players'}) ---`);
-  logCombat('Player 1 goes first.');
+  logCombat(`${getCurrentPlayer(state).name} goes first.`);
+  autoSelectTemple();   // pre-select the human's temple (no-op if the AI moves first)
   render();
+  maybeRunAITurn();     // if the AI won the coin flip, let it take its first turn
 }
 
 menuVsAI.addEventListener('click', () => startGame(true, 'normal'));
@@ -331,6 +438,12 @@ menuBtn.addEventListener('click', () => showMenu());
 // ── Render & UI ──
 
 function render(): void {
+  if (spectatorMode) {
+    // Spectators always see the full board (no fog, no player-specific view)
+    renderer.render(state);
+    updateUI();
+    return;
+  }
   const waitingForOpponent = multiplayerMode
     && state.phase !== 'gameOver'
     && state.currentPlayerIndex !== myPlayerSlot;
@@ -340,27 +453,61 @@ function render(): void {
   updateUI();
 }
 
+// Tint the orange/peach gradient title toward the active player's colour while
+// keeping the warm carved-stone display look.
+function setTurnTitle(text: string, color: string): void {
+  turnInfoEl.textContent = text;
+  turnInfoEl.style.backgroundImage =
+    `linear-gradient(180deg, #ffe0bd 0%, ${color} 55%, ${color} 100%)`;
+}
+
 function updateUI(): void {
   const player = getCurrentPlayer(state);
-  turnInfoEl.style.color = player.color;
-  turnInfoEl.textContent = `${player.name}'s Turn`;
+  setTurnTitle(`${player.name}'s Turn`, player.color);
 
-  const ownedTemples = state.temples.filter(t => t.ownerId === player.id);
-  const income = ownedTemples.reduce((sum, t) => sum + t.level * TEMPLE_AURA_PER_LEVEL, 0);
-  auraInfoEl.textContent = `⚡${player.aura} (+${income}/t)`;
-  auraInfoEl.style.color = player.color;
+  // 3D HUD action buttons (End Turn / Research) — shown during an active game;
+  // End Turn is enabled only on the local player's turn.
+  const myTurn = !spectatorMode && state.phase !== 'gameOver'
+    && (multiplayerMode ? state.currentPlayerIndex === myPlayerSlot
+        : (aiEnabled ? state.currentPlayerIndex !== AI_PLAYER_ID : true));
+  renderer.setHudVisible(gameStarted && !spectatorMode);
+  renderer.updateHudButton('endTurn', myTurn);
+  renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
 
-  const popCap = getPopulationCap(state, player.id);
-  const popCount = getPopulationCount(state, player.id);
-  popInfoEl.textContent = `Pop:${popCount}/${popCap}`;
-  popInfoEl.style.color = popCount >= popCap ? '#ff8888' : '#aaa';
+  // In spectator mode, hide all action controls
+  if (spectatorMode) {
+    endTurnBtn.style.display = 'none';
+    restartBtn.style.display = 'none';
+    spawnBar.style.display = 'none';
+    captureBtn.style.display = 'none';
+    upgradeTempleBtn.style.display = 'none';
+    buildTeleportBtn.style.display = 'none';
+    techTreeBtn.style.display = 'none';
+    settingsBtn.style.display = 'none';
+    opponentTurnOverlay.classList.add('hidden');
+
+    updateStatPills(player);
+
+    if (state.phase === 'gameOver') {
+      setTurnTitle(state.winner ? `${state.winner.name} Wins!` : 'Draw!', state.winner ? state.winner.color : '#f4863a');
+    }
+    unitInfoEl.textContent = '';
+    return;
+  }
+
+  updateStatPills(player);
 
   if (state.phase === 'gameOver') {
-    turnInfoEl.textContent = state.winner ? `${state.winner.name} Wins!` : 'Draw!';
+    setTurnTitle(state.winner ? `${state.winner.name} Wins!` : 'Draw!', state.winner ? state.winner.color : '#f4863a');
     restartBtn.style.display = 'block';
   } else {
     restartBtn.style.display = 'none';
   }
+
+  // The selected temple (if any) — looked up once and reused below.
+  const selectedTemple = state.selectionMode === 'temple' && state.selectedTempleId
+    ? state.temples.find(t => t.id === state.selectedTempleId)
+    : undefined;
 
   // Selected unit info
   if (state.selectionMode === 'unit' && state.selectedUnitId) {
@@ -379,7 +526,7 @@ function updateUI(): void {
       const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+2)` : `${effDef}`;
       const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
-      const bonusNote = unit.stats.bonusAgainst ? ' [spear bonus]' : '';
+      const bonusNote = unit.stats.attackBonusAgainst || unit.stats.defenseBonusAgainst ? ' [spear bonus]' : '';
       let supportNote = '';
       if (unit.type === 'healer') supportNote = ` | ✚${HEALER_HEAL_AMOUNT}HP/t (r${SUPPORT_RANGE})`;
       if (unit.type === 'damageBooster') supportNote = ` | +${DAMAGE_BOOST_AMOUNT}ATK (r${SUPPORT_RANGE})`;
@@ -397,7 +544,7 @@ function updateUI(): void {
       buildTeleportBtn.style.display = 'none';
     }
   } else if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    const temple = state.temples.find(t => t.id === state.selectedTempleId);
+    const temple = selectedTemple;
     if (temple) {
       const unitOnTemple = getUnitAt(state, temple.pos);
       const income = temple.level * TEMPLE_AURA_PER_LEVEL;
@@ -413,8 +560,12 @@ function updateUI(): void {
       // Upgrade button
       const upgradeCost = templeUpgradeCost(temple.level);
       if (upgradeCost !== null) {
-        upgradeTempleBtn.style.display = 'block';
-        upgradeTempleBtn.textContent = `⬆ Upgrade Lv.${temple.level}→${temple.level + 1} (${upgradeCost}⚡)`;
+        upgradeTempleBtn.style.display = 'flex';
+        upgradeTempleBtn.title = `Upgrade Temple Lv.${temple.level}→${temple.level + 1}`;
+        // 3D temple model + gold up-arrow, no text — just the icon and the cost.
+        upgradeTempleBtn.innerHTML =
+          `<img class="ut-thumb" src="${getTempleUpgradeThumbnail(player.color, temple.level)}" alt="Upgrade temple" draggable="false" />` +
+          `<span class="ut-cost"><span class="ut-bolt">⚡</span>${upgradeCost}</span>`;
         upgradeTempleBtn.classList.toggle('disabled', player.aura < upgradeCost);
       } else {
         upgradeTempleBtn.style.display = 'none';
@@ -429,7 +580,7 @@ function updateUI(): void {
           : `⬡ Build Portal Pair (${TELEPORT_BUILD_COST}⚡)`;
       } else {
         buildTeleportBtn.style.display = 'none';
-        if (buildingTeleport?.templeId === temple.id) cancelBuildTeleport();
+        if (buildingTeleport?.templeId === temple.id) clearBuildTeleport();
       }
     }
     captureBtn.style.display = 'none';
@@ -438,24 +589,16 @@ function updateUI(): void {
     captureBtn.style.display = 'none';
     upgradeTempleBtn.style.display = 'none';
     buildTeleportBtn.style.display = 'none';
-    if (buildingTeleport) cancelBuildTeleport();
+    if (buildingTeleport) clearBuildTeleport();
   }
 
   // Spawn bar
   if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    const temple = state.temples.find(t => t.id === state.selectedTempleId);
+    const temple = selectedTemple;
     const unitOnTemple = temple ? getUnitAt(state, temple.pos) : true;
     if (!unitOnTemple) {
       spawnBar.style.display = 'flex';
-      updateSpawnBtn(spawnWarriorBtn, 'warrior');
-      updateSpawnBtn(spawnArcherBtn, 'archer');
-      updateSpawnBtn(spawnCatapultBtn, 'catapult');
-      updateSpawnBtn(spawnHorseriderBtn, 'horserider');
-      updateSpawnBtn(spawnHeavyknightBtn, 'heavyknight');
-      updateSpawnBtn(spawnSpearsmanBtn, 'spearsman');
-      updateSpawnBtn(spawnHealerBtn, 'healer');
-      updateSpawnBtn(spawnDamageBoosterBtn, 'damageBooster');
-      updateSpawnBtn(spawnRangeBoosterBtn, 'rangeBooster');
+      updateUnitCards();
     } else {
       spawnBar.style.display = 'none';
     }
@@ -473,11 +616,15 @@ function updateUI(): void {
 }
 
 function updateOpponentTurnOverlay(): void {
+  if (spectatorMode) {
+    opponentTurnOverlay.classList.add('hidden');
+    return;
+  }
   const isOpponentTurn = multiplayerMode
     && state.phase !== 'gameOver'
     && state.currentPlayerIndex !== myPlayerSlot;
   if (isOpponentTurn) {
-    opponentTurnNameEl.textContent = state.players[1 - myPlayerSlot].name;
+    opponentTurnNameEl.textContent = state.players[1 - myPlayerSlot]?.name ?? '';
     opponentTurnOverlay.classList.remove('hidden');
   } else {
     opponentTurnOverlay.classList.add('hidden');
@@ -489,6 +636,12 @@ function updateMyPlayerBadge(): void {
     myPlayerBadge.style.display = 'none';
     return;
   }
+  if (spectatorMode) {
+    myPlayerBadge.style.display = 'inline-block';
+    myPlayerBadge.style.color = '#e90';
+    myPlayerBadge.textContent = 'Spectator';
+    return;
+  }
   const me = state.players[myPlayerSlot];
   if (!me) return;
   myPlayerBadge.style.display = 'inline-block';
@@ -496,29 +649,116 @@ function updateMyPlayerBadge(): void {
   myPlayerBadge.textContent = `You: P${myPlayerSlot + 1}`;
 }
 
-const SPAWN_BTN_LABELS: Record<UnitType, string> = {
-  warrior:      '⚔ Warrior',
-  archer:       '🏹 Archer',
-  catapult:     '💣 Catapult',
-  horserider:   '🐎 Horserider',
-  heavyknight:  '🛡 H.Knight',
-  spearsman:    '🗡 Spearsman',
-  healer:       '✚ Healer',
-  damageBooster:'🔥 Dmg+',
-  rangeBooster: '↔ Rng+',
+// ── Stat pills (aura income + population) ──
+function updateStatPills(player: Player): void {
+  const ownedTemples = state.temples.filter(t => t.ownerId === player.id);
+  const income = ownedTemples.reduce((sum, t) => sum + t.level * TEMPLE_AURA_PER_LEVEL, 0);
+  auraInfoEl.innerHTML =
+    `<span class="pill-icon gem-icon"></span>` +
+    `<span class="pill-value">${player.aura}</span>` +
+    `<span class="pill-sub">(+${income}/t)</span>`;
+
+  const popCap = getPopulationCap(state, player.id);
+  const popCount = getPopulationCount(state, player.id);
+  popInfoEl.innerHTML =
+    `<span class="pill-icon">👥</span>` +
+    `<span class="pill-value">${popCount}/${popCap}</span>`;
+  popInfoEl.classList.toggle('pop-full', popCount >= popCap);
+}
+
+// ── Unit build cards ──
+const UNIT_CARD_NAMES: Record<UnitType, string> = {
+  warrior:      'Warrior',
+  archer:       'Archer',
+  catapult:     'Catapult',
+  horserider:   'Horserider',
+  heavyknight:  'H. Knight',
+  spearsman:    'Spearsman',
+  healer:       'Healer',
+  damageBooster: 'Dmg Boost',
+  rangeBooster:  'Rng Boost',
 };
 
-function updateSpawnBtn(btn: HTMLElement, type: UnitType): void {
+// Order matches the original spawn bar.
+const UNIT_CARD_ORDER: UnitType[] = [
+  'warrior', 'archer', 'catapult', 'horserider', 'heavyknight',
+  'spearsman', 'healer', 'damageBooster', 'rangeBooster',
+];
+
+// One reusable card element per unit type — built once, shown/hidden + updated
+// on each render so we never recreate DOM (keeps the create handler wiring stable).
+const unitCards = new Map<UnitType, HTMLElement>();
+
+function buildUnitCards(): void {
+  for (const type of UNIT_CARD_ORDER) {
+    const stats = UNIT_STATS[type];
+    const card = document.createElement('div');
+    card.className = 'unit-card disabled';
+
+    const thumb = document.createElement('img');
+    thumb.className = 'unit-card-thumb';
+    thumb.src = UNIT_ART[type];
+    thumb.alt = UNIT_CARD_NAMES[type];
+    thumb.draggable = false;
+
+    const name = document.createElement('div');
+    name.className = 'unit-card-name';
+    name.textContent = UNIT_CARD_NAMES[type];
+
+    const cost = document.createElement('div');
+    cost.className = 'unit-card-cost';
+    // cost value gets refreshed in updateUnitCards (settings can change it)
+
+    const statsRow = document.createElement('div');
+    statsRow.className = 'unit-card-stats';
+    statsRow.innerHTML =
+      `<span><span class="cs-label">HP</span>${stats.maxHp}</span>` +
+      `<span><span class="cs-label">A</span>${stats.attack}</span>` +
+      `<span><span class="cs-label">R</span>${stats.range}</span>`;
+
+    card.append(thumb, name, cost, statsRow);
+    card.addEventListener('click', () => {
+      if (card.classList.contains('disabled')) return;
+      handleSpawnBtn(type);
+    });
+
+    unitCards.set(type, card);
+    spawnBar.appendChild(card);
+  }
+}
+
+function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
-  if (!unlocked.has(type)) {
-    btn.style.display = 'none';
-    return;
+  for (const type of UNIT_CARD_ORDER) {
+    const card = unitCards.get(type)!;
+    // Match the old build menu: locked units are hidden entirely.
+    if (!unlocked.has(type)) {
+      card.style.display = 'none';
+      continue;
+    }
+    card.style.display = '';
+    const affordable = canAfford(state, type);
+    card.classList.toggle('disabled', !affordable);
+
+    // Card art = a 3D render of the unit model, team-tinted to the current
+    // player. Regenerated only when the player colour changes (cached otherwise).
+    const thumb = card.querySelector('.unit-card-thumb') as HTMLImageElement;
+    if (thumb && thumb.dataset.thumbColor !== player.color) {
+      try { thumb.src = getUnitThumbnail(type, player.color); thumb.dataset.thumbColor = player.color; }
+      catch { /* keep the PNG fallback set in buildUnitCards */ }
+    }
+
+    // Refresh cost + key stats (both editable via the settings panel).
+    const stats = UNIT_STATS[type];
+    const cost = card.querySelector('.unit-card-cost')!;
+    cost.innerHTML = `<span class="cost-icon">⚡</span>${UNIT_COSTS[type]}`;
+    const statsRow = card.querySelector('.unit-card-stats')!;
+    statsRow.innerHTML =
+      `<span><span class="cs-label">HP</span>${stats.maxHp}</span>` +
+      `<span><span class="cs-label">A</span>${stats.attack}</span>` +
+      `<span><span class="cs-label">R</span>${stats.range}</span>`;
   }
-  btn.style.display = '';
-  btn.textContent = `${SPAWN_BTN_LABELS[type]} (${UNIT_COSTS[type]})`;
-  const affordable = canAfford(state, type);
-  btn.classList.toggle('disabled', !affordable);
 }
 
 function logCombat(msg: string): void {
@@ -546,9 +786,16 @@ function enterBuildTeleport(templeId: string): void {
   render();
 }
 
-function cancelBuildTeleport(): void {
+// Clear teleport-build state WITHOUT triggering a render. Safe to call from
+// inside updateUI()/render() (avoids a nested re-entrant render).
+function clearBuildTeleport(): void {
   buildingTeleport = null;
   state.buildHexes = [];
+}
+
+// User-initiated cancel: clear state and re-render.
+function cancelBuildTeleport(): void {
+  clearBuildTeleport();
   render();
 }
 
@@ -781,7 +1028,6 @@ function appendSection(
             renderTechTree();
           }
         });
-        renderTechTree();
       });
     }
 
@@ -794,6 +1040,7 @@ function appendSection(
 
 function openTechTree(): void {
   if (!gameStarted) return;
+  if (spectatorMode) return;
   if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   renderTechTree();
@@ -810,28 +1057,29 @@ techOverlay.addEventListener('click', (e) => {
   if (e.target === techOverlay) closeTechTree();
 });
 
-// ── Canvas click/tap -> game coordinates ──
+// ── Canvas click/tap -> game coordinates (raycast onto the 3D board) ──
 function canvasEventToHex(clientX: number, clientY: number) {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  const mx = (clientX - rect.left) * dpr;
-  const my = (clientY - rect.top) * dpr;
-  const center = renderer.getCenter();
-  return pixelToHex(mx, my, renderer.getHexSize(), center.x, center.y);
+  return renderer.pickHex(clientX, clientY);
 }
 
 function handleHexClick(clientX: number, clientY: number): void {
   if (!gameStarted) return;
+  if (spectatorMode) return;
   if (state.phase === 'gameOver') return;
   if (aiRunning) return;
   if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   const hex = canvasEventToHex(clientX, clientY);
+  if (!hex) return; // clicked off the board
   const currentPlayer = getCurrentPlayer(state);
 
   // ── Unit mode: try attack ──
   if (state.selectionMode === 'unit' && state.attackHexes.some(h => hexEqual(h, hex))) {
-    sendOrCall({ type: 'action_attack', targetPos: hex }, () => {
+    const attackerId = state.selectedUnitId; // capture before the attack resolves
+    if (attackerId) renderer.faceUnitToward(attackerId, hex); // turn to face the target
+    if (multiplayerMode && mpClient) {
+      mpClient.sendAction({ type: 'action_attack', targetPos: hex });
+    } else {
       const result = attackUnit(state, hex);
       if (result) {
         const tEnc = result.targetEncirclement;
@@ -844,7 +1092,10 @@ function handleHexClick(clientX: number, clientY: number): void {
           logCombat(`  Splash: ${splash.damage} dmg${splash.killed ? ' (KILLED!)' : ''}`);
         }
       }
-    });
+      // The 3D renderer spawns a hit explosion wherever a unit's HP dropped
+      // (target, splash, AND your unit's revenge damage), driven by render().
+      render();
+    }
     return;
   }
 
@@ -878,6 +1129,8 @@ function handleHexClick(clientX: number, clientY: number): void {
   // ── Unit mode: try move ──
   if (state.selectionMode === 'unit' && state.moveHexes.some(h => hexEqual(h, hex))) {
     sendOrCall({ type: 'action_move', dest: hex }, () => {
+      const movingUnit = state.units.find(u => u.id === state.selectedUnitId);
+      if (movingUnit) renderer.startMoveAnimation(movingUnit.id, movingUnit.pos);
       const moveResult = moveUnit(state, hex);
       if (moveResult.moved) {
         const temple = getTempleAt(state, hex);
@@ -915,26 +1168,23 @@ function handleSpawnBtn(type: UnitType): void {
   if (!canAfford(state, type)) return;
   const templeId = state.selectedTempleId;
   sendOrCall({ type: 'action_spawn', templeId, unitType: type }, () => {
-    if (spawnUnit(state, templeId, type)) {
-      logCombat(`Spawned ${type} for ${UNIT_COSTS[type]} aura`);
-      const temple = state.temples.find(t => t.id === templeId);
-      if (temple) {
-        const newUnit = getUnitAt(state, temple.pos);
-        if (newUnit) selectUnit(state, newUnit.id);
+    try {
+      if (spawnUnit(state, templeId, type)) {
+        logCombat(`Spawned ${type} for ${UNIT_COSTS[type]} aura`);
+        const temple = state.temples.find(t => t.id === templeId);
+        if (temple) {
+          const newUnit = getUnitAt(state, temple.pos);
+          if (newUnit) selectUnit(state, newUnit.id);
+        }
       }
+    } catch (e: unknown) {
+      logCombat(e instanceof Error ? e.message : 'Cannot spawn unit');
     }
   });
 }
 
-spawnWarriorBtn.addEventListener('click', () => handleSpawnBtn('warrior'));
-spawnArcherBtn.addEventListener('click', () => handleSpawnBtn('archer'));
-spawnCatapultBtn.addEventListener('click', () => handleSpawnBtn('catapult'));
-spawnHorseriderBtn.addEventListener('click', () => handleSpawnBtn('horserider'));
-spawnHeavyknightBtn.addEventListener('click', () => handleSpawnBtn('heavyknight'));
-spawnSpearsmanBtn.addEventListener('click', () => handleSpawnBtn('spearsman'));
-spawnHealerBtn.addEventListener('click', () => handleSpawnBtn('healer'));
-spawnDamageBoosterBtn.addEventListener('click', () => handleSpawnBtn('damageBooster'));
-spawnRangeBoosterBtn.addEventListener('click', () => handleSpawnBtn('rangeBooster'));
+// Build the unit-card tray once; clicks are wired per-card to handleSpawnBtn.
+buildUnitCards();
 
 // ── Upgrade temple button ──
 upgradeTempleBtn.addEventListener('click', () => {
@@ -964,122 +1214,47 @@ captureBtn.addEventListener('click', () => {
   });
 });
 
-// ── Mouse click ──
-canvas.addEventListener('click', (e) => {
-  handleHexClick(e.clientX, e.clientY);
+// ── Tap-to-select ──
+// Camera rotate / zoom / pan are handled by the 3D orbit controls (which attach
+// their own listeners to the canvas). Here we only turn a *tap* into a hex
+// selection — distinguished from an orbit *drag* by total pointer travel, so
+// rotating the board doesn't also select a tile. Works for mouse and touch.
+let pointerActive = false;
+let pointerPrevX = 0;
+let pointerPrevY = 0;
+let pointerTravel = 0;
+
+canvas.addEventListener('pointerdown', (e) => {
+  pointerActive = true;
+  pointerPrevX = e.clientX;
+  pointerPrevY = e.clientY;
+  pointerTravel = 0;
 });
 
-// ── Mouse drag to pan ──
-let mouseDragging = false;
-let mouseLastX = 0;
-let mouseLastY = 0;
-let mouseDragDist = 0;
+canvas.addEventListener('pointermove', (e) => {
+  if (!pointerActive) return;
+  pointerTravel += Math.abs(e.clientX - pointerPrevX) + Math.abs(e.clientY - pointerPrevY);
+  pointerPrevX = e.clientX;
+  pointerPrevY = e.clientY;
+});
 
-canvas.addEventListener('mousedown', (e) => {
-  if (renderer.zoom > 1.0) {
-    mouseDragging = true;
-    mouseLastX = e.clientX;
-    mouseLastY = e.clientY;
-    mouseDragDist = 0;
+canvas.addEventListener('pointerup', (e) => {
+  if (!pointerActive) return;
+  pointerActive = false;
+  if (pointerTravel < 8) { // a tap, not a drag
+    const hud = renderer.hitHudButton(e.clientX, e.clientY);
+    if (hud) { handleHudClick(hud); return; } // tapped a 3D HUD button
+    handleHexClick(e.clientX, e.clientY);
   }
 });
 
-window.addEventListener('mousemove', (e) => {
-  if (!mouseDragging) return;
-  const dpr = window.devicePixelRatio || 1;
-  const dx = (e.clientX - mouseLastX) * dpr;
-  const dy = (e.clientY - mouseLastY) * dpr;
-  mouseDragDist += Math.abs(dx) + Math.abs(dy);
-  renderer.pan(dx, dy);
-  mouseLastX = e.clientX;
-  mouseLastY = e.clientY;
-  render();
-});
-
-window.addEventListener('mouseup', () => {
-  mouseDragging = false;
-});
-
-canvas.addEventListener('click', (e) => {
-  if (mouseDragDist > 10) {
-    e.stopImmediatePropagation();
-    mouseDragDist = 0;
-  }
-}, true);
-
-// ── Touch handling (tap, drag pan, pinch zoom) ──
-let lastTouchDist = 0;
-let touchStartX = 0;
-let touchStartY = 0;
-let touchLastX = 0;
-let touchLastY = 0;
-let touchDragDist = 0;
-let touchFingers = 0;
-
-canvas.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  touchFingers = e.touches.length;
-  touchDragDist = 0;
-  if (e.touches.length === 1) {
-    touchStartX = e.touches[0]!.clientX;
-    touchStartY = e.touches[0]!.clientY;
-    touchLastX = touchStartX;
-    touchLastY = touchStartY;
-  }
-  if (e.touches.length === 2) {
-    lastTouchDist = getTouchDist(e);
-  }
-}, { passive: false });
-
-canvas.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  if (e.touches.length === 1 && touchFingers === 1 && renderer.zoom > 1.0) {
-    const dpr = window.devicePixelRatio || 1;
-    const dx = (e.touches[0]!.clientX - touchLastX) * dpr;
-    const dy = (e.touches[0]!.clientY - touchLastY) * dpr;
-    touchDragDist += Math.abs(dx) + Math.abs(dy);
-    renderer.pan(dx, dy);
-    touchLastX = e.touches[0]!.clientX;
-    touchLastY = e.touches[0]!.clientY;
-    render();
-  }
-  if (e.touches.length === 2) {
-    touchFingers = 2;
-    const dist = getTouchDist(e);
-    const delta = dist - lastTouchDist;
-    if (Math.abs(delta) > 10) {
-      if (delta > 0) renderer.zoomIn();
-      else renderer.zoomOut();
-      lastTouchDist = dist;
-      render();
-    }
-  }
-}, { passive: false });
-
-canvas.addEventListener('touchend', (e) => {
-  e.preventDefault();
-  if (touchFingers === 1 && touchDragDist < 15 && e.changedTouches.length === 1) {
-    const t = e.changedTouches[0]!;
-    handleHexClick(t.clientX, t.clientY);
-  }
-  if (e.touches.length === 0) {
-    touchFingers = 0;
-  }
-}, { passive: false });
-
-function getTouchDist(e: TouchEvent): number {
-  const a = e.touches[0]!;
-  const b = e.touches[1]!;
-  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+// Dispatch a Three.js HUD button tap to the same handlers as the old buttons.
+function handleHudClick(id: string): void {
+  if (id === 'endTurn') { if (state.phase !== 'gameOver') doEndTurn(); }
+  else if (id === 'research') openTechTree();
 }
 
-// ── Mouse wheel zoom ──
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  if (e.deltaY < 0) renderer.zoomIn();
-  else renderer.zoomOut();
-  render();
-}, { passive: false });
+canvas.addEventListener('pointercancel', () => { pointerActive = false; });
 
 // ── Zoom buttons ──
 document.getElementById('zoomInBtn')!.addEventListener('click', () => {
@@ -1138,8 +1313,38 @@ logToggle.addEventListener('click', () => {
 
 // ── Helpers ──
 let aiRunning = false;
+let aiTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Cancel any pending AI turn and reset the running flag. Called before a new
+// game's state is swapped in so a stale runAI() can't fire on fresh state.
+function cancelAITurn(): void {
+  if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
+  aiRunning = false;
+}
+
+// Pre-select the local human's temple at the start of their turn so the
+// unit-build cards are visible by default (prefers an unoccupied temple).
+function autoSelectTemple(): void {
+  if (spectatorMode || multiplayerMode) return;
+  if (state.phase === 'gameOver') return;
+  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
+  const me = getCurrentPlayer(state);
+  const owned = state.temples.filter(t => t.ownerId === me.id);
+  const target = owned.find(t => !getUnitAt(state, t.pos)) ?? owned[0];
+  if (target) selectTemple(state, target.id);
+}
+
+// Schedule the AI's turn when it's the AI's move (also handles AI winning the
+// random first-move coin flip at game start).
+function maybeRunAITurn(): void {
+  if (aiEnabled && !aiRunning && state.phase !== 'gameOver' && getCurrentPlayer(state).id === AI_PLAYER_ID) {
+    aiRunning = true;
+    aiTimer = setTimeout(() => { aiTimer = null; runAI(); aiRunning = false; }, AI_DELAY_MS);
+  }
+}
 
 function doEndTurn(): void {
+  if (spectatorMode) return;
   if (aiRunning) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   if (buildingTeleport) cancelBuildTeleport();
@@ -1151,19 +1356,13 @@ function doEndTurn(): void {
   endTurn(state);
   const newPlayer = getCurrentPlayer(state);
   logCombat(`${prevPlayer} ended turn → ${newPlayer.name} (Aura: ${newPlayer.aura})`);
+  if (!(aiEnabled && newPlayer.id === AI_PLAYER_ID)) autoSelectTemple(); // human turn → preselect temple
   render();
-
-  if (aiEnabled && newPlayer.id === AI_PLAYER_ID && state.phase !== 'gameOver') {
-    aiRunning = true;
-    setTimeout(() => {
-      runAI();
-      aiRunning = false;
-    }, AI_DELAY_MS);
-  }
+  maybeRunAITurn();
 }
 
 function runAI(): void {
-  if (state.phase === 'gameOver') return;
+  if (!aiEnabled || state.phase === 'gameOver') return;
 
   const playerVisible = getCurrentPlayerVisible(state);
 
@@ -1178,7 +1377,9 @@ function runAI(): void {
   endTurn(state);
   const nextPlayer = getCurrentPlayer(state);
   logCombat(`${aiName} ended turn → ${nextPlayer.name} (Aura: ${nextPlayer.aura})`);
+  autoSelectTemple(); // back to the human → preselect their temple
   render();
+  maybeRunAITurn();
 }
 
 // ── Resize handling ──

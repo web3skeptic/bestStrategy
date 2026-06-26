@@ -21,33 +21,217 @@
       position: relative;
     }
 
-    /* ── Top bar (overlay) ── */
+    /* ── Top bar (overlay) — centered carved-stone plaque ── */
     .top-bar {
       position: absolute;
       top: 0; left: 0; right: 0;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      background: rgba(17,17,34,0.85);
-      backdrop-filter: blur(4px);
+      padding: 10px 12px 0;
+      pointer-events: none;
       z-index: 20;
     }
-    .top-bar .turn-info {
-      font-size: 16px;
-      font-weight: bold;
+    .top-bar > * { pointer-events: auto; }
+
+    /* The castle-wall plaque: weathered masonry block. No clip-path here — an
+       ancestor clip-path would clip the overhanging Menu banner out of the paint
+       AND pointer region (it was previously unclickable), so the crenellated
+       parapet is drawn as an overflowing ::before strip instead. */
+    .stone-plaque {
+      position: relative;
+      width: min(92vw, 360px);
+      margin-top: 20px; /* room for the parapet + Menu banner overhanging the top */
+      padding: 26px 18px 16px;
+      /* stacked stone courses + vertical joints over top-lit weathered stone */
+      background:
+        repeating-linear-gradient(0deg, transparent 0 21px, rgba(0,0,0,0.30) 21px 23px),
+        repeating-linear-gradient(90deg, transparent 0 52px, rgba(0,0,0,0.22) 52px 54px),
+        linear-gradient(180deg, #5b606b 0%, #4b505a 46%, #3a3f49 100%);
+      background-color: #4b505a;
+      border: 3px solid #0e1118;            /* chunky hewn-rock border */
+      border-radius: 9px;                   /* gently worn block corners */
+      box-shadow:
+        inset 0 3px 0 rgba(170,185,205,0.26),       /* sun-lit top course */
+        inset 0 -4px 10px rgba(0,0,0,0.6),           /* deep base shadow */
+        inset 0 0 0 2px rgba(36,40,48,0.75),         /* dark inner rim */
+        0 6px 14px rgba(0,0,0,0.6);                  /* drop shadow */
     }
-    .top-bar .aura-info {
-      font-size: 14px;
+    /* Crenellated parapet (merlons + crenel gaps) standing on the top edge. As a
+       pseudo-element of an unclipped plaque it is free to overflow upward. */
+    .stone-plaque::before {
+      content: '';
+      position: absolute;
+      left: 5%; right: 5%;
+      top: -12px;
+      height: 13px;
+      background: linear-gradient(180deg, #5b606b 0%, #474c56 100%);
+      border: 2px solid #0e1118;
+      border-bottom: none;
+      border-radius: 3px 3px 0 0;
+      box-shadow: inset 0 2px 0 rgba(170,185,205,0.28);
+      /* punch the crenels (gaps) between merlons */
+      -webkit-mask: repeating-linear-gradient(90deg, #000 0 30px, transparent 30px 48px);
+              mask: repeating-linear-gradient(90deg, #000 0 30px, transparent 30px 48px);
+      z-index: 0;
+    }
+
+    /* Menu tab/badge centered on the TOP edge of the plaque — a little rock tab */
+    .plaque-menu-tab {
+      position: absolute;
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 18px 6px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      color: #ecd9af; /* aged bronze/parchment lettering */
+      cursor: pointer;
+      background: linear-gradient(180deg, #565b65 0%, #3f444e 100%);
+      border: 2px solid #0e1118;
+      box-shadow:
+        inset 0 1px 0 rgba(175,190,210,0.32),
+        inset 0 -2px 4px rgba(0,0,0,0.6),
+        0 3px 7px rgba(0,0,0,0.5);
+      clip-path: polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%);
+      z-index: 3; /* gatehouse banner sits in front of the parapet */
+    }
+    .plaque-menu-tab:active { transform: translateX(-50%) translateY(1px); }
+    .plaque-menu-glyph { font-size: 12px; color: #e7c24a; line-height: 1; }
+    .plaque-menu-label { line-height: 1; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+
+    /* Title row */
+    .plaque-title-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .top-bar .turn-info {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      line-height: 1.05;
+      text-align: center;
+      /* warm orange/peach gradient display text */
+      background: linear-gradient(180deg, #ffd9a8 0%, #ffae5e 48%, #f4863a 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: #ffb066; /* fallback / data-binding tint applied via JS on a wrapper */
+      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
+    }
+    /* small gear button tucked at the title's edge — chiselled rock chip */
+    .plaque-gear {
+      position: absolute;
+      right: -2px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      font-size: 13px;
+      line-height: 1;
+      color: #d6c08a; /* aged bronze */
+      background: radial-gradient(circle at 35% 30%, #6a6f79 0%, #3f444e 68%, #2a2e36 100%);
+      border: 2px solid #0e1118;
+      box-shadow:
+        inset 0 1px 0 rgba(175,190,210,0.30),
+        inset 0 -2px 3px rgba(0,0,0,0.6),
+        0 2px 4px rgba(0,0,0,0.5);
+      clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%);
+      cursor: pointer;
+    }
+    .plaque-gear:active { transform: translateY(-50%) translateY(1px); }
+    #myPlayerBadge {
+      display: none;
+      font-size: 10px;
       font-weight: bold;
-      margin-left: 12px;
+      padding: 1px 6px;
+      border-radius: 7px;
+      border: 1px solid currentColor;
+      opacity: 0.85;
     }
     .top-bar .unit-info {
       font-size: 11px;
-      color: #aaa;
-      text-align: right;
-      max-width: 55%;
+      color: #c2c8d4;
+      text-align: center;
+      max-width: 92vw;
+      margin-top: 6px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
     }
+
+    /* Two inset rounded stat boxes side by side */
+    .plaque-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat-box {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1;
+      padding: 9px 10px;
+      /* iron-rimmed slot carved INTO the wall (dark sunk fill) */
+      background: linear-gradient(180deg, #15181e 0%, #1d212a 100%);
+      border: 2px solid #0e1118;
+      box-shadow:
+        inset 0 2px 6px rgba(0,0,0,0.8),
+        inset 0 -1px 0 rgba(130,140,156,0.22),
+        inset 0 0 0 1px rgba(96,84,56,0.28);   /* faint bronze inner rim */
+      clip-path: polygon(8% 0%, 92% 0%, 100% 22%, 100% 78%, 92% 100%, 8% 100%, 0% 78%, 0% 22%);
+      white-space: nowrap;
+    }
+    .stat-box .pill-icon {
+      font-size: 19px;
+      line-height: 1;
+      filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
+    }
+    .stat-box .pill-value {
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    .stat-box .pill-sub {
+      font-size: 13px;
+      font-weight: 700;
+      opacity: 0.85;
+      font-variant-numeric: tabular-nums;
+    }
+    /* Aura box — glowing crystal/gem with gold value */
+    #auraInfo .pill-value { color: #e7c24a; }
+    #auraInfo .pill-sub  { color: #cdd6e6; opacity: 0.7; }
+    .gem-icon {
+      display: inline-block;
+      width: 16px;
+      height: 20px;
+      /* cyan-teal gem (#33e0a0 / #5fd0ff aura glow) */
+      background: linear-gradient(150deg, #eafffb 0%, #5fd0ff 36%, #33e0a0 72%, #1c9d78 100%);
+      clip-path: polygon(50% 0%, 100% 30%, 78% 100%, 22% 100%, 0% 30%);
+      box-shadow: 0 0 9px rgba(95,208,255,0.85), 0 0 3px rgba(255,255,255,0.9) inset;
+      filter: drop-shadow(0 0 4px rgba(51,224,160,0.65));
+    }
+    /* Population box — people */
+    #popInfo .pill-icon { color: #9fb6ee; }
+    /* "at population cap" — amber/bronze caution, not an alarming red error state */
+    #popInfo.pop-full {
+      box-shadow:
+        inset 0 2px 5px rgba(0,0,0,0.7),
+        inset 0 0 0 1px rgba(230,180,90,0.5),
+        0 0 8px rgba(230,170,70,0.22);
+    }
+    #popInfo.pop-full .pill-value,
+    #popInfo.pop-full .pill-icon { color: #e8b45a; }
 
     /* ── Canvas area (full screen) ── */
     .canvas-wrap {
@@ -89,13 +273,15 @@
     .zoom-btn:active { background: rgba(50,50,80,0.9); }
 
     /* ── Bottom overlay ── */
+    /* Bottom-centre ~80px is reserved for the 3D End Turn/Research slabs,
+       so HTML controls keep clear of it via padding-bottom. */
     .bottom-overlay {
       position: absolute;
       bottom: 0; left: 0; right: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 8px;
+      padding: 8px 8px 84px;
       gap: 6px;
       pointer-events: none;
       z-index: 20;
@@ -109,6 +295,9 @@
       display: flex;
       gap: 8px;
     }
+    /* End Turn + Research are now rendered as Three.js HUD buttons (bottom-centre);
+       keep the elements in the DOM for their handlers but never show them. */
+    #endTurnBtn, #techTreeBtn { display: none !important; }
     .action-btn {
       padding: 10px 20px;
       font-size: 14px;
@@ -170,52 +359,196 @@
       border-color: #444;
     }
 
-    /* ── Upgrade temple button ── */
+    /* ── Upgrade temple button — carved-stone slab ── */
     #upgradeTempleBtn {
       display: none;
-      padding: 10px 24px;
-      font-size: 14px;
-      font-weight: bold;
-      border: 2px solid #88f;
-      border-radius: 8px;
-      background: rgba(40,40,100,0.85);
-      color: #ccf;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-radius: 14px;
       cursor: pointer;
-      backdrop-filter: blur(4px);
+      /* flat stone, matching the plaque + 3D buttons */
+      background: #565c67;
+      border: 3px solid #11141c;
+      box-shadow:
+        inset 0 2px 0 rgba(150,165,190,0.35),
+        inset 0 -3px 6px rgba(0,0,0,0.55),
+        inset 0 0 0 2px rgba(70,80,98,0.5),
+        0 5px 12px rgba(0,0,0,0.5);
+      clip-path: polygon(
+        3% 0%, 97% 0%, 100% 12%, 100% 84%, 97% 100%,
+        3% 100%, 0% 84%, 0% 16%
+      );
     }
-    #upgradeTempleBtn:active { background: rgba(60,60,130,0.9); }
+    #upgradeTempleBtn:active { transform: translateY(1px); }
     #upgradeTempleBtn.disabled {
-      opacity: 0.35;
+      opacity: 0.45;
       cursor: not-allowed;
-      border-color: #444;
+      filter: grayscale(0.5);
     }
+    /* 3D-rendered temple + up-arrow icon (replaces the old text + CSS icon) */
+    .ut-thumb {
+      height: 54px;
+      width: auto;
+      display: block;
+      pointer-events: none;
+      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
+    }
+    /* temple icon (CSS low-poly shrine) */
+    .ut-icon {
+      flex: 0 0 auto;
+      position: relative;
+      width: 34px;
+      height: 34px;
+    }
+    .ut-icon .ut-base {
+      position: absolute;
+      left: 2px; right: 2px; bottom: 2px;
+      height: 12px;
+      background: #bcc3cf; /* flat */
+      clip-path: polygon(0% 100%, 12% 0%, 88% 0%, 100% 100%);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+    .ut-icon .ut-roof {
+      position: absolute;
+      left: 5px; right: 5px; top: 8px;
+      height: 9px;
+      background: #d3d9e2; /* flat */
+      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+    }
+    .ut-icon .ut-beam {
+      position: absolute;
+      left: 50%; top: -2px;
+      width: 4px; height: 22px;
+      transform: translateX(-50%);
+      background: linear-gradient(180deg, #fff6c0 0%, #ffd24a 60%, #f0a92a 100%);
+      box-shadow: 0 0 8px rgba(255,210,90,0.9);
+      clip-path: polygon(50% 0%, 100% 70%, 50% 100%, 0% 70%);
+    }
+    .ut-label {
+      flex: 1 1 auto;
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1.05;
+      letter-spacing: 0.5px;
+      text-align: center;
+      text-transform: uppercase;
+      color: #e3e8f0;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+    }
+    .ut-cost {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 15px;
+      font-weight: 900;
+      color: #ffe14a;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    .ut-cost .ut-bolt { color: #ffd24a; filter: drop-shadow(0 0 4px rgba(255,210,90,0.7)); }
+    #upgradeTempleBtn.disabled .ut-cost { color: #ff9a9a; }
+    #upgradeTempleBtn.disabled .ut-cost .ut-bolt { color: #ff9090; filter: none; }
 
-    /* ── Spawn bar ── */
+    /* ── Spawn bar (unit card tray) ── */
     .spawn-bar {
       display: none;
-      gap: 6px;
-      flex-wrap: wrap;
+      gap: 8px;
+      flex-wrap: nowrap;
       justify-content: center;
-      max-width: 420px;
+      align-items: stretch;
+      max-width: min(96vw, 940px);
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 8px 10px;
+      background: rgba(12,12,28,0.82);
+      border: 1px solid #2a2a48;
+      border-radius: 14px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      scrollbar-width: thin;
+      scrollbar-color: #3a3a60 transparent;
     }
-    .spawn-btn {
-      padding: 10px 14px;
-      font-size: 13px;
-      font-weight: bold;
-      border: 2px solid #585;
-      border-radius: 8px;
-      background: rgba(30,50,30,0.85);
-      color: #cfc;
+    .spawn-bar::-webkit-scrollbar { height: 6px; }
+    .spawn-bar::-webkit-scrollbar-thumb { background: #3a3a60; border-radius: 3px; }
+    .spawn-bar::-webkit-scrollbar-track { background: transparent; }
+
+    .unit-card {
+      flex: 0 0 auto;
+      width: 88px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 6px 6px;
+      border: 2px solid #4a6a4a;
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(34,52,34,0.92), rgba(22,34,22,0.92));
+      color: #dfe;
       cursor: pointer;
       text-align: center;
-      backdrop-filter: blur(4px);
+      transition: border-color 0.12s, background 0.12s, transform 0.08s;
+      user-select: none;
+      position: relative;
     }
-    .spawn-btn:active { background: rgba(50,70,50,0.9); }
-    .spawn-btn.disabled {
-      opacity: 0.35;
+    .unit-card:hover:not(.disabled) {
+      border-color: #7ec77e;
+      background: linear-gradient(180deg, rgba(44,68,44,0.95), rgba(30,46,30,0.95));
+    }
+    .unit-card:active:not(.disabled) { transform: scale(0.96); }
+    .unit-card.disabled {
+      opacity: 0.4;
       cursor: not-allowed;
       border-color: #444;
+      filter: grayscale(0.6);
     }
+    .unit-card-thumb {
+      width: 52px;
+      height: 52px;
+      object-fit: contain;
+      image-rendering: auto;
+      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
+      pointer-events: none;
+    }
+    .unit-card-name {
+      font-size: 11px;
+      font-weight: bold;
+      line-height: 1.1;
+      color: #eaffea;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .unit-card-cost {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 11px;
+      font-weight: bold;
+      line-height: 1;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(8,8,22,0.7);
+      border: 1px solid rgba(255,210,90,0.45);
+      color: #ffe39a;
+    }
+    .unit-card-cost .cost-icon { color: #ffd24a; }
+    .unit-card.disabled .unit-card-cost {
+      border-color: rgba(255,120,120,0.5);
+      color: #ffb0b0;
+    }
+    .unit-card.disabled .unit-card-cost .cost-icon { color: #ff9090; }
+    .unit-card-stats {
+      display: flex;
+      gap: 5px;
+      font-size: 9px;
+      font-weight: bold;
+      color: #9fce9f;
+      letter-spacing: 0.3px;
+      font-variant-numeric: tabular-nums;
+    }
+    .unit-card-stats .cs-label { opacity: 0.65; }
 
     /* ── Combat log (collapsible) ── */
     .log-toggle {
@@ -262,19 +595,31 @@
       background: rgba(10, 10, 26, 0.95);
       backdrop-filter: blur(8px);
       gap: 20px;
+      overflow-y: auto;
+      padding: 16px 0;
     }
     .menu-overlay.hidden { display: none; }
+    /* main-menu column: title + subtitle + buttons, cleanly centered */
+    #lobbyMain {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    #lobbyMain.hidden { display: none; }
     .menu-title {
       font-size: 32px;
       font-weight: bold;
       color: #dde;
       letter-spacing: 2px;
+      text-align: center;
       text-shadow: 0 0 20px rgba(100,100,255,0.3);
     }
     .menu-subtitle {
       font-size: 14px;
       color: #667;
-      margin-top: -12px;
+      text-align: center;
+      margin-top: -8px; /* tuck just under the title */
     }
     .menu-buttons {
       display: flex;
@@ -293,30 +638,11 @@
       transition: background 0.15s, border-color 0.15s;
     }
     .menu-btn:active { transform: scale(0.97); }
-    #menuVsAI {
-      background: rgba(60,60,120,0.8);
-      color: #ccf;
-      border-color: #669;
-    }
-    #menuVsAI:hover { background: rgba(80,80,150,0.9); border-color: #88b; }
-    #menu2P {
-      background: rgba(60,100,60,0.8);
-      color: #cfc;
-      border-color: #585;
-    }
-    #menu2P:hover { background: rgba(80,120,80,0.9); border-color: #7a7; }
-    #menuVsHardAI {
-      background: rgba(120,40,40,0.8);
-      color: #fcc;
-      border-color: #944;
-    }
-    #menuVsHardAI:hover { background: rgba(160,50,50,0.9); border-color: #c66; }
-    #menuOnline {
-      background: rgba(60,40,100,0.8);
-      color: #ddf;
-      border-color: #649;
-    }
-    #menuOnline:hover { background: rgba(80,60,130,0.9); border-color: #86b; }
+    /* Stone slabs (skin from .menu-btn); only the engraved label is tinted per mode. */
+    #menuVsAI     { color: #bcd0ff; }
+    #menu2P       { color: #bfe9bf; }
+    #menuVsHardAI { color: #ffbcbc; }
+    #menuOnline   { color: #d8c9ff; }
 
     /* ── Lobby panel ── */
     .lobby-panel {
@@ -360,9 +686,14 @@
       text-align: center;
     }
     .lobby-btn:active { background: rgba(60,55,110,0.9); }
+    /* Primary lobby button: same stone, with a bluish accent rim + glow. */
     .lobby-btn.primary {
-      background: rgba(60,50,120,0.85);
-      border-color: #66a;
+      box-shadow:
+        inset 0 3px 0 rgba(206,220,244,0.34),
+        inset 0 -5px 9px rgba(0,0,0,0.55),
+        inset 0 0 0 2px rgba(120,150,212,0.6),
+        0 0 11px rgba(92,132,214,0.28);
+      color: #e2ecff;
     }
     .lobby-status {
       font-size: 12px;
@@ -420,19 +751,7 @@
     }
     .lobby-back:hover { color: #99b; }
 
-    /* ── Menu button in game (top bar) ── */
-    #menuBtn {
-      padding: 4px 10px;
-      font-size: 12px;
-      font-weight: bold;
-      border: 1px solid #555;
-      border-radius: 6px;
-      background: rgba(40,40,60,0.85);
-      color: #aab;
-      cursor: pointer;
-      margin-left: 12px;
-    }
-    #menuBtn:active { background: rgba(60,60,80,0.9); }
+    /* Menu button is styled as the plaque tab (.plaque-menu-tab) on the top edge. */
 
     /* ── Research button ── */
     #techTreeBtn {
@@ -461,9 +780,19 @@
     }
     .tech-overlay.hidden { display: none; }
     .tech-panel {
-      background: rgba(16,16,36,0.98);
-      border: 1px solid #334;
-      border-radius: 16px;
+      position: relative;
+      /* chiselled-rock panel frame */
+      background: #41464f; /* flat stone frame */
+      border: 3px solid #11141c;
+      box-shadow:
+        inset 0 2px 0 rgba(160,175,200,0.32),
+        inset 0 -3px 8px rgba(0,0,0,0.55),
+        inset 0 0 0 2px rgba(42,46,54,0.7),
+        0 10px 30px rgba(0,0,0,0.6);
+      clip-path: polygon(
+        2% 0%, 98% 0%, 100% 3%, 100% 97%, 98% 100%,
+        2% 100%, 0% 97%, 0% 3%
+      );
       max-width: 660px;
       width: 95%;
       max-height: 88vh;
@@ -474,32 +803,58 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 10px;
       margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid #11141c;
     }
-    .tech-title { font-size: 20px; font-weight: bold; color: #ccf; }
-    .tech-aura  { font-size: 13px; color: #aaa; }
+    .tech-title {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      /* warm gold display title to match the rock/gold accent */
+      background: linear-gradient(180deg, #ffe9b0 0%, #e7c24a 60%, #c79a26 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: #e7c24a;
+      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
+    }
+    .tech-aura  {
+      font-size: 13px;
+      font-weight: 800;
+      color: #e7c24a;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
     .tech-close {
-      background: none;
-      border: 1px solid #445;
-      color: #aaa;
+      flex: 0 0 auto;
+      background: #565c67; /* flat stone */
+      border: 2px solid #11141c;
+      color: #e3e8f0;
       font-size: 18px;
+      line-height: 1;
       cursor: pointer;
-      border-radius: 6px;
-      padding: 4px 10px;
+      padding: 5px 11px;
+      box-shadow:
+        inset 0 1px 0 rgba(160,175,200,0.32),
+        inset 0 -2px 4px rgba(0,0,0,0.55);
+      clip-path: polygon(15% 0%, 85% 0%, 100% 28%, 100% 72%, 85% 100%, 15% 100%, 0% 72%, 0% 28%);
     }
-    .tech-close:active { background: rgba(60,60,80,0.5); }
+    .tech-close:active { transform: translateY(1px); }
     .tech-section { margin-bottom: 18px; }
     .tech-section-title {
       font-size: 11px;
-      font-weight: bold;
-      color: #778;
+      font-weight: 800;
+      color: #aab4c6;
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 1.2px;
       margin-bottom: 6px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
     }
     .tech-branch-label {
       font-size: 11px;
-      color: #e90;
+      font-weight: 700;
+      color: #e7c24a;
       margin-bottom: 8px;
     }
     .tech-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -508,31 +863,47 @@
       min-width: 140px;
       max-width: 200px;
       padding: 10px 12px;
-      border: 2px solid #334;
-      border-radius: 10px;
-      background: rgba(25,25,50,0.85);
+      /* chiselled rock chip */
+      border: 2px solid #11141c;
+      background: #4b515c; /* flat stone chip */
+      box-shadow:
+        inset 0 1px 0 rgba(160,175,200,0.30),
+        inset 0 -2px 5px rgba(0,0,0,0.55);
+      clip-path: polygon(6% 0%, 94% 0%, 100% 14%, 100% 86%, 94% 100%, 6% 100%, 0% 86%, 0% 14%);
       cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
+      transition: filter 0.12s, transform 0.08s;
     }
     .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched) {
-      border-color: #66a;
-      background: rgba(50,45,90,0.9);
+      filter: brightness(1.18);
+    }
+    .tech-node:active:not(.tech-node--locked):not(.tech-node--researched) {
+      transform: translateY(1px);
     }
     .tech-node--researched {
-      border-color: #4a4;
-      background: rgba(18,38,18,0.9);
+      /* teal gem aura — researched/owned */
+      border-color: #11141c;
+      background:
+        linear-gradient(180deg, rgba(95,208,255,0.18) 0%, rgba(0,0,0,0) 30%),
+        linear-gradient(180deg, #2f5a4e 0%, #234a42 55%, #1b3a34 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(95,208,255,0.32),
+        inset 0 -2px 5px rgba(0,0,0,0.5),
+        0 0 8px rgba(51,224,160,0.3);
       cursor: default;
     }
-    .tech-node--locked { opacity: 0.38; cursor: not-allowed; }
-    .tech-node--poor   { border-color: #643; cursor: not-allowed; }
-    .tech-node-name  { font-size: 13px; font-weight: bold; color: #dde; margin-bottom: 3px; }
-    .tech-node-cost  { font-size: 11px; color: #999; margin-bottom: 4px; }
-    .tech-node-desc  { font-size: 10px; color: #778; line-height: 1.4; }
-    .tech-node-status { font-size: 11px; font-weight: bold; margin-top: 6px; }
-    .status-researched { color: #4c4; }
-    .status-available  { color: #aaf; }
-    .status-locked     { color: #556; }
-    .status-poor       { color: #a64; }
+    .tech-node--locked { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
+    .tech-node--poor   {
+      cursor: not-allowed;
+      filter: saturate(0.7) brightness(0.85);
+    }
+    .tech-node-name  { font-size: 13px; font-weight: 800; color: #f0f3f8; margin-bottom: 3px; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+    .tech-node-cost  { font-size: 11px; color: #e7c24a; margin-bottom: 4px; }
+    .tech-node-desc  { font-size: 10px; color: #c2c8d4; line-height: 1.4; }
+    .tech-node-status { font-size: 11px; font-weight: 800; margin-top: 6px; }
+    .status-researched { color: #33e0a0; }
+    .status-available  { color: #5fd0ff; }
+    .status-locked     { color: #8b94a4; }
+    .status-poor       { color: #e08a4a; }
 
     /* ── Build Teleport button ── */
     #teleportBtn {
@@ -555,19 +926,7 @@
       box-shadow: 0 0 10px rgba(0,200,255,0.4);
     }
 
-    /* ── Settings button ── */
-    #settingsBtn {
-      padding: 4px 10px;
-      font-size: 12px;
-      font-weight: bold;
-      border: 1px solid #555;
-      border-radius: 6px;
-      background: rgba(40,40,60,0.85);
-      color: #aab;
-      cursor: pointer;
-      margin-left: 6px;
-    }
-    #settingsBtn:active { background: rgba(60,60,80,0.9); }
+    /* Settings button is styled as the small gear (.plaque-gear) inside the plaque. */
 
     /* ── Settings overlay ── */
     .settings-overlay {
@@ -652,6 +1011,96 @@
       cursor: pointer;
     }
     .settings-reset:active { background: rgba(90,50,30,0.9); }
+
+    /* ============================================================
+       Rough-hewn STONE buttons — one rocky skin for every button.
+       NO smooth gradient sheen. Surface is built in layers, bottom→top:
+         1. base color  — cool blue-grey stone (background-color)
+         2. tonal mottle — two big soft radial blotches (lit top-left,
+                           shadowed bottom-right) for uneven rock tone
+         3. grain        — static SVG feTurbulence fractalNoise speckle,
+                           inline data-URI, OVERLAY-blended so it carves
+                           light/dark flecks into the stone (no tiling sheen)
+         4. inset bevels — stacked insets keyed to a top-left light source
+                           (lit TL rim, shadowed BR rim, deep underside)
+         5. edge rim     — dark chiselled inner outline + clip-path silhouette
+       Depth (slab sitting proud) = an outer drop-shadow filter, which
+       follows the clipped silhouette (box-shadow would be clipped away).
+       Semantic text colours (gold capture, tinted menu labels) kept per-button.
+       ============================================================ */
+    .menu-btn, .lobby-btn, .zoom-btn, .action-btn, .tile-btn,
+    #captureBtn, #teleportBtn, #upgradeTempleBtn, #restartBtn,
+    .settings-reset, .settings-close, .tech-close {
+      background-color: #586271;
+      background-image:
+        radial-gradient(130% 95% at 26% 14%, rgba(134,146,166,0.24), rgba(134,146,166,0) 55%),
+        radial-gradient(150% 110% at 82% 94%, rgba(14,19,28,0.44), rgba(14,19,28,0) 55%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='1.7' intercept='-0.5'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E"),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='104' height='104'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.4' numOctaves='4' seed='14' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.95'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E"),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='170' height='170'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.14' numOctaves='2' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.55'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E");
+      background-size: auto, auto, 72px 72px, 104px 104px, 170px 170px;
+      background-blend-mode: normal, normal, multiply, overlay, soft-light;
+      border: none;
+      border-radius: 7px;
+      box-shadow:
+        inset 2px 2px 0 rgba(206,218,236,0.22),       /* lit top-left facet */
+        inset -2px -2px 0 rgba(0,0,0,0.45),            /* shadowed bottom-right */
+        inset 0 6px 11px -6px rgba(214,224,240,0.12),  /* faint upper light, no sheen */
+        inset 0 -9px 15px -4px rgba(0,0,0,0.52),       /* deep carved underside */
+        inset 0 0 0 1.5px rgba(16,21,30,0.88);         /* dark chiselled rim */
+      filter: drop-shadow(0 4px 7px rgba(0,0,0,0.55)); /* slab proud of the wall */
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      backdrop-filter: none;
+      clip-path: polygon(2% 15%, 8% 0%, 93% 4%, 100% 17%, 98% 84%, 91% 100%, 7% 96%, 0% 82%);
+      transition: box-shadow 0.14s ease, filter 0.12s ease, transform 0.05s ease;
+    }
+    /* Hover = warm torchlight catching the surface (inset glow, not brightness) */
+    .menu-btn:hover, .lobby-btn:hover, .zoom-btn:hover, .action-btn:hover, .tile-btn:hover,
+    #captureBtn:hover, #teleportBtn:hover, #upgradeTempleBtn:hover, #restartBtn:hover,
+    .settings-reset:hover, .settings-close:hover, .tech-close:hover {
+      box-shadow:
+        inset 2px 2px 0 rgba(208,220,238,0.24),
+        inset -2px -2px 0 rgba(0,0,0,0.42),
+        inset 0 9px 18px -6px rgba(255,188,118,0.24),  /* warm torch glow, upper */
+        inset 0 0 22px -2px rgba(255,158,82,0.18),      /* warm wash across face */
+        inset 0 -9px 15px -4px rgba(0,0,0,0.46),
+        inset 0 0 0 1.5px rgba(16,21,30,0.88);
+      filter: drop-shadow(0 6px 11px rgba(0,0,0,0.6));
+    }
+    /* Pressed = stone shoved into the wall: drops, darkens, bevels flip */
+    .menu-btn:active, .lobby-btn:active, .zoom-btn:active, .action-btn:active, .tile-btn:active,
+    #captureBtn:active, #teleportBtn:active, #upgradeTempleBtn:active, #restartBtn:active,
+    .settings-reset:active, .settings-close:active, .tech-close:active {
+      transform: translateY(3px) scale(0.992);
+      background-color: #474f5b;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+      box-shadow:
+        inset -2px -2px 0 rgba(196,208,226,0.12),      /* light now bottom-right (flipped) */
+        inset 2px 2px 0 rgba(0,0,0,0.5),               /* shadow now top-left */
+        inset 0 9px 15px -3px rgba(0,0,0,0.62),         /* shoved-in upper shadow */
+        inset 0 0 0 1.5px rgba(12,16,24,0.9);
+    }
+    /* Octagonal chiselled stone disc for the zoom +/- buttons */
+    .zoom-btn {
+      border-radius: 9px;
+      clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%);
+      color: #e8edf5;
+    }
+    /* Disabled stone reads cold + sunken */
+    .action-btn:disabled, .lobby-btn:disabled, #captureBtn:disabled,
+    #teleportBtn:disabled, #upgradeTempleBtn.disabled, .tile-btn.disabled {
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)) grayscale(0.55) brightness(0.7);
+      cursor: not-allowed;
+    }
+    /* Respect reduced-motion: kill the hover/press transition + jump */
+    @media (prefers-reduced-motion: reduce) {
+      .menu-btn, .lobby-btn, .zoom-btn, .action-btn, .tile-btn,
+      #captureBtn, #teleportBtn, #upgradeTempleBtn, #restartBtn,
+      .settings-reset, .settings-close, .tech-close { transition: none; }
+      .menu-btn:active, .lobby-btn:active, .zoom-btn:active, .action-btn:active, .tile-btn:active,
+      #captureBtn:active, #teleportBtn:active, #upgradeTempleBtn:active, #restartBtn:active,
+      .settings-reset:active, .settings-close:active, .tech-close:active { transform: none; }
+    }
     .settings-unit-card {
       background: rgba(22,22,44,0.9);
       border: 1px solid #334;
@@ -702,15 +1151,137 @@
     .settings-field input::-webkit-inner-spin-button { -webkit-appearance: none; }
     .settings-field input:focus { border-color: #66a; }
 
+    /* ── Spectating banner ── */
+    #spectatorBanner {
+      display: none;
+      position: absolute;
+      top: 44px;
+      left: 0;
+      right: 0;
+      z-index: 25;
+      text-align: center;
+      padding: 6px 12px;
+      background: rgba(180,120,0,0.9);
+      color: #fff;
+      font-size: 13px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      backdrop-filter: blur(4px);
+    }
+    #spectatorBanner .spec-info {
+      font-weight: normal;
+      font-size: 11px;
+      color: #ffe8b0;
+      margin-left: 12px;
+    }
+
     /* ── Desktop tweaks ── */
     @media (min-width: 768px) {
       .bottom-overlay {
-        align-items: flex-start;
-        padding: 12px;
+        align-items: center;       /* centre the contextual panels (card tray etc.) */
+        padding: 12px 12px 84px;
+      }
+      /* persistent controls + log stay tucked in the bottom-left corner */
+      .bottom-overlay .action-row,
+      .bottom-overlay .log-toggle,
+      .bottom-overlay #combatLog {
+        align-self: flex-start;
       }
       #combatLog.open {
         max-height: 200px;
       }
+    }
+
+    /* ── Tablet / small-laptop (≤768px) ── */
+    @media (max-width: 768px) {
+      .stone-plaque {
+        width: min(94vw, 340px);
+      }
+      .tech-panel, .settings-panel {
+        width: 96%;
+        max-width: 96vw;
+        max-height: 90vh;
+      }
+      .tech-node { min-width: 132px; }
+    }
+
+    /* ── Phones (≤480px) ── */
+    @media (max-width: 480px) {
+      .top-bar { padding: 6px 8px 0; }
+      .stone-plaque {
+        width: 94vw;
+        margin-top: 20px;
+        padding: 24px 12px 12px;
+      }
+      .top-bar .turn-info { font-size: 20px; }
+      .plaque-stats { gap: 8px; }
+      .stat-box { font-size: 14px; padding: 8px 8px; gap: 5px; }
+      .stat-box .pill-icon { font-size: 17px; }
+      .stat-box .pill-sub { font-size: 11px; }
+      .top-bar .unit-info { font-size: 10px; max-width: 94vw; }
+
+      /* Research overlay becomes near-full-screen + scrollable */
+      .tech-overlay, .settings-overlay {
+        align-items: stretch;
+        justify-content: stretch;
+        padding: 0;
+      }
+      .tech-panel, .settings-panel {
+        width: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        height: 100%;
+        border-width: 0;
+        clip-path: none;
+        border-radius: 0;
+        padding: 16px 14px calc(env(safe-area-inset-bottom, 0px) + 16px);
+        -webkit-overflow-scrolling: touch;
+      }
+      .tech-header { margin-bottom: 14px; }
+      .tech-title, .settings-title { font-size: 18px; }
+      /* tech nodes go full-width and stack so they're tappable */
+      .tech-node {
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: none;
+        padding: 12px 14px;
+      }
+
+      /* Unit-card tray: shrink + horizontal scroll, stay centred */
+      .spawn-bar {
+        max-width: 96vw;
+        gap: 6px;
+        padding: 6px 8px;
+      }
+      .unit-card { width: 76px; padding: 6px 5px 5px; }
+      .unit-card-thumb { width: 44px; height: 44px; }
+      .unit-card-name { font-size: 10px; }
+      .unit-card-cost { font-size: 10px; padding: 2px 6px; }
+
+      /* contextual action buttons stay reachable + tap-sized */
+      #captureBtn, #teleportBtn, .tile-btn {
+        padding: 9px 18px;
+        font-size: 13px;
+      }
+      #upgradeTempleBtn { padding: 9px 12px; gap: 8px; }
+      .ut-label { font-size: 13px; }
+
+      /* combat log: keep it from overlapping the reserved bottom strip */
+      #combatLog { max-width: 92vw; }
+      #combatLog.open { max-height: 90px; }
+      .log-toggle { padding: 5px 10px; font-size: 11px; }
+
+      /* menu / lobby panels fit narrow screens */
+      .menu-title { font-size: 26px; }
+      .menu-btn { padding: 14px 24px; font-size: 16px; }
+      .menu-buttons { min-width: 0; width: 86vw; }
+      .lobby-panel { width: 92vw; padding: 16px; }
+    }
+
+    /* ── Short / landscape phones: keep overlays scrollable, not clipped ── */
+    @media (max-height: 480px) {
+      .tech-panel, .settings-panel { max-height: 96vh; }
+      #combatLog.open { max-height: 70px; }
     }
   </style>
 </head>
@@ -755,6 +1326,10 @@
           <button class="lobby-btn" id="lobbyJoinCodeBtn" style="white-space:nowrap">Join</button>
         </div>
         <div class="lobby-status" id="lobbyRoomStatus"></div>
+        <hr class="lobby-divider" />
+        <div style="font-size:12px;color:#e90;margin-bottom:2px">👁 Watch a Game</div>
+        <div class="lobby-room-list" id="lobbyGameListEl"></div>
+        <button class="lobby-btn" id="lobbyRefreshGamesBtn">↻ Refresh Games</button>
         <div class="lobby-back" id="lobbyRoomBack">← Back to Menu</div>
       </div>
 
@@ -769,15 +1344,25 @@
     </div>
 
     <div class="top-bar">
-      <div style="display:flex;align-items:center;gap:6px">
-        <div class="turn-info" id="turnInfo">Player 1's Turn</div>
-        <div class="aura-info" id="auraInfo">⚡2</div>
-        <div class="aura-info" id="popInfo" style="margin-left:8px;font-size:12px">Pop:0/0</div>
-        <div id="myPlayerBadge" style="display:none;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:8px;border:1px solid currentColor;opacity:0.85;margin-left:4px"></div>
-        <button id="settingsBtn">⚙</button>
-        <button id="menuBtn">Menu</button>
+      <div class="stone-plaque" id="topPlaque">
+        <!-- Menu tab on the top edge of the plaque -->
+        <button id="menuBtn" class="plaque-menu-tab">
+          <span class="plaque-menu-glyph">⚔</span><span class="plaque-menu-label">Menu</span>
+        </button>
+        <div class="plaque-title-row">
+          <div class="turn-info" id="turnInfo">Player 1's Turn</div>
+          <button id="settingsBtn" class="plaque-gear" title="Settings">⚙</button>
+          <div id="myPlayerBadge"></div>
+        </div>
+        <div class="plaque-stats">
+          <div class="stat-box" id="auraInfo" title="Aura — your spendable resource (income per turn)"></div>
+          <div class="stat-box" id="popInfo" title="Population / population cap"></div>
+        </div>
       </div>
       <div class="unit-info" id="unitInfo"></div>
+    </div>
+    <div id="spectatorBanner">
+      👁 SPECTATING <span class="spec-info" id="spectatorInfo"></span>
     </div>
     <div class="canvas-wrap">
       <canvas id="gameCanvas"></canvas>
@@ -787,18 +1372,9 @@
       </div>
     </div>
     <div class="bottom-overlay">
-      <div class="spawn-bar" id="spawnBar">
-        <button class="spawn-btn" id="spawnWarrior">⚔ Warrior (1)</button>
-        <button class="spawn-btn" id="spawnArcher">🏹 Archer (2)</button>
-        <button class="spawn-btn" id="spawnCatapult">💣 Catapult (4)</button>
-        <button class="spawn-btn" id="spawnHorserider">🐎 Horserider (3)</button>
-        <button class="spawn-btn" id="spawnHeavyknight">🛡 H.Knight (7)</button>
-        <button class="spawn-btn" id="spawnSpearsman">🗡 Spearsman (3)</button>
-        <button class="spawn-btn" id="spawnHealer">✚ Healer (3)</button>
-        <button class="spawn-btn" id="spawnDamageBooster">🔥 Dmg+ (3)</button>
-        <button class="spawn-btn" id="spawnRangeBooster">↔ Rng+ (3)</button>
-      </div>
-      <button id="upgradeTempleBtn" style="display:none">⬆ Upgrade Temple</button>
+      <!-- Unit cards are built dynamically in main.ts (one .unit-card per unit type) -->
+      <div class="spawn-bar" id="spawnBar"></div>
+      <button id="upgradeTempleBtn" style="display:none"></button>
       <button id="captureBtn">⚔ Capture Temple</button>
       <button id="teleportBtn">⬡ Teleport</button>
       <div class="action-row">

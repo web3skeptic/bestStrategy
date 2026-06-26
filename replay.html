@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Game Replay</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: #0d0d1a;
+      color: #ccc;
+      font-family: 'Segoe UI', sans-serif;
+      height: 100%;
+      overflow: hidden;
+    }
+    .app {
+      display: flex;
+      height: 100%;
+      width: 100%;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 320px;
+      min-width: 280px;
+      max-width: 360px;
+      flex-shrink: 0;
+      background: rgba(17,17,34,0.95);
+      border-right: 1px solid #223;
+      padding: 14px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .sidebar h1 {
+      font-size: 16px;
+      color: #ccf;
+      font-weight: bold;
+      letter-spacing: 0.5px;
+    }
+    .sidebar .game-id {
+      font-family: monospace;
+      font-size: 11px;
+      color: #6ef;
+      word-break: break-all;
+    }
+    .section {
+      background: rgba(22,22,44,0.85);
+      border: 1px solid #334;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .section h2 {
+      font-size: 11px;
+      color: #889;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .player-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+    .player-row .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid #000;
+      flex-shrink: 0;
+    }
+    .move-info {
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .move-info .label {
+      color: #889;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .move-info .turn-line {
+      color: #ddf;
+      font-weight: bold;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+    .action-desc {
+      background: rgba(40,30,60,0.7);
+      border-left: 3px solid #66a;
+      padding: 6px 10px;
+      font-size: 13px;
+      color: #ddf;
+      margin-top: 6px;
+      border-radius: 0 4px 4px 0;
+      word-break: break-word;
+    }
+    .action-desc.failed {
+      background: rgba(60,30,30,0.7);
+      border-left-color: #c66;
+      color: #fcc;
+    }
+    .diff-line {
+      font-size: 11px;
+      color: #aac;
+      margin-top: 4px;
+      line-height: 1.5;
+    }
+    .diff-line .chg { color: #ffaa66; }
+    .diff-line .new { color: #99ff99; }
+    .diff-line .del { color: #ff8888; }
+
+    /* ── Nav controls ── */
+    .nav-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .nav-buttons {
+      display: flex;
+      gap: 6px;
+    }
+    .nav-btn {
+      flex: 1;
+      padding: 8px 6px;
+      font-size: 13px;
+      font-weight: bold;
+      border: 1px solid #446;
+      border-radius: 6px;
+      background: rgba(40,40,80,0.85);
+      color: #ccf;
+      cursor: pointer;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: rgba(60,60,110,0.95);
+      border-color: #66a;
+    }
+    .nav-btn:active { transform: scale(0.97); }
+    .nav-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .slider-row input[type=range] {
+      flex: 1;
+    }
+    .seq-label {
+      font-family: monospace;
+      font-size: 11px;
+      color: #ccc;
+      min-width: 56px;
+      text-align: right;
+    }
+
+    /* ── Fog toggle ── */
+    .fog-toggle {
+      display: flex;
+      gap: 4px;
+    }
+    .fog-btn {
+      flex: 1;
+      padding: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      border: 1px solid #445;
+      border-radius: 4px;
+      background: rgba(30,30,55,0.85);
+      color: #aab;
+      cursor: pointer;
+    }
+    .fog-btn:hover { background: rgba(50,50,80,0.9); }
+    .fog-btn.active {
+      background: rgba(80,50,120,0.9);
+      color: #fff;
+      border-color: #86b;
+    }
+
+    /* ── Back link ── */
+    .back-link {
+      display: inline-block;
+      color: #88a;
+      font-size: 12px;
+      text-decoration: none;
+      padding: 6px 0;
+    }
+    .back-link:hover { color: #aac; text-decoration: underline; }
+
+    .winner-banner {
+      background: rgba(60,40,90,0.85);
+      border: 1px solid #86b;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: #fce;
+      text-align: center;
+    }
+    .winner-banner.none { color: #889; background: rgba(30,30,50,0.6); border-color: #334; }
+
+    .error-banner {
+      background: rgba(100,30,30,0.85);
+      border: 1px solid #c66;
+      color: #fcc;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    /* ── Canvas area ── */
+    .canvas-area {
+      flex: 1;
+      position: relative;
+      background: #0a0a14;
+    }
+    canvas#replayCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Mobile: stack ── */
+    @media (max-width: 720px) {
+      .app { flex-direction: column; }
+      .sidebar {
+        width: 100%;
+        max-width: none;
+        max-height: 50vh;
+        border-right: none;
+        border-bottom: 1px solid #223;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="sidebar">
+      <div>
+        <h1 id="gameTitle">Game Replay</h1>
+        <div class="game-id" id="gameIdLabel"></div>
+        <a class="back-link" href="/">← Back to game</a>
+      </div>
+
+      <div id="errorBox"></div>
+
+      <div class="section" id="playersSection">
+        <h2>Players</h2>
+        <div id="playersList"></div>
+      </div>
+
+      <div class="section" id="winnerSection" style="display:none">
+        <div class="winner-banner" id="winnerBanner"></div>
+      </div>
+
+      <div class="section">
+        <h2>Current Move</h2>
+        <div class="move-info">
+          <div class="turn-line" id="turnLine">—</div>
+          <div class="label">Action</div>
+          <div class="action-desc" id="actionDesc">—</div>
+          <div class="diff-line" id="diffLine"></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Navigation</h2>
+        <div class="nav-controls">
+          <div class="nav-buttons">
+            <button class="nav-btn" id="homeBtn" title="Home">⏮ Home</button>
+            <button class="nav-btn" id="prevBtn" title="Prev (←)">← Prev</button>
+            <button class="nav-btn" id="nextBtn" title="Next (→)">Next →</button>
+            <button class="nav-btn" id="endBtn" title="End">End ⏭</button>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="moveSlider" min="0" max="0" value="0" step="1" />
+            <div class="seq-label" id="seqLabel">0 / 0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Fog of War</h2>
+        <div class="fog-toggle">
+          <button class="fog-btn" data-fog="0" id="fog0">P0 View</button>
+          <button class="fog-btn" data-fog="1" id="fog1">P1 View</button>
+          <button class="fog-btn active" data-fog="all" id="fogAll">All</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="canvas-area">
+      <canvas id="replayCanvas"></canvas>
+    </div>
+  </div>
+
+  <script type="module" src="./src/replay.ts"></script>
+</body>
+</html>

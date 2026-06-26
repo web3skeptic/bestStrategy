@@ -1,0 +1,3860 @@
+{
+  "config": {
+    "auraCap": 15,
+    "gamesPerMatchup": 4,
+    "totalGames": 73344,
+    "armyCount": 192
+  },
+  "rankings": [
+    {
+      "label": "2×archer + 2×catapult + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 2,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 691,
+      "losses": 73,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.9044502617801047,
+      "avgSurvivorHpWin": 32.26193921852388
+    },
+    {
+      "label": "1×archer + 3×catapult + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "catapult": 3
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 687,
+      "losses": 77,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8992146596858639,
+      "avgSurvivorHpWin": 32.70014556040757
+    },
+    {
+      "label": "3×archer + 2×catapult + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 3,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 684,
+      "losses": 80,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8952879581151832,
+      "avgSurvivorHpWin": 38.20029239766082
+    },
+    {
+      "label": "3×catapult + 1×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 1,
+        "catapult": 3
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 684,
+      "losses": 80,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8952879581151832,
+      "avgSurvivorHpWin": 24.267543859649123
+    },
+    {
+      "label": "2×archer + 2×catapult + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 2,
+        "spearsman": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 680,
+      "losses": 84,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8900523560209425,
+      "avgSurvivorHpWin": 30.551470588235293
+    },
+    {
+      "label": "3×catapult + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "catapult": 3
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 678,
+      "losses": 86,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.887434554973822,
+      "avgSurvivorHpWin": 26.85103244837758
+    },
+    {
+      "label": "3×catapult + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "spearsman": 1,
+        "catapult": 3
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 677,
+      "losses": 87,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8861256544502618,
+      "avgSurvivorHpWin": 26.530280649926144
+    },
+    {
+      "label": "1×archer + 2×catapult + 1×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 1,
+        "spearsman": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 673,
+      "losses": 91,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8808900523560209,
+      "avgSurvivorHpWin": 25.631500742942052
+    },
+    {
+      "label": "2×catapult + 3×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "spearsman": 3,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 669,
+      "losses": 95,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8756544502617801,
+      "avgSurvivorHpWin": 19.246636771300448
+    },
+    {
+      "label": "2×archer + 2×catapult + 1×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 2,
+        "horserider": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 668,
+      "losses": 96,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8743455497382199,
+      "avgSurvivorHpWin": 24.34131736526946
+    },
+    {
+      "label": "1×archer + 2×catapult + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 663,
+      "losses": 101,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8678010471204188,
+      "avgSurvivorHpWin": 25.529411764705884
+    },
+    {
+      "label": "2×catapult + 2×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "spearsman": 2,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 661,
+      "losses": 103,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8651832460732984,
+      "avgSurvivorHpWin": 20.30408472012103
+    },
+    {
+      "label": "1×archer + 2×catapult + 1×horserider + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "horserider": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 661,
+      "losses": 103,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8651832460732984,
+      "avgSurvivorHpWin": 24.382753403933435
+    },
+    {
+      "label": "2×catapult + 1×horserider + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "horserider": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 649,
+      "losses": 115,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.849476439790576,
+      "avgSurvivorHpWin": 18.503852080123266
+    },
+    {
+      "label": "2×catapult + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 646,
+      "losses": 118,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8455497382198953,
+      "avgSurvivorHpWin": 18.26625386996904
+    },
+    {
+      "label": "4×archer + 1×catapult + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 4,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 642,
+      "losses": 122,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8403141361256544,
+      "avgSurvivorHpWin": 41.781931464174455
+    },
+    {
+      "label": "1×archer + 2×catapult + 2×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "spearsman": 2,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 640,
+      "losses": 124,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.837696335078534,
+      "avgSurvivorHpWin": 23.4984375
+    },
+    {
+      "label": "2×catapult + 1×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "spearsman": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 636,
+      "losses": 128,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8324607329842932,
+      "avgSurvivorHpWin": 19.715408805031448
+    },
+    {
+      "label": "2×catapult + 1×horserider + 1×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "horserider": 1,
+        "spearsman": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 630,
+      "losses": 134,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.824607329842932,
+      "avgSurvivorHpWin": 18.29047619047619
+    },
+    {
+      "label": "3×archer + 1×catapult + 1×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 3,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 628,
+      "losses": 136,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8219895287958116,
+      "avgSurvivorHpWin": 34.4203821656051
+    },
+    {
+      "label": "4×archer + 1×catapult + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 4,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 624,
+      "losses": 140,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8167539267015707,
+      "avgSurvivorHpWin": 35.43910256410256
+    },
+    {
+      "label": "1×archer + 2×catapult + 1×horserider + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 1,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 623,
+      "losses": 141,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8154450261780105,
+      "avgSurvivorHpWin": 20.28892455858748
+    },
+    {
+      "label": "7×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "spearsman": 7
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 621,
+      "losses": 143,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.81282722513089,
+      "avgSurvivorHpWin": 56.87278582930757
+    },
+    {
+      "label": "5×archer + 1×catapult + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 5,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 619,
+      "losses": 145,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8102094240837696,
+      "avgSurvivorHpWin": 44.65105008077544
+    },
+    {
+      "label": "3×archer + 1×catapult + 1×horserider + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 3,
+        "horserider": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 612,
+      "losses": 152,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.8010471204188482,
+      "avgSurvivorHpWin": 30.630718954248366
+    },
+    {
+      "label": "3×archer + 1×catapult + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 610,
+      "losses": 154,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7984293193717278,
+      "avgSurvivorHpWin": 33.30983606557377
+    },
+    {
+      "label": "2×catapult + 2×horserider + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 2,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 610,
+      "losses": 154,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7984293193717278,
+      "avgSurvivorHpWin": 17.362295081967215
+    },
+    {
+      "label": "2×catapult + 1×horserider + 2×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 1,
+        "spearsman": 2,
+        "catapult": 2
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 607,
+      "losses": 157,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7945026178010471,
+      "avgSurvivorHpWin": 16.30807248764415
+    },
+    {
+      "label": "2×archer + 1×catapult + 2×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 2,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 598,
+      "losses": 166,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7827225130890052,
+      "avgSurvivorHpWin": 28.91304347826087
+    },
+    {
+      "label": "1×horserider + 6×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 1,
+        "spearsman": 6
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 586,
+      "losses": 178,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7670157068062827,
+      "avgSurvivorHpWin": 35.59044368600683
+    },
+    {
+      "label": "1×archer + 6×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "spearsman": 6
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 584,
+      "losses": 180,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7643979057591623,
+      "avgSurvivorHpWin": 54.24828767123287
+    },
+    {
+      "label": "2×archer + 1×catapult + 1×horserider + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 2,
+        "horserider": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 583,
+      "losses": 181,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7630890052356021,
+      "avgSurvivorHpWin": 24.965694682675814
+    },
+    {
+      "label": "1×catapult + 5×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "spearsman": 5,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 583,
+      "losses": 181,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7630890052356021,
+      "avgSurvivorHpWin": 30.00343053173242
+    },
+    {
+      "label": "3×archer + 1×catapult + 2×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 3,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 581,
+      "losses": 183,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7604712041884817,
+      "avgSurvivorHpWin": 31.984509466437178
+    },
+    {
+      "label": "2×archer + 1×catapult + 1×horserider + 1×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 2,
+        "horserider": 1,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 578,
+      "losses": 186,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.756544502617801,
+      "avgSurvivorHpWin": 23.27681660899654
+    },
+    {
+      "label": "2×catapult + 1×heavyknight",
+      "totalAura": 15,
+      "unitCounts": {
+        "catapult": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 569,
+      "losses": 195,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7447643979057592,
+      "avgSurvivorHpWin": 16.780316344463973
+    },
+    {
+      "label": "2×archer + 1×catapult + 3×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 2,
+        "spearsman": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 568,
+      "losses": 196,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.743455497382199,
+      "avgSurvivorHpWin": 27.940140845070424
+    },
+    {
+      "label": "6×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "spearsman": 6
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 567,
+      "losses": 197,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7421465968586387,
+      "avgSurvivorHpWin": 66.4620811287478
+    },
+    {
+      "label": "2×archer + 1×catapult + 1×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 2,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 566,
+      "losses": 198,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7408376963350786,
+      "avgSurvivorHpWin": 27.75441696113074
+    },
+    {
+      "label": "4×archer + 1×catapult + 1×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 4,
+        "horserider": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 561,
+      "losses": 203,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7342931937172775,
+      "avgSurvivorHpWin": 28.57397504456328
+    },
+    {
+      "label": "1×catapult + 4×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "spearsman": 4,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 560,
+      "losses": 204,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7329842931937173,
+      "avgSurvivorHpWin": 27.942857142857143
+    },
+    {
+      "label": "2×archer + 1×catapult + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 555,
+      "losses": 209,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7264397905759162,
+      "avgSurvivorHpWin": 25.553153153153154
+    },
+    {
+      "label": "1×archer + 1×catapult + 3×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 1,
+        "spearsman": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 547,
+      "losses": 217,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7159685863874345,
+      "avgSurvivorHpWin": 27.26691042047532
+    },
+    {
+      "label": "1×archer + 1×catapult + 4×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "spearsman": 4,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 541,
+      "losses": 223,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7081151832460733,
+      "avgSurvivorHpWin": 26.974121996303143
+    },
+    {
+      "label": "1×archer + 1×catapult + 2×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 1,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 538,
+      "losses": 226,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7041884816753927,
+      "avgSurvivorHpWin": 24.105947955390334
+    },
+    {
+      "label": "2×archer + 5×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 2,
+        "spearsman": 5
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 536,
+      "losses": 228,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.7015706806282722,
+      "avgSurvivorHpWin": 53.35634328358209
+    },
+    {
+      "label": "1×heavyknight + 4×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "spearsman": 4,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 532,
+      "losses": 232,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6963350785340314,
+      "avgSurvivorHpWin": 32.578947368421055
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×heavyknight + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 530,
+      "losses": 234,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.693717277486911,
+      "avgSurvivorHpWin": 20.30566037735849
+    },
+    {
+      "label": "1×archer + 1×horserider + 5×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 5
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 527,
+      "losses": 237,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6897905759162304,
+      "avgSurvivorHpWin": 36.4573055028463
+    },
+    {
+      "label": "1×catapult + 1×horserider + 3×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "horserider": 1,
+        "spearsman": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 517,
+      "losses": 247,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6767015706806283,
+      "avgSurvivorHpWin": 18.78723404255319
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 1,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 515,
+      "losses": 249,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6740837696335078,
+      "avgSurvivorHpWin": 21.376699029126215
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×horserider + 2×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 514,
+      "losses": 250,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6727748691099477,
+      "avgSurvivorHpWin": 18.43190661478599
+    },
+    {
+      "label": "3×archer + 1×catapult + 1×horserider + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 3,
+        "horserider": 1,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 512,
+      "losses": 252,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6701570680628273,
+      "avgSurvivorHpWin": 24.33984375
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×horserider + 1×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 508,
+      "losses": 256,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6649214659685864,
+      "avgSurvivorHpWin": 18.643700787401574
+    },
+    {
+      "label": "5×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "spearsman": 5
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 506,
+      "losses": 258,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.662303664921466,
+      "avgSurvivorHpWin": 71.00395256916995
+    },
+    {
+      "label": "1×catapult + 3×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "spearsman": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 505,
+      "losses": 259,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6609947643979057,
+      "avgSurvivorHpWin": 24.23168316831683
+    },
+    {
+      "label": "1×archer + 5×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 1,
+        "spearsman": 5
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 503,
+      "losses": 261,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6583769633507853,
+      "avgSurvivorHpWin": 62.4234592445328
+    },
+    {
+      "label": "2×archer + 1×catapult + 1×horserider + 2×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 2,
+        "horserider": 1,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 499,
+      "losses": 265,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6531413612565445,
+      "avgSurvivorHpWin": 21.527054108216433
+    },
+    {
+      "label": "1×catapult + 1×heavyknight + 1×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "spearsman": 1,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 495,
+      "losses": 269,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6479057591623036,
+      "avgSurvivorHpWin": 19.01212121212121
+    },
+    {
+      "label": "1×archer + 1×catapult + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "archer": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 493,
+      "losses": 271,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6452879581151832,
+      "avgSurvivorHpWin": 19.40365111561866
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×horserider + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "archer": 1,
+        "horserider": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 491,
+      "losses": 273,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6426701570680629,
+      "avgSurvivorHpWin": 17.70061099796334
+    },
+    {
+      "label": "1×horserider + 5×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "horserider": 1,
+        "spearsman": 5
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 480,
+      "losses": 284,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6282722513089005,
+      "avgSurvivorHpWin": 47.39791666666667
+    },
+    {
+      "label": "2×archer + 4×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 2,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 474,
+      "losses": 290,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6204188481675392,
+      "avgSurvivorHpWin": 52.063291139240505
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×horserider + 3×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 473,
+      "losses": 291,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6191099476439791,
+      "avgSurvivorHpWin": 18.012684989429175
+    },
+    {
+      "label": "1×catapult + 1×heavyknight + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 472,
+      "losses": 292,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6178010471204188,
+      "avgSurvivorHpWin": 18.86228813559322
+    },
+    {
+      "label": "1×archer + 1×catapult + 2×horserider + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 1,
+        "horserider": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 469,
+      "losses": 295,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.6138743455497382,
+      "avgSurvivorHpWin": 15.513859275053305
+    },
+    {
+      "label": "1×archer + 4×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 1,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 458,
+      "losses": 306,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.599476439790576,
+      "avgSurvivorHpWin": 58.569868995633186
+    },
+    {
+      "label": "1×catapult + 2×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 457,
+      "losses": 307,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5981675392670157,
+      "avgSurvivorHpWin": 19.46827133479212
+    },
+    {
+      "label": "1×catapult + 1×horserider + 4×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 1,
+        "spearsman": 4,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 456,
+      "losses": 308,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5968586387434555,
+      "avgSurvivorHpWin": 17.04605263157895
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 3×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "spearsman": 3,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 452,
+      "losses": 312,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5916230366492147,
+      "avgSurvivorHpWin": 34.43362831858407
+    },
+    {
+      "label": "3×archer + 4×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 3,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 449,
+      "losses": 315,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.587696335078534,
+      "avgSurvivorHpWin": 50.67706013363029
+    },
+    {
+      "label": "2×archer + 1×horserider + 4×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 2,
+        "horserider": 1,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 445,
+      "losses": 319,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5824607329842932,
+      "avgSurvivorHpWin": 37.31910112359551
+    },
+    {
+      "label": "2×archer + 1×catapult + 2×horserider + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 2,
+        "horserider": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 440,
+      "losses": 324,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5759162303664922,
+      "avgSurvivorHpWin": 17.39318181818182
+    },
+    {
+      "label": "1×heavyknight + 3×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "spearsman": 3,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 436,
+      "losses": 328,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5706806282722513,
+      "avgSurvivorHpWin": 46.43577981651376
+    },
+    {
+      "label": "2×archer + 3×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 2,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 435,
+      "losses": 329,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.569371727748691,
+      "avgSurvivorHpWin": 50.48505747126437
+    },
+    {
+      "label": "1×catapult + 1×horserider + 2×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "horserider": 1,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 432,
+      "losses": 332,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5654450261780105,
+      "avgSurvivorHpWin": 17.65509259259259
+    },
+    {
+      "label": "5×archer + 2×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 5,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 430,
+      "losses": 334,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.56282722513089,
+      "avgSurvivorHpWin": 43.086046511627906
+    },
+    {
+      "label": "2×archer + 1×catapult + 1×heavyknight",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 2,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 430,
+      "losses": 334,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.56282722513089,
+      "avgSurvivorHpWin": 21.511627906976745
+    },
+    {
+      "label": "1×catapult + 2×horserider + 1×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "horserider": 2,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 426,
+      "losses": 338,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5575916230366492,
+      "avgSurvivorHpWin": 12.669014084507042
+    },
+    {
+      "label": "4×archer + 3×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 4,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 425,
+      "losses": 339,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.556282722513089,
+      "avgSurvivorHpWin": 44.92235294117647
+    },
+    {
+      "label": "4×archer + 2×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 4,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 422,
+      "losses": 342,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5523560209424084,
+      "avgSurvivorHpWin": 41.39099526066351
+    },
+    {
+      "label": "3×archer + 2×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 3,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 413,
+      "losses": 351,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5405759162303665,
+      "avgSurvivorHpWin": 46.64164648910412
+    },
+    {
+      "label": "3×archer + 3×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 3,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 411,
+      "losses": 353,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5379581151832461,
+      "avgSurvivorHpWin": 49.537712895377126
+    },
+    {
+      "label": "1×catapult + 1×spearsman + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 409,
+      "losses": 355,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5353403141361257,
+      "avgSurvivorHpWin": 17.34229828850856
+    },
+    {
+      "label": "1×archer + 1×horserider + 4×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 408,
+      "losses": 356,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5340314136125655,
+      "avgSurvivorHpWin": 45.07843137254902
+    },
+    {
+      "label": "4×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 407,
+      "losses": 357,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5327225130890052,
+      "avgSurvivorHpWin": 65.15233415233415
+    },
+    {
+      "label": "1×catapult + 1×horserider + 1×spearsman + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "horserider": 1,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 401,
+      "losses": 363,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.524869109947644,
+      "avgSurvivorHpWin": 15.30423940149626
+    },
+    {
+      "label": "5×archer + 1×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 5,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 401,
+      "losses": 363,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.524869109947644,
+      "avgSurvivorHpWin": 43.925187032418954
+    },
+    {
+      "label": "1×archer + 1×catapult + 1×heavyknight + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "spearsman": 1,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 399,
+      "losses": 365,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5222513089005235,
+      "avgSurvivorHpWin": 19.107769423558896
+    },
+    {
+      "label": "6×archer + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 6
+      },
+      "researchRequired": [],
+      "wins": 395,
+      "losses": 369,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5170157068062827,
+      "avgSurvivorHpWin": 48.19240506329114
+    },
+    {
+      "label": "4×archer + 1×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 4,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 391,
+      "losses": 373,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5117801047120419,
+      "avgSurvivorHpWin": 41.0613810741688
+    },
+    {
+      "label": "2×heavyknight + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "heavyknight": 2
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 391,
+      "losses": 373,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5117801047120419,
+      "avgSurvivorHpWin": 25.30690537084399
+    },
+    {
+      "label": "1×horserider + 4×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "horserider": 1,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 389,
+      "losses": 375,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5091623036649214,
+      "avgSurvivorHpWin": 53.49614395886889
+    },
+    {
+      "label": "1×catapult + 1×heavyknight + 2×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "spearsman": 2,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 388,
+      "losses": 376,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5078534031413613,
+      "avgSurvivorHpWin": 17.128865979381445
+    },
+    {
+      "label": "1×archer + 3×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 1,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 386,
+      "losses": 378,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5052356020942408,
+      "avgSurvivorHpWin": 55.538860103626945
+    },
+    {
+      "label": "1×catapult + 2×horserider + 2×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 2,
+        "spearsman": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 385,
+      "losses": 379,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.5039267015706806,
+      "avgSurvivorHpWin": 12.2
+    },
+    {
+      "label": "1×catapult + 1×horserider + 8×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 8,
+        "horserider": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 380,
+      "losses": 384,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4973821989528796,
+      "avgSurvivorHpWin": 14.284210526315789
+    },
+    {
+      "label": "1×archer + 1×catapult + 2×horserider + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "horserider": 2,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 379,
+      "losses": 385,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.49607329842931935,
+      "avgSurvivorHpWin": 13.50131926121372
+    },
+    {
+      "label": "2×archer + 1×heavyknight + 2×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 2,
+        "spearsman": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 377,
+      "losses": 387,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.49345549738219896,
+      "avgSurvivorHpWin": 35.53315649867374
+    },
+    {
+      "label": "5×archer + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 5
+      },
+      "researchRequired": [],
+      "wins": 375,
+      "losses": 389,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4908376963350785,
+      "avgSurvivorHpWin": 43.306666666666665
+    },
+    {
+      "label": "1×catapult + 2×horserider + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "horserider": 2,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 375,
+      "losses": 389,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4908376963350785,
+      "avgSurvivorHpWin": 12.578666666666667
+    },
+    {
+      "label": "2×horserider + 4×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 2,
+        "spearsman": 4
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 375,
+      "losses": 389,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4908376963350785,
+      "avgSurvivorHpWin": 32.72
+    },
+    {
+      "label": "1×catapult + 1×heavyknight + 1×horserider + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 1,
+        "catapult": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "catapult",
+        "heavyknight"
+      ],
+      "wins": 373,
+      "losses": 391,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4882198952879581,
+      "avgSurvivorHpWin": 11.836461126005362
+    },
+    {
+      "label": "3×archer + 1×horserider + 3×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 3,
+        "horserider": 1,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 372,
+      "losses": 392,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4869109947643979,
+      "avgSurvivorHpWin": 34.68279569892473
+    },
+    {
+      "label": "7×archer + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 7
+      },
+      "researchRequired": [],
+      "wins": 368,
+      "losses": 396,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4816753926701571,
+      "avgSurvivorHpWin": 52.07336956521739
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 2×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "spearsman": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 366,
+      "losses": 398,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4790575916230366,
+      "avgSurvivorHpWin": 42.75409836065574
+    },
+    {
+      "label": "1×catapult + 11×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 11,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 365,
+      "losses": 399,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.47774869109947643,
+      "avgSurvivorHpWin": 15.227397260273973
+    },
+    {
+      "label": "6×archer + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 6,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 356,
+      "losses": 408,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.46596858638743455,
+      "avgSurvivorHpWin": 44.82022471910113
+    },
+    {
+      "label": "2×archer + 2×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 2,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 350,
+      "losses": 414,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4581151832460733,
+      "avgSurvivorHpWin": 48.214285714285715
+    },
+    {
+      "label": "1×heavyknight + 2×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "spearsman": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 346,
+      "losses": 418,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.45287958115183247,
+      "avgSurvivorHpWin": 50.84971098265896
+    },
+    {
+      "label": "3×archer + 1×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 3,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 344,
+      "losses": 420,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.450261780104712,
+      "avgSurvivorHpWin": 42.9156976744186
+    },
+    {
+      "label": "3×spearsman + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 338,
+      "losses": 426,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4424083769633508,
+      "avgSurvivorHpWin": 64.43491124260355
+    },
+    {
+      "label": "1×catapult + 3×horserider + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "horserider": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 337,
+      "losses": 427,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4410994764397906,
+      "avgSurvivorHpWin": 10.56973293768546
+    },
+    {
+      "label": "2×archer + 1×horserider + 3×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 2,
+        "horserider": 1,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 336,
+      "losses": 428,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4397905759162304,
+      "avgSurvivorHpWin": 38.032738095238095
+    },
+    {
+      "label": "4×archer + 1×horserider + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 4,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 330,
+      "losses": 434,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4319371727748691,
+      "avgSurvivorHpWin": 35.81212121212121
+    },
+    {
+      "label": "4×archer + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 4
+      },
+      "researchRequired": [],
+      "wins": 327,
+      "losses": 437,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4280104712041885,
+      "avgSurvivorHpWin": 41.678899082568805
+    },
+    {
+      "label": "3×archer + 1×horserider + 2×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 3,
+        "horserider": 1,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 323,
+      "losses": 441,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.42277486910994766,
+      "avgSurvivorHpWin": 34.85139318885449
+    },
+    {
+      "label": "2×archer + 1×horserider + 2×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 2,
+        "horserider": 1,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 322,
+      "losses": 442,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4214659685863874,
+      "avgSurvivorHpWin": 38.77018633540373
+    },
+    {
+      "label": "4×archer + 1×horserider + 2×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 4,
+        "horserider": 1,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 315,
+      "losses": 449,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.412303664921466,
+      "avgSurvivorHpWin": 34.52063492063492
+    },
+    {
+      "label": "2×archer + 1×heavyknight + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 312,
+      "losses": 452,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4083769633507853,
+      "avgSurvivorHpWin": 37.666666666666664
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 1×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 1,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 310,
+      "losses": 454,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.40575916230366493,
+      "avgSurvivorHpWin": 43.58064516129032
+    },
+    {
+      "label": "1×heavyknight + 1×horserider + 2×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 1,
+        "spearsman": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 309,
+      "losses": 455,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.40445026178010474,
+      "avgSurvivorHpWin": 30.44336569579288
+    },
+    {
+      "label": "3×archer + 1×horserider + 1×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 3,
+        "horserider": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 307,
+      "losses": 457,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.4018324607329843,
+      "avgSurvivorHpWin": 35.43322475570032
+    },
+    {
+      "label": "2×archer + 1×heavyknight + 1×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 2,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 303,
+      "losses": 461,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.39659685863874344,
+      "avgSurvivorHpWin": 39.504950495049506
+    },
+    {
+      "label": "1×archer + 2×spearsman + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "archer": 1,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 302,
+      "losses": 462,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.39528795811518325,
+      "avgSurvivorHpWin": 51.66887417218543
+    },
+    {
+      "label": "3×archer + 1×heavyknight + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 3,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 302,
+      "losses": 462,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.39528795811518325,
+      "avgSurvivorHpWin": 34.311258278145694
+    },
+    {
+      "label": "3×archer + 1×heavyknight + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 3,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 299,
+      "losses": 465,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3913612565445026,
+      "avgSurvivorHpWin": 35.441471571906355
+    },
+    {
+      "label": "1×heavyknight + 1×spearsman + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 292,
+      "losses": 472,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.38219895287958117,
+      "avgSurvivorHpWin": 47.64041095890411
+    },
+    {
+      "label": "1×horserider + 3×spearsman + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "horserider": 1,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 289,
+      "losses": 475,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3782722513089005,
+      "avgSurvivorHpWin": 49.0795847750865
+    },
+    {
+      "label": "5×archer + 1×horserider + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 5,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 289,
+      "losses": 475,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3782722513089005,
+      "avgSurvivorHpWin": 39.00692041522491
+    },
+    {
+      "label": "1×archer + 1×horserider + 3×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 286,
+      "losses": 478,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3743455497382199,
+      "avgSurvivorHpWin": 46.24475524475525
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "archer": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 284,
+      "losses": 480,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3717277486910995,
+      "avgSurvivorHpWin": 46.901408450704224
+    },
+    {
+      "label": "5×archer + 1×horserider + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 5,
+        "horserider": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 284,
+      "losses": 480,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3717277486910995,
+      "avgSurvivorHpWin": 39.12323943661972
+    },
+    {
+      "label": "1×archer + 1×horserider + 2×spearsman + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 283,
+      "losses": 481,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3704188481675393,
+      "avgSurvivorHpWin": 39.76678445229682
+    },
+    {
+      "label": "2×archer + 1×spearsman + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "archer": 2,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 281,
+      "losses": 483,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.36780104712041883,
+      "avgSurvivorHpWin": 39.88612099644128
+    },
+    {
+      "label": "1×archer + 2×horserider + 3×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "horserider": 2,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 281,
+      "losses": 483,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.36780104712041883,
+      "avgSurvivorHpWin": 32.804270462633454
+    },
+    {
+      "label": "4×archer + 1×heavyknight",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 4,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 276,
+      "losses": 488,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3612565445026178,
+      "avgSurvivorHpWin": 37.18840579710145
+    },
+    {
+      "label": "3×archer + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "archer": 3
+      },
+      "researchRequired": [],
+      "wins": 270,
+      "losses": 494,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.35340314136125656,
+      "avgSurvivorHpWin": 42.233333333333334
+    },
+    {
+      "label": "4×archer + 1×horserider + 1×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 4,
+        "horserider": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 266,
+      "losses": 498,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3481675392670157,
+      "avgSurvivorHpWin": 32.796992481203006
+    },
+    {
+      "label": "1×heavyknight + 8×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 8,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 256,
+      "losses": 508,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.33507853403141363,
+      "avgSurvivorHpWin": 52.60546875
+    },
+    {
+      "label": "6×archer + 1×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 6,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 253,
+      "losses": 511,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.331151832460733,
+      "avgSurvivorHpWin": 40.027667984189726
+    },
+    {
+      "label": "1×archer + 1×catapult + 3×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "horserider": 3,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "catapult"
+      ],
+      "wins": 253,
+      "losses": 511,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.331151832460733,
+      "avgSurvivorHpWin": 11.494071146245059
+    },
+    {
+      "label": "2×spearsman + 11×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 11,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 251,
+      "losses": 513,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3285340314136126,
+      "avgSurvivorHpWin": 51.764940239043824
+    },
+    {
+      "label": "3×archer + 1×horserider + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "archer": 3,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 251,
+      "losses": 513,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3285340314136126,
+      "avgSurvivorHpWin": 33.68525896414343
+    },
+    {
+      "label": "2×horserider + 3×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "horserider": 2,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 246,
+      "losses": 518,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3219895287958115,
+      "avgSurvivorHpWin": 38.833333333333336
+    },
+    {
+      "label": "2×archer + 1×horserider + 1×spearsman + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "archer": 2,
+        "horserider": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 235,
+      "losses": 529,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3075916230366492,
+      "avgSurvivorHpWin": 39.280851063829786
+    },
+    {
+      "label": "1×heavyknight + 1×horserider + 1×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "horserider": 1,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 235,
+      "losses": 529,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.3075916230366492,
+      "avgSurvivorHpWin": 38.31063829787234
+    },
+    {
+      "label": "1×horserider + 2×spearsman + 8×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 8,
+        "horserider": 1,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 229,
+      "losses": 535,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.299738219895288,
+      "avgSurvivorHpWin": 45.40174672489083
+    },
+    {
+      "label": "3×horserider + 3×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 3,
+        "spearsman": 3
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 221,
+      "losses": 543,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2892670157068063,
+      "avgSurvivorHpWin": 19.81447963800905
+    },
+    {
+      "label": "1×archer + 1×spearsman + 11×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 11,
+        "archer": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 216,
+      "losses": 548,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.28272251308900526,
+      "avgSurvivorHpWin": 43.52777777777778
+    },
+    {
+      "label": "2×archer + 11×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 11,
+        "archer": 2
+      },
+      "researchRequired": [],
+      "wins": 212,
+      "losses": 552,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2774869109947644,
+      "avgSurvivorHpWin": 41.29245283018868
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 1×horserider + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 211,
+      "losses": 553,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2761780104712042,
+      "avgSurvivorHpWin": 31.924170616113745
+    },
+    {
+      "label": "1×heavyknight + 1×horserider + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "horserider": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 201,
+      "losses": 563,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2630890052356021,
+      "avgSurvivorHpWin": 38.039800995024876
+    },
+    {
+      "label": "1×catapult + 3×horserider + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 3,
+        "spearsman": 1,
+        "catapult": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "catapult"
+      ],
+      "wins": 195,
+      "losses": 569,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.25523560209424084,
+      "avgSurvivorHpWin": 7.7384615384615385
+    },
+    {
+      "label": "1×heavyknight + 2×horserider + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 2,
+        "spearsman": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "spearsman",
+        "heavyknight"
+      ],
+      "wins": 195,
+      "losses": 569,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.25523560209424084,
+      "avgSurvivorHpWin": 18.425641025641024
+    },
+    {
+      "label": "1×archer + 1×horserider + 1×spearsman + 8×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 8,
+        "archer": 1,
+        "horserider": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 193,
+      "losses": 571,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2526178010471204,
+      "avgSurvivorHpWin": 39.119170984455955
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 1×horserider + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 1,
+        "horserider": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 193,
+      "losses": 571,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2526178010471204,
+      "avgSurvivorHpWin": 32.865284974093264
+    },
+    {
+      "label": "2×archer + 2×horserider + 2×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 2,
+        "horserider": 2,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 193,
+      "losses": 571,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2526178010471204,
+      "avgSurvivorHpWin": 31.870466321243523
+    },
+    {
+      "label": "2×archer + 1×horserider + 8×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 8,
+        "archer": 2,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 192,
+      "losses": 572,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2513089005235602,
+      "avgSurvivorHpWin": 35.802083333333336
+    },
+    {
+      "label": "1×spearsman + 13×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 13,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 182,
+      "losses": 582,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.23821989528795812,
+      "avgSurvivorHpWin": 48.21978021978022
+    },
+    {
+      "label": "4×archer + 2×horserider + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 4,
+        "horserider": 2
+      },
+      "researchRequired": [],
+      "wins": 181,
+      "losses": 583,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2369109947643979,
+      "avgSurvivorHpWin": 31.14364640883978
+    },
+    {
+      "label": "1×archer + 13×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 13,
+        "archer": 1
+      },
+      "researchRequired": [],
+      "wins": 173,
+      "losses": 591,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.22643979057591623,
+      "avgSurvivorHpWin": 46.716763005780344
+    },
+    {
+      "label": "2×archer + 2×horserider + 1×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 2,
+        "horserider": 2,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 171,
+      "losses": 593,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2238219895287958,
+      "avgSurvivorHpWin": 27.719298245614034
+    },
+    {
+      "label": "2×archer + 1×heavyknight + 1×horserider + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 2,
+        "horserider": 1,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 171,
+      "losses": 593,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2238219895287958,
+      "avgSurvivorHpWin": 30.53216374269006
+    },
+    {
+      "label": "1×archer + 2×horserider + 1×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 1,
+        "horserider": 2,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 170,
+      "losses": 594,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.22251308900523561,
+      "avgSurvivorHpWin": 35.37647058823529
+    },
+    {
+      "label": "3×archer + 2×horserider + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 3,
+        "horserider": 2
+      },
+      "researchRequired": [],
+      "wins": 170,
+      "losses": 594,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.22251308900523561,
+      "avgSurvivorHpWin": 28.094117647058823
+    },
+    {
+      "label": "1×archer + 2×horserider + 2×spearsman + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 1,
+        "horserider": 2,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 170,
+      "losses": 594,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.22251308900523561,
+      "avgSurvivorHpWin": 36.86470588235294
+    },
+    {
+      "label": "3×archer + 2×horserider + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 3,
+        "horserider": 2,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 166,
+      "losses": 598,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.21727748691099477,
+      "avgSurvivorHpWin": 30.873493975903614
+    },
+    {
+      "label": "2×horserider + 2×spearsman + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "horserider": 2,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 161,
+      "losses": 603,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.2107329842931937,
+      "avgSurvivorHpWin": 38.20496894409938
+    },
+    {
+      "label": "2×archer + 2×horserider + 5×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 2,
+        "horserider": 2
+      },
+      "researchRequired": [],
+      "wins": 156,
+      "losses": 608,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.20418848167539266,
+      "avgSurvivorHpWin": 29.916666666666668
+    },
+    {
+      "label": "15×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 15
+      },
+      "researchRequired": [],
+      "wins": 147,
+      "losses": 617,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.19240837696335078,
+      "avgSurvivorHpWin": 48.4421768707483
+    },
+    {
+      "label": "3×horserider + 2×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "horserider": 3,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 147,
+      "losses": 617,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.19240837696335078,
+      "avgSurvivorHpWin": 28.46938775510204
+    },
+    {
+      "label": "1×heavyknight + 2×horserider + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "horserider": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 144,
+      "losses": 620,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.18848167539267016,
+      "avgSurvivorHpWin": 26.319444444444443
+    },
+    {
+      "label": "1×horserider + 1×spearsman + 10×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 10,
+        "horserider": 1,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 139,
+      "losses": 625,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.18193717277486912,
+      "avgSurvivorHpWin": 46.68345323741007
+    },
+    {
+      "label": "1×archer + 3×horserider + 2×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "horserider": 3,
+        "spearsman": 2
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 137,
+      "losses": 627,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.1793193717277487,
+      "avgSurvivorHpWin": 23.67883211678832
+    },
+    {
+      "label": "1×archer + 1×heavyknight + 2×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 1,
+        "horserider": 2,
+        "heavyknight": 1
+      },
+      "researchRequired": [
+        "heavyknight"
+      ],
+      "wins": 135,
+      "losses": 629,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.17670157068062828,
+      "avgSurvivorHpWin": 22.177777777777777
+    },
+    {
+      "label": "2×horserider + 1×spearsman + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "horserider": 2,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 134,
+      "losses": 630,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.17539267015706805,
+      "avgSurvivorHpWin": 33.93283582089552
+    },
+    {
+      "label": "1×archer + 1×horserider + 10×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 10,
+        "archer": 1,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 120,
+      "losses": 644,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.15706806282722513,
+      "avgSurvivorHpWin": 41.71666666666667
+    },
+    {
+      "label": "2×archer + 3×horserider + 1×spearsman",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 2,
+        "horserider": 3,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 115,
+      "losses": 649,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.1505235602094241,
+      "avgSurvivorHpWin": 26.765217391304347
+    },
+    {
+      "label": "1×horserider + 12×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 12,
+        "horserider": 1
+      },
+      "researchRequired": [],
+      "wins": 103,
+      "losses": 661,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.13481675392670156,
+      "avgSurvivorHpWin": 39.90291262135922
+    },
+    {
+      "label": "1×archer + 2×horserider + 7×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 7,
+        "archer": 1,
+        "horserider": 2
+      },
+      "researchRequired": [],
+      "wins": 102,
+      "losses": 662,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.13350785340314136,
+      "avgSurvivorHpWin": 37.13725490196079
+    },
+    {
+      "label": "1×archer + 3×horserider + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 1,
+        "horserider": 3
+      },
+      "researchRequired": [],
+      "wins": 89,
+      "losses": 675,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.11649214659685864,
+      "avgSurvivorHpWin": 28.078651685393258
+    },
+    {
+      "label": "1×archer + 3×horserider + 1×spearsman + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "horserider": 3,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 88,
+      "losses": 676,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.11518324607329843,
+      "avgSurvivorHpWin": 24.647727272727273
+    },
+    {
+      "label": "3×horserider + 1×spearsman + 4×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 4,
+        "horserider": 3,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 84,
+      "losses": 680,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.1099476439790576,
+      "avgSurvivorHpWin": 34.535714285714285
+    },
+    {
+      "label": "3×archer + 3×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "archer": 3,
+        "horserider": 3
+      },
+      "researchRequired": [],
+      "wins": 82,
+      "losses": 682,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.10732984293193717,
+      "avgSurvivorHpWin": 22.4390243902439
+    },
+    {
+      "label": "2×horserider + 9×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 9,
+        "horserider": 2
+      },
+      "researchRequired": [],
+      "wins": 81,
+      "losses": 683,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.10602094240837696,
+      "avgSurvivorHpWin": 37.641975308641975
+    },
+    {
+      "label": "2×archer + 3×horserider + 2×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 2,
+        "horserider": 3
+      },
+      "researchRequired": [],
+      "wins": 69,
+      "losses": 695,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.09031413612565445,
+      "avgSurvivorHpWin": 23.246376811594203
+    },
+    {
+      "label": "3×horserider + 6×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 6,
+        "horserider": 3
+      },
+      "researchRequired": [],
+      "wins": 65,
+      "losses": 699,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.08507853403141362,
+      "avgSurvivorHpWin": 30.83076923076923
+    },
+    {
+      "label": "4×horserider + 1×spearsman + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 4,
+        "spearsman": 1
+      },
+      "researchRequired": [
+        "spearsman"
+      ],
+      "wins": 57,
+      "losses": 707,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.07460732984293193,
+      "avgSurvivorHpWin": 23.68421052631579
+    },
+    {
+      "label": "4×horserider + 3×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 3,
+        "horserider": 4
+      },
+      "researchRequired": [],
+      "wins": 40,
+      "losses": 724,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.05235602094240838,
+      "avgSurvivorHpWin": 26.075
+    },
+    {
+      "label": "1×archer + 4×horserider + 1×warrior",
+      "totalAura": 15,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 1,
+        "horserider": 4
+      },
+      "researchRequired": [],
+      "wins": 30,
+      "losses": 734,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.03926701570680628,
+      "avgSurvivorHpWin": 25.233333333333334
+    },
+    {
+      "label": "5×horserider",
+      "totalAura": 15,
+      "unitCounts": {
+        "horserider": 5
+      },
+      "researchRequired": [],
+      "wins": 24,
+      "losses": 740,
+      "draws": 0,
+      "games": 764,
+      "winRate": 0.031413612565445025,
+      "avgSurvivorHpWin": 14.333333333333334
+    }
+  ],
+  "topMatchups": [
+    {
+      "winner": "15×warrior",
+      "loser": "1×horserider + 12×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×spearsman + 11×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 11×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "1×archer + 1×horserider + 10×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 1×spearsman + 9×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 2×spearsman + 9×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×catapult + 9×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "2×horserider + 9×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 1×spearsman + 9×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 1×horserider + 8×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×heavyknight + 8×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "3×archer + 1×spearsman + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 2×spearsman + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 1×catapult + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "1×archer + 2×horserider + 7×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 3×spearsman + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×catapult + 1×spearsman + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "2×horserider + 1×spearsman + 7×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "4×spearsman + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 2×spearsman + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×catapult + 7×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×catapult + 1×horserider + 6×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×heavyknight + 6×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "3×horserider + 6×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×horserider + 3×spearsman + 6×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×heavyknight + 1×spearsman + 6×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "3×archer + 2×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "3×archer + 1×catapult + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "2×archer + 2×horserider + 5×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 3×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 1×catapult + 1×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 4×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×catapult + 2×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 2×catapult + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "5×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 3×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×catapult + 1×spearsman + 5×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 1×horserider + 2×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 1×catapult + 1×horserider + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×archer + 1×heavyknight + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "1×archer + 3×horserider + 4×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×horserider + 3×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×catapult + 1×horserider + 1×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×archer + 1×heavyknight + 1×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "15×warrior",
+      "loser": "3×horserider + 1×spearsman + 4×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×horserider + 4×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 1×horserider + 2×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "2×catapult + 1×horserider + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×heavyknight + 2×spearsman + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    },
+    {
+      "winner": "1×catapult + 1×heavyknight + 4×warrior",
+      "loser": "15×warrior",
+      "wWins": 4,
+      "total": 4,
+      "gap": 1
+    }
+  ]
+}

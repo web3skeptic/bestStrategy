@@ -1,0 +1,868 @@
+{
+  "config": {
+    "auraCap": 10,
+    "gamesPerMatchup": 8,
+    "totalGames": 1088
+  },
+  "rankings": [
+    {
+      "label": "3×archer + 4×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 4,
+        "archer": 3
+      },
+      "wins": 109,
+      "losses": 19,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.8515625,
+      "avgSurvivorHpWin": 37.80974702380952,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "5×archer",
+      "totalAura": 10,
+      "unitCounts": {
+        "archer": 5
+      },
+      "wins": 103,
+      "losses": 25,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.8046875,
+      "avgSurvivorHpWin": 43.06912202380953,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "2×archer + 6×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 6,
+        "archer": 2
+      },
+      "wins": 102,
+      "losses": 26,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.796875,
+      "avgSurvivorHpWin": 41.957589285714285,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "4×archer + 2×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 4
+      },
+      "wins": 101,
+      "losses": 27,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.7890625,
+      "avgSurvivorHpWin": 40.300446428571426,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×archer + 8×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 8,
+        "archer": 1
+      },
+      "wins": 98,
+      "losses": 30,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.765625,
+      "avgSurvivorHpWin": 44.361309523809524,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "10×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 10
+      },
+      "wins": 88,
+      "losses": 40,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.6875,
+      "avgSurvivorHpWin": 40.86941964285714,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×archer + 1×horserider + 5×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 5,
+        "archer": 1,
+        "horserider": 1
+      },
+      "wins": 76,
+      "losses": 52,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.59375,
+      "avgSurvivorHpWin": 23.97842261904762,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "2×archer + 1×horserider + 3×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 3,
+        "archer": 2,
+        "horserider": 1
+      },
+      "wins": 75,
+      "losses": 53,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.5859375,
+      "avgSurvivorHpWin": 23.110491071428573,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "3×archer + 1×horserider + 1×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 1,
+        "archer": 3,
+        "horserider": 1
+      },
+      "wins": 68,
+      "losses": 60,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.53125,
+      "avgSurvivorHpWin": 24.31547619047619,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×catapult + 1×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 1,
+        "catapult": 1
+      },
+      "wins": 67,
+      "losses": 61,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.5234375,
+      "avgSurvivorHpWin": 6.890997023809523,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×horserider + 7×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 7,
+        "horserider": 1
+      },
+      "wins": 59,
+      "losses": 69,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.4609375,
+      "avgSurvivorHpWin": 30.04389880952381,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "2×horserider + 4×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 4,
+        "horserider": 2
+      },
+      "wins": 49,
+      "losses": 79,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.3828125,
+      "avgSurvivorHpWin": 16.720758928571428,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×archer + 2×horserider + 2×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 2,
+        "archer": 1,
+        "horserider": 2
+      },
+      "wins": 35,
+      "losses": 93,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.2734375,
+      "avgSurvivorHpWin": 9.696428571428571,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "2×archer + 2×horserider",
+      "totalAura": 10,
+      "unitCounts": {
+        "archer": 2,
+        "horserider": 2
+      },
+      "wins": 21,
+      "losses": 107,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.1640625,
+      "avgSurvivorHpWin": 3.8072916666666665,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "3×horserider + 1×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 1,
+        "horserider": 3
+      },
+      "wins": 15,
+      "losses": 113,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.1171875,
+      "avgSurvivorHpWin": 2.78125,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×spearsman + 2×warrior",
+      "totalAura": 10,
+      "unitCounts": {
+        "warrior": 2,
+        "spearsman": 1
+      },
+      "wins": 14,
+      "losses": 114,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.109375,
+      "avgSurvivorHpWin": 2.215625,
+      "avgSurvivorHpLoss": 0
+    },
+    {
+      "label": "1×archer + 1×spearsman",
+      "totalAura": 10,
+      "unitCounts": {
+        "archer": 1,
+        "spearsman": 1
+      },
+      "wins": 8,
+      "losses": 120,
+      "draws": 0,
+      "games": 128,
+      "winRate": 0.0625,
+      "avgSurvivorHpWin": 2.140625,
+      "avgSurvivorHpLoss": 0
+    }
+  ],
+  "matchups": [
+    {
+      "compA": "10×warrior",
+      "compB": "1×horserider + 7×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "1×horserider + 7×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "2×horserider + 4×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "2×horserider + 4×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "1×archer + 2×horserider + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "1×archer + 2×horserider + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "5×archer",
+      "winsA": 0,
+      "winsB": 8,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "5×archer",
+      "loser": "10×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "10×warrior",
+      "compB": "1×archer + 1×spearsman",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "10×warrior",
+      "loser": "1×archer + 1×spearsman",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "1×horserider + 7×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "1×horserider + 7×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "2×horserider + 4×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "2×horserider + 4×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "2×archer + 1×horserider + 3×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "2×archer + 1×horserider + 3×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "1×archer + 2×horserider + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "1×archer + 2×horserider + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "3×archer + 1×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "3×archer + 1×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "5×archer",
+      "winsA": 0,
+      "winsB": 8,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "5×archer",
+      "loser": "1×archer + 8×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 8×warrior",
+      "compB": "1×archer + 1×spearsman",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 8×warrior",
+      "loser": "1×archer + 1×spearsman",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×horserider + 7×warrior",
+      "compB": "2×archer + 6×warrior",
+      "winsA": 0,
+      "winsB": 8,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "1×horserider + 7×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×horserider + 7×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×horserider + 7×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×horserider + 7×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×horserider + 7×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×horserider + 7×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×horserider + 7×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×horserider + 7×warrior",
+      "compB": "1×archer + 1×spearsman",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×horserider + 7×warrior",
+      "loser": "1×archer + 1×spearsman",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "1×archer + 1×horserider + 5×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "1×archer + 1×horserider + 5×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "2×horserider + 4×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "2×horserider + 4×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "1×archer + 2×horserider + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "1×archer + 2×horserider + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "3×archer + 1×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "3×archer + 1×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 6×warrior",
+      "compB": "1×archer + 1×spearsman",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 6×warrior",
+      "loser": "1×archer + 1×spearsman",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 1×horserider + 5×warrior",
+      "compB": "3×archer + 4×warrior",
+      "winsA": 0,
+      "winsB": 8,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "1×archer + 1×horserider + 5×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 1×horserider + 5×warrior",
+      "compB": "1×archer + 2×horserider + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 1×horserider + 5×warrior",
+      "loser": "1×archer + 2×horserider + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 1×horserider + 5×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 1×horserider + 5×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 1×horserider + 5×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 1×horserider + 5×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 1×horserider + 5×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 1×horserider + 5×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "1×archer + 1×horserider + 5×warrior",
+      "compB": "1×archer + 1×spearsman",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "1×archer + 1×horserider + 5×warrior",
+      "loser": "1×archer + 1×spearsman",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "2×horserider + 4×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "2×horserider + 4×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "2×archer + 1×horserider + 3×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "2×archer + 1×horserider + 3×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "3×archer + 1×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "3×archer + 1×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "3×archer + 4×warrior",
+      "compB": "1×archer + 1×spearsman",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "3×archer + 4×warrior",
+      "loser": "1×archer + 1×spearsman",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×horserider + 4×warrior",
+      "compB": "4×archer + 2×warrior",
+      "winsA": 0,
+      "winsB": 8,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "4×archer + 2×warrior",
+      "loser": "2×horserider + 4×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×horserider + 4×warrior",
+      "compB": "1×spearsman + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×horserider + 4×warrior",
+      "loser": "1×spearsman + 2×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×horserider + 4×warrior",
+      "compB": "3×horserider + 1×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×horserider + 4×warrior",
+      "loser": "3×horserider + 1×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×horserider + 4×warrior",
+      "compB": "5×archer",
+      "winsA": 0,
+      "winsB": 8,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "5×archer",
+      "loser": "2×horserider + 4×warrior",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×horserider + 4×warrior",
+      "compB": "2×archer + 2×horserider",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×horserider + 4×warrior",
+      "loser": "2×archer + 2×horserider",
+      "winnerWins": 8
+    },
+    {
+      "compA": "2×archer + 1×horserider + 3×warrior",
+      "compB": "1×archer + 2×horserider + 2×warrior",
+      "winsA": 8,
+      "winsB": 0,
+      "draws": 0,
+      "games": 8,
+      "dominance": 1,
+      "winner": "2×archer + 1×horserider + 3×warrior",
+      "loser": "1×archer + 2×horserider + 2×warrior",
+      "winnerWins": 8
+    }
+  ]
+}

@@ -8,6 +8,14 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    nickname      TEXT UNIQUE NOT NULL,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+
   CREATE TABLE IF NOT EXISTS players (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     username   TEXT NOT NULL UNIQUE,
@@ -29,7 +37,42 @@ db.exec(`
     state_json TEXT NOT NULL,
     updated_at INTEGER NOT NULL DEFAULT (unixepoch())
   );
+
+  CREATE TABLE IF NOT EXISTS game_replays (
+    game_id      TEXT PRIMARY KEY,
+    created_at   INTEGER NOT NULL DEFAULT (unixepoch('now', 'subsec') * 1000),
+    finished_at  INTEGER,
+    player1_name TEXT NOT NULL,
+    player2_name TEXT NOT NULL,
+    winner_name  TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS replay_events (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id             TEXT NOT NULL REFERENCES game_replays(game_id),
+    seq                 INTEGER NOT NULL,
+    tick                INTEGER NOT NULL,
+    turn_number         INTEGER NOT NULL,
+    current_player      INTEGER NOT NULL,
+    player_id           INTEGER NOT NULL,
+    action              TEXT NOT NULL,
+    params_json         TEXT NOT NULL DEFAULT '{}',
+    state_before_json   TEXT NOT NULL,
+    state_after_json    TEXT,
+    action_log_json     TEXT NOT NULL DEFAULT '[]',
+    ok                  INTEGER NOT NULL DEFAULT 1,
+    error_msg           TEXT,
+    timestamp_ms        INTEGER NOT NULL,
+    UNIQUE(game_id, seq)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_replay_events_game_seq
+    ON replay_events(game_id, seq);
 `);
+
+// Re-export the underlying database instance so other modules
+// (e.g. gameLogger) can issue their own prepared statements.
+export { db };
 
 // ── Player helpers ──
 

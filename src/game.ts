@@ -2,6 +2,7 @@ import {
   GameState, Unit, UnitStats, UnitType, Player, HexCoord, Temple,
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, templeUpgradeCost,
+  templeEconomyLevel,
   SUPPORT_RANGE,
   TechId, TechNode, TECH_NODES, PlayerTech,
   TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
@@ -24,7 +25,10 @@ const ARCHER_STATS: UnitStats = {
 };
 
 const CATAPULT_STATS: UnitStats = {
-  maxHp: 10, attack: 14, defense: 1, speed: 1,
+  // Balance v2 (2026-05-17): maxHp 10→16 — catapults died before firing under
+  // pressure; the entire `unlock_catapult` tech branch had a 0% win share in
+  // tournament v2. Restoring viability for splash strategies.
+  maxHp: 16, attack: 14, defense: 1, speed: 1,
   range: 3, splash: 0, splashFactor: 0, canBeRevenged: false, vision: 4, cantShootAfterMove: false,
 };
 
@@ -39,24 +43,32 @@ const HEAVYKNIGHT_STATS: UnitStats = {
 };
 
 const SPEARSMAN_STATS: UnitStats = {
-  maxHp: 20, attack: 15, defense: 5, speed: 2,
+  maxHp: 15, attack: 10, defense: 5, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
-  bonusAgainst: { horserider: 3.0, heavyknight: 3.0 },
+  attackBonusAgainst: { horserider: 3.0, heavyknight: 4.0 },
+  // Balance v2 (2026-05-17): defense bonus capped from 3×→2× (vs horse) and
+  // 6×→2.5× (vs HK). Previous values made a 2⚡ spearsman hard-counter a 7⚡
+  // heavy knight (1v1 win with full HP). counter_v1 swept the v2 tournament at
+  // 88.9% because the cavalry-heavy field couldn't trade into spearsmen. Keeps
+  // the spearsman as the cavalry counter, but a soft counter, not a hard one.
+  defenseBonusAgainst: { horserider: 2.0, heavyknight: 2.5 },
 };
 
 const HEALER_STATS: UnitStats = {
-  maxHp: 12, attack: 4, defense: 2, speed: 2,
+  // Balance v2 (2026-05-17): maxHp 12→18. The 5HP/turn aura needs the healer to
+  // survive past one focus-fire round to pay back; 12HP died in 1-2 hits.
+  maxHp: 18, attack: 4, defense: 2, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
 const DAMAGE_BOOSTER_STATS: UnitStats = {
   maxHp: 12, attack: 4, defense: 2, speed: 2,
-  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+  range: 0, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
 const RANGE_BOOSTER_STATS: UnitStats = {
   maxHp: 12, attack: 4, defense: 2, speed: 2,
-  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+  range: 0, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
 export const HEALER_HEAL_AMOUNT = 5;
@@ -89,6 +101,20 @@ export function getUnlockedUnits(tech: PlayerTech): Set<UnitType> {
   return unlocked;
 }
 
+/**
+ * Deep-copy a base UnitStats, cloning the nested bonus dicts so the copy never
+ * shares the `attackBonusAgainst`/`defenseBonusAgainst` objects with the shared
+ * UNIT_STATS singletons. Used by both `createUnit` and `rebuildUnitStats` so the
+ * two paths produce identical, fully-independent stat objects.
+ */
+function cloneStats(base: UnitStats): UnitStats {
+  return {
+    ...base,
+    attackBonusAgainst: { ...(base.attackBonusAgainst ?? {}) },
+    defenseBonusAgainst: { ...(base.defenseBonusAgainst ?? {}) },
+  };
+}
+
 function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): UnitStats {
   const r = tech.researched;
   if (r.has('roads')) stats.speed += 1;
@@ -97,6 +123,23 @@ function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): U
   if (r.has('catapult_splash') && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.5; }
   if (r.has('horse_sight') && (type === 'horserider' || type === 'heavyknight')) stats.vision += 1;
   return stats;
+}
+
+/**
+ * Rebuild a living unit's stats from base + currently-researched tech. Used
+ * by `researchTech()` to retroactively apply tech effects to units that were
+ * spawned before the tech was researched.
+ *
+ * Idempotent — always starts from `UNIT_STATS[unit.type]`, so calling multiple
+ * times never double-applies. Preserves current HP (and clamps it to the new
+ * maxHp if max ever shrinks — currently nothing shrinks, but the guard makes
+ * future tech changes safe).
+ */
+function rebuildUnitStats(unit: Unit, tech: PlayerTech): void {
+  const fresh = cloneStats(UNIT_STATS[unit.type]);
+  applyTechToStats(fresh, unit.type, tech);
+  unit.stats = fresh;
+  if (unit.hp > fresh.maxHp) unit.hp = fresh.maxHp;
 }
 
 // ── Factories ──
@@ -112,8 +155,8 @@ export function resetCounters(unitMax: number, templeMax: number, tpMax: number)
 }
 
 function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech): Unit {
-  const baseStats = UNIT_STATS[type];
-  const stats = tech ? applyTechToStats({ ...baseStats }, type, tech) : { ...baseStats };
+  const stats = cloneStats(UNIT_STATS[type]);
+  if (tech) applyTechToStats(stats, type, tech);
   return {
     id: `unit_${unitIdCounter++}`,
     type, playerId,
@@ -122,6 +165,7 @@ function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: Play
     pos: { ...pos },
     hasMoved: false,
     hasAttacked: false,
+    hasCaptured: false,
   };
 }
 
@@ -236,21 +280,7 @@ export function getPlayerVisible(state: GameState, playerId: number): Set<string
 }
 
 export function getCurrentPlayerVisible(state: GameState): Set<string> {
-  const visible = new Set<string>();
-  const playerId = getCurrentPlayer(state).id;
-  const units = state.units.filter(u => u.hp > 0 && u.playerId === playerId);
-  for (const unit of units) {
-    for (const hex of getVisibleHexes(unit.pos, unit.stats.vision, state.mapRadius, state.forests, state.hills)) {
-      visible.add(hexKey(hex));
-    }
-  }
-  const temples = state.temples.filter(t => t.ownerId === playerId);
-  for (const temple of temples) {
-    for (const hex of getVisibleHexes(temple.pos, 2, state.mapRadius, state.forests, state.hills)) {
-      visible.add(hexKey(hex));
-    }
-  }
-  return visible;
+  return getPlayerVisible(state, getCurrentPlayer(state).id);
 }
 
 // ── Terrain generation ──
@@ -374,6 +404,9 @@ export function getEffectiveAttack(state: GameState, unit: Unit): number {
 }
 
 export function getEffectiveRange(state: GameState, unit: Unit): number {
+  // Booster units can only move/support — never attack. Range is always zero,
+  // ignoring hill/range boosts.
+  if (unit.type === 'damageBooster' || unit.type === 'rangeBooster') return 0;
   const onHill = state.hills.has(hexKey(unit.pos));
   const hillBonus = (onHill && unit.stats.range > 1) ? HILL_RANGE_BONUS : 0;
   const { rangeBonus } = getSupportBoostsForUnit(state, unit);
@@ -385,7 +418,7 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
 export function getPopulationCap(state: GameState, playerId: number): number {
   return state.temples
     .filter(t => t.ownerId === playerId)
-    .reduce((sum, t) => sum + t.level * TEMPLE_POP_CAP_PER_LEVEL, 0);
+    .reduce((sum, t) => sum + templeEconomyLevel(t.level) * TEMPLE_POP_CAP_PER_LEVEL, 0);
 }
 
 export function getPopulationCount(state: GameState, playerId: number): number {
@@ -398,6 +431,11 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const mapRadius = 6;
   const configs = playerConfigs || DEFAULT_PLAYERS;
 
+  // Balance v2.2 (2026-05-17): Symmetric starting aura. The aura compensation
+  // experiments (v2.0: +1, v2.1: +2) only closed the first-mover gap from
+  // 63% to ~59% — never enough to reach 50%. The proper fix is randomizing
+  // who acts first (see `firstPlayer` below) so neither slot is "fixed P0".
+  // With random first-mover the asymmetric aura would itself become unfair.
   const players: Player[] = configs.map((cfg, i) => ({
     id: i, name: cfg.name, color: cfg.color, aura: 2,
   }));
@@ -427,10 +465,19 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
 
   const explored: Set<string>[] = players.map(() => new Set<string>());
 
+  // Balance v2.2 (2026-05-17): Random first-mover. Previously P0 always acted
+  // first, which (in the 132-game bot tournament) caused a 63/37 win split
+  // toward P0 regardless of strategy. Applies to every code path that builds
+  // a new game — local AI matches, online multiplayer rooms, headless API
+  // games, the bot tournament — so the asymmetry is removed everywhere.
+  const firstPlayer = Math.random() < 0.5 ? 0 : 1;
+
   const state: GameState = {
     players, units, temples, hills, walls, forests, explored,
-    currentPlayerIndex: 0, phase: 'playing', mapRadius,
+    currentPlayerIndex: firstPlayer, firstPlayerIndex: firstPlayer,
+    phase: 'playing', mapRadius,
     winner: null,
+    turnNumber: 1,
     selectedUnitId: null, selectedTempleId: null, selectionMode: null,
     moveHexes: [], attackHexes: [], supportHexes: [],
     spawnedTempleIds: new Set(),
@@ -463,7 +510,11 @@ export function getTempleAt(state: GameState, pos: HexCoord): Temple | undefined
 // ── Temple capture ──
 
 export function canCaptureTemple(state: GameState, unit: Unit): Temple | null {
-  if (unit.hasMoved || unit.hasAttacked) return null;
+  // Capture is a separate action from move/attack: it does NOT consume
+  // hasMoved/hasAttacked. A unit that already moved this turn (or is standing
+  // on a temple from a previous turn without having acted yet) can still
+  // capture — but only once per turn.
+  if (unit.hasCaptured) return null;
   const temple = getTempleAt(state, unit.pos);
   if (!temple) return null;
   if (temple.ownerId === unit.playerId) return null;
@@ -472,8 +523,7 @@ export function canCaptureTemple(state: GameState, unit: Unit): Temple | null {
 
 export function captureTemple(state: GameState, unit: Unit, temple: Temple): void {
   temple.ownerId = unit.playerId;
-  unit.hasAttacked = true;
-  unit.hasMoved = true;
+  unit.hasCaptured = true;
   updateVisibility(state, unit.playerId);
   checkWinCondition(state);
 }
@@ -528,6 +578,19 @@ export function researchTech(state: GameState, techId: TechId): boolean {
   const node = TECH_NODES.find(n => n.id === techId)!;
   player.aura -= node.cost;
   state.playerTech[player.id]!.researched.add(techId);
+
+  // Retroactively apply this tech (and any previously-researched tech that
+  // happened to be missing from a unit's stats) to every living unit owned
+  // by the researcher. Without this, `applyTechToStats` only fires at
+  // `createUnit` time, so existing units never benefit from techs like
+  // `roads`, `infantry_move`, `longrange_hp`, or `horse_sight` — bug
+  // discovered in REPORT.md §6.
+  const tech = state.playerTech[player.id]!;
+  for (const unit of state.units) {
+    if (unit.playerId !== player.id || unit.hp <= 0) continue;
+    rebuildUnitStats(unit, tech);
+  }
+
   return true;
 }
 
@@ -549,6 +612,11 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return false;
 
+  // One spawn per temple per turn (rule documented in headless /rules)
+  if (state.spawnedTempleIds.has(templeId)) {
+    throw new Error('Temple has already spawned a unit this turn');
+  }
+
   const player = getCurrentPlayer(state);
   const cost = UNIT_COSTS[unitType];
   if (player.aura < cost) return false;
@@ -558,6 +626,10 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   const count = getPopulationCount(state, player.id);
   if (count >= cap) return false;
 
+  // Tech unlock check
+  const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
+  if (!unlocked.has(unitType)) return false;
+
   if (getUnitAt(state, temple.pos)) return false;
 
   player.aura -= cost;
@@ -566,6 +638,8 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   unit.hasMoved = false;
   unit.hasAttacked = false;
   state.units.push(unit);
+
+  state.spawnedTempleIds.add(templeId);
 
   revealForPlayer(state, player.id, unit.pos, unit.stats.vision);
 
@@ -707,9 +781,11 @@ function updateHighlights(state: GameState): void {
   const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
   if (canAttack) {
     const effectiveRange = getEffectiveRange(state, unit);
+    const visible = getPlayerVisible(state, unit.playerId);
     const enemies = state.units.filter(u => u.hp > 0 && u.playerId !== unit.playerId);
     state.attackHexes = enemies
       .filter(e => hexDistance(unit.pos, e.pos) <= effectiveRange)
+      .filter(e => visible.has(hexKey(e.pos)))
       .filter(e => isForestUnitRevealed(state, e.pos, unit.playerId))
       .map(e => e.pos);
   }
@@ -790,11 +866,12 @@ function randomMultiplier(): number {
   return Math.max(0.5, Math.min(1.5, value));
 }
 
-function getTypeBonusMultiplier(attacker: Unit, target: Unit): number {
-  if (attacker.stats.bonusAgainst) {
-    return attacker.stats.bonusAgainst[target.type] ?? 1;
-  }
-  return 1;
+function getAttackTypeBonus(attacker: Unit, target: Unit): number {
+  return attacker.stats.attackBonusAgainst?.[target.type] ?? 1;
+}
+
+function getDefenseTypeBonus(defender: Unit, attacker: Unit): number {
+  return defender.stats.defenseBonusAgainst?.[attacker.type] ?? 1;
 }
 
 function calculateDamage(attackerAtk: number, defenderDef: number, encirclementMultiplier: number, typeBonus = 1): number {
@@ -837,7 +914,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   const targetDef = getEffectiveDefense(state, target);
   const attackerDef = getEffectiveDefense(state, attacker);
 
-  const typeBonus = getTypeBonusMultiplier(attacker, target);
+  const typeBonus = getAttackTypeBonus(attacker, target) / getDefenseTypeBonus(target, attacker);
   const damageDealt = calculateDamage(getEffectiveAttack(state, attacker), targetDef, targetEncirclement.attackMultiplier, typeBonus);
   target.hp -= damageDealt;
 
@@ -855,7 +932,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
       const splashEnc = calculateEncirclement(state, splashUnit);
       const splashDef = getEffectiveDefense(state, splashUnit);
       const splashDmg = Math.round(
-        calculateDamage(attacker.stats.attack, splashDef, splashEnc.attackMultiplier) * attacker.stats.splashFactor
+        calculateDamage(getEffectiveAttack(state, attacker), splashDef, splashEnc.attackMultiplier) * attacker.stats.splashFactor
       );
       splashUnit.hp -= splashDmg;
       const killed = splashUnit.hp <= 0;
@@ -872,7 +949,8 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
     const dist = hexDistance(attacker.pos, target.pos);
     const targetEffRange = getEffectiveRange(state, target);
     if (dist <= targetEffRange) {
-      damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier);
+      const revengeTypeBonus = getAttackTypeBonus(target, attacker) / getDefenseTypeBonus(attacker, target);
+      damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier, revengeTypeBonus);
       attacker.hp -= damageReceived;
       attackerKilled = attacker.hp <= 0;
       if (attackerKilled) attacker.hp = 0;
@@ -919,6 +997,24 @@ function checkWinCondition(state: GameState): void {
   }
 }
 
+// ── Resign ──
+
+/**
+ * Resigns the game on behalf of the given player. Sets phase = 'gameOver' and
+ * declares the opposing player the winner. Idempotent / no-op if the game has
+ * already ended.
+ *
+ * Returns true if the resignation took effect.
+ */
+export function resignGame(state: GameState, playerId: number): boolean {
+  if (state.phase === 'gameOver') return false;
+  const opponent = state.players.find(p => p.id !== playerId);
+  if (!opponent) return false;
+  state.phase = 'gameOver';
+  state.winner = opponent;
+  return true;
+}
+
 // ── End turn ──
 
 export function endTurn(state: GameState): void {
@@ -929,10 +1025,12 @@ export function endTurn(state: GameState): void {
     if (u.playerId === getCurrentPlayer(state).id) {
       u.hasMoved = false;
       u.hasAttacked = false;
+      u.hasCaptured = false;
     }
   });
   state.spawnedTempleIds.clear();
 
+  const prevIndex = state.currentPlayerIndex;
   let next = (state.currentPlayerIndex + 1) % state.players.length;
   while (next !== state.currentPlayerIndex) {
     const hasUnits = state.units.some(u => u.playerId === state.players[next]!.id && u.hp > 0);
@@ -941,12 +1039,19 @@ export function endTurn(state: GameState): void {
     next = (next + 1) % state.players.length;
   }
   state.currentPlayerIndex = next;
+  // Bump turn counter when active player wraps back to the player who started
+  // the game (full round complete). Pre-v2.2 this was hard-coded to slot 0;
+  // with random first-mover we read it from state instead.
+  if (prevIndex !== state.firstPlayerIndex && next === state.firstPlayerIndex) {
+    state.turnNumber++;
+  }
 
-  // Grant aura income: level × TEMPLE_AURA_PER_LEVEL per owned temple (linear, no depletion)
+  // Grant aura income: effective-level × TEMPLE_AURA_PER_LEVEL per owned temple
+  // (plateaus at TEMPLE_ECONOMY_CAP_LEVEL, no depletion)
   const newPlayer = getCurrentPlayer(state);
   const ownedTemples = state.temples.filter(t => t.ownerId === newPlayer.id);
   for (const temple of ownedTemples) {
-    newPlayer.aura += temple.level * TEMPLE_AURA_PER_LEVEL;
+    newPlayer.aura += templeEconomyLevel(temple.level) * TEMPLE_AURA_PER_LEVEL;
   }
 
   // Healer: restore HP to allies within SUPPORT_RANGE at start of their turn
@@ -982,8 +1087,9 @@ export function getValidTeleportHexes(state: GameState, templeId: string): HexCo
       const hex: HexCoord = { q: temple.pos.q + dq, r: temple.pos.r + dr };
       if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue;
       const key = hexKey(hex);
-      if (state.hills.has(key)) continue;
-      if (state.forests.has(key)) continue;
+      // Portals can be placed on any reachable terrain (plains, hills, forests).
+      // Walls stay excluded: they are impassable, so a unit could never step onto
+      // a portal placed there to use it.
       if (state.walls.has(key)) continue;
       if (hexEqual(hex, temple.pos)) continue;  // don't place on the temple itself
       if (getTeleportAt(state, hex)) continue;   // already has a portal

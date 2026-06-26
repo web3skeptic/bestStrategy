@@ -95,18 +95,18 @@ export function hexKey(h: HexCoord): string {
   return `${h.q},${h.r}`;
 }
 
-// Pixel position for flat-top hex
+// Pixel position for pointy-top hex
 export function hexToPixel(h: HexCoord, size: number, cx: number, cy: number): { x: number; y: number } {
-  const x = size * (3 / 2 * h.q);
-  const y = size * (Math.sqrt(3) / 2 * h.q + Math.sqrt(3) * h.r);
+  const x = size * (Math.sqrt(3) * h.q + Math.sqrt(3) / 2 * h.r);
+  const y = size * (3 / 2 * h.r);
   return { x: x + cx, y: y + cy };
 }
 
 export function pixelToHex(px: number, py: number, size: number, cx: number, cy: number): HexCoord {
   const x = px - cx;
   const y = py - cy;
-  const q = (2 / 3 * x) / size;
-  const r = (-1 / 3 * x + Math.sqrt(3) / 3 * y) / size;
+  const q = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / size;
+  const r = (2 / 3 * y) / size;
   return hexRound({ q, r });
 }
 
@@ -140,7 +140,7 @@ export function hexLineDraw(a: HexCoord, b: HexCoord): HexCoord[] {
   return results;
 }
 
-function hexRound(h: { q: number; r: number }): HexCoord {
+export function hexRound(h: { q: number; r: number }): HexCoord {
   const s = -h.q - h.r;
   let rq = Math.round(h.q);
   let rr = Math.round(h.r);

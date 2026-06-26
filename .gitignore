@@ -1,2 +1,16 @@
 node_modules
 dist/
+replays/
+
+# runtime sqlite database (multi-GB, regenerated at runtime)
+game.db
+game.db-shm
+game.db-wal
+
+# macOS / tooling artifacts
+.DS_Store
+.playwright-cli/
+
+# local / editor
+.claude/
+*.kra
