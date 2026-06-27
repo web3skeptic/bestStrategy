@@ -5,11 +5,13 @@ import * as THREE from 'three';
 import { UnitType } from './types';
 import { buildUnitModel } from './voxelUnits';
 import { buildTemple } from './voxelTemple';
+import { buildPortal } from './voxelPortal';
 
 let renderer: THREE.WebGLRenderer | null = null;
 let thumbSize = 0;
 const cache = new Map<string, Partial<Record<UnitType, string>>>();
 const upgradeCache = new Map<string, string>(); // keyed `${color}:${level}`
+const portalCache = new Map<string, string>(); // keyed by team colour
 
 function getRenderer(size: number): THREE.WebGLRenderer {
   if (!renderer) {
@@ -113,5 +115,36 @@ export function getTempleUpgradeThumbnail(color: string, level: number, size = 2
   const url = r.domElement.toDataURL('image/png');
   upgradeCache.set(key, url);
   disposeModel(root);
+  return url;
+}
+
+// Render a teleport portal (team-coloured) to a data-URL PNG — the icon for the
+// "Teleports" tech card. Cached per colour.
+export function getPortalThumbnail(color: string, size = 256): string {
+  const hit = portalCache.get(color);
+  if (hit) return hit;
+
+  const r = getRenderer(size);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.95));
+  const k = new THREE.DirectionalLight(0xffffff, 1.05); k.position.set(3, 6, 6); scene.add(k);
+  const rim = new THREE.DirectionalLight(0xbcd0ff, 0.45); rim.position.set(-4, 3, -5); scene.add(rim);
+
+  const portal = buildPortal(new THREE.Color(color).getHex());
+  scene.add(portal);
+
+  const box = new THREE.Box3().setFromObject(portal);
+  const sph = box.getBoundingSphere(new THREE.Sphere());
+  const c = sph.center, rad = Math.max(sph.radius, 0.001);
+  const fov = 32;
+  const cam = new THREE.PerspectiveCamera(fov, 1, 0.01, 100);
+  const dist = (rad * 1.12) / Math.sin((fov / 2) * Math.PI / 180);
+  cam.position.copy(c).add(new THREE.Vector3(0.42, 0.42, 1).normalize().multiplyScalar(dist));
+  cam.lookAt(c);
+
+  r.render(scene, cam);
+  const url = r.domElement.toDataURL('image/png');
+  portalCache.set(color, url);
+  disposeModel(portal);
   return url;
 }
