@@ -139,22 +139,40 @@ function buildHudIcon(kind: string): { group: THREE.Group; mats: THREE.MeshStand
     b1.position.set(1.6, -1.5, 2); group.add(b1);
     const b2 = new THREE.Mesh(new THREE.SphereGeometry(0.8, 6, 5), liquid);
     b2.position.set(-2, 0.6, 1.6); group.add(b2);
-  } else if (kind === 'city') { // 'city' — a little walled keep with a pitched roof
-    const wall = M(0xcdb38a, { roughness: 0.85 });
-    const roof = M(0xc25b4a, { roughness: 0.7 });
-    const door = M(0x6b4a2f, { roughness: 0.9 });
-    const keep = new THREE.Mesh(new THREE.BoxGeometry(16, 11, 8), wall);
-    keep.position.y = -2; group.add(keep);
-    const roofMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.001, 11.5, 7, 4), roof);
-    roofMesh.rotation.y = Math.PI / 4; roofMesh.position.y = 7; group.add(roofMesh);
-    const doorMesh = new THREE.Mesh(new THREE.BoxGeometry(4, 6, 1.5), door);
-    doorMesh.position.set(0, -4, 4); group.add(doorMesh);
-    for (const dx of [-6.5, 6.5]) { // corner towers
-      const t = new THREE.Mesh(new THREE.BoxGeometry(4, 15, 4), wall);
-      t.position.set(dx, -0.5, 0); group.add(t);
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.001, 3.4, 3.2, 4), roof);
-      cap.rotation.y = Math.PI / 4; cap.position.set(dx, 8.4, 0); group.add(cap);
+  } else if (kind === 'temple') { // 'temple' — classical temple with a gold "level up" arrow
+    const stone = M(0xd8c9a8, { roughness: 0.85 });
+    const gold = M(0xe7c24a, { roughness: 0.45, emissive: 0x6e5310, emissiveIntensity: 0.5 });
+    // stepped stone base
+    const base = new THREE.Mesh(new THREE.BoxGeometry(22, 3, 9), stone);
+    base.position.y = -10; group.add(base);
+    const base2 = new THREE.Mesh(new THREE.BoxGeometry(18, 2.4, 8), stone);
+    base2.position.y = -7.2; group.add(base2);
+    // four columns
+    for (const dx of [-6.6, -2.2, 2.2, 6.6]) {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 9, 6), stone);
+      col.position.set(dx, -1, 0); group.add(col);
     }
+    // entablature / lintel
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(19, 2.6, 8.2), stone);
+    lintel.position.y = 4.2; group.add(lintel);
+    // triangular pediment roof (extruded prism)
+    const tri = new THREE.Shape();
+    tri.moveTo(-11, 0); tri.lineTo(11, 0); tri.lineTo(0, 6.5); tri.closePath();
+    const roofGeo = new THREE.ExtrudeGeometry(tri, { depth: 8, bevelEnabled: false });
+    roofGeo.center();
+    const roof = new THREE.Mesh(roofGeo, stone);
+    roof.position.y = 8.7; group.add(roof);
+    // gold "level up" chevron arrow hovering above, pointing up
+    const aPts: [number, number][] = [[3.5, -11], [3.5, 2], [9, 2], [0, 12], [-9, 2], [-3.5, 2], [-3.5, -11]];
+    const aShape = new THREE.Shape();
+    aShape.moveTo(aPts[0][0], aPts[0][1]);
+    for (let i = 1; i < aPts.length; i++) aShape.lineTo(aPts[i][0], aPts[i][1]);
+    aShape.closePath();
+    const aGeo = new THREE.ExtrudeGeometry(aShape, { depth: 5, bevelEnabled: true, bevelThickness: 1.2, bevelSize: 1, bevelSegments: 1 });
+    aGeo.center();
+    const arrow = new THREE.Mesh(aGeo, gold);
+    arrow.scale.setScalar(0.62);
+    arrow.position.set(0, 18.5, 3); group.add(arrow);
   } else { // 'endturn' — forward arrow
     const gold = M(0xe7c24a, { roughness: 0.5 });
     const pts: [number, number][] = [[-11, -3.5], [2, -3.5], [2, -9], [12, 0], [2, 9], [2, 3.5], [-11, 3.5]];
