@@ -94,7 +94,7 @@ renderer.init(state.mapRadius);
 renderer.setHudButtons([
   { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
   { id: 'research', label: 'Research', icon: 'flask' },
-  { id: 'temple', label: 'Level Up Temple', icon: 'temple' },
+  { id: 'temple', label: 'Level Up Temple', icon: 'temple', price: true },
 ]);
 
 // ── UI elements ──
@@ -474,11 +474,21 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
-  // The 3rd slab upgrades the selected temple. Enabled only on my turn when a
-  // temple is selected and it can actually be upgraded (owned + affordable +
-  // below max level); greyed out otherwise — mirroring the old upgrade button.
+  // The 3rd slab levels up the selected temple. It is INVISIBLE unless one of my
+  // own temples is selected and can still be levelled up; when shown it displays
+  // the aura price (gold). Enabled/clickable only when I can afford it, greyed
+  // (but still visible, so the price stays readable) when I can't.
   const selTempleId = state.selectionMode === 'temple' ? state.selectedTempleId : null;
-  renderer.updateHudButton('temple', myTurn && !!selTempleId && canUpgradeTemple(state, selTempleId) !== null);
+  const selTemple = selTempleId ? state.temples.find(t => t.id === selTempleId) : null;
+  const myTemple = !!selTemple && myTurn && selTemple.ownerId === getCurrentPlayer(state).id;
+  const upgradeCost = myTemple ? templeUpgradeCost(selTemple!.level) : null; // null when maxed
+  if (upgradeCost !== null) {
+    renderer.updateHudButton('temple', canUpgradeTemple(state, selTempleId!) !== null); // affordable?
+    renderer.setHudButtonPrice('temple', `⚡${upgradeCost}`);
+    renderer.setHudButtonVisible('temple', true);
+  } else {
+    renderer.setHudButtonVisible('temple', false); // no temple selected (or maxed / not mine)
+  }
 
   // In spectator mode, hide all action controls
   if (spectatorMode) {
