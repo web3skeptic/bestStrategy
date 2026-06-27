@@ -359,97 +359,6 @@
       border-color: #444;
     }
 
-    /* ── Upgrade temple button — carved-stone slab ── */
-    #upgradeTempleBtn {
-      display: none;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 16px;
-      border-radius: 14px;
-      cursor: pointer;
-      /* flat stone, matching the plaque + 3D buttons */
-      background: #565c67;
-      border: 3px solid #11141c;
-      box-shadow:
-        inset 0 2px 0 rgba(150,165,190,0.35),
-        inset 0 -3px 6px rgba(0,0,0,0.55),
-        inset 0 0 0 2px rgba(70,80,98,0.5),
-        0 5px 12px rgba(0,0,0,0.5);
-      clip-path: polygon(
-        3% 0%, 97% 0%, 100% 12%, 100% 84%, 97% 100%,
-        3% 100%, 0% 84%, 0% 16%
-      );
-    }
-    #upgradeTempleBtn:active { transform: translateY(1px); }
-    #upgradeTempleBtn.disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      filter: grayscale(0.5);
-    }
-    /* 3D-rendered temple + up-arrow icon (replaces the old text + CSS icon) */
-    .ut-thumb {
-      height: 54px;
-      width: auto;
-      display: block;
-      pointer-events: none;
-      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
-    }
-    /* temple icon (CSS low-poly shrine) */
-    .ut-icon {
-      flex: 0 0 auto;
-      position: relative;
-      width: 34px;
-      height: 34px;
-    }
-    .ut-icon .ut-base {
-      position: absolute;
-      left: 2px; right: 2px; bottom: 2px;
-      height: 12px;
-      background: #bcc3cf; /* flat */
-      clip-path: polygon(0% 100%, 12% 0%, 88% 0%, 100% 100%);
-      box-shadow: 0 1px 2px rgba(0,0,0,0.4);
-    }
-    .ut-icon .ut-roof {
-      position: absolute;
-      left: 5px; right: 5px; top: 8px;
-      height: 9px;
-      background: #d3d9e2; /* flat */
-      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
-    }
-    .ut-icon .ut-beam {
-      position: absolute;
-      left: 50%; top: -2px;
-      width: 4px; height: 22px;
-      transform: translateX(-50%);
-      background: linear-gradient(180deg, #fff6c0 0%, #ffd24a 60%, #f0a92a 100%);
-      box-shadow: 0 0 8px rgba(255,210,90,0.9);
-      clip-path: polygon(50% 0%, 100% 70%, 50% 100%, 0% 70%);
-    }
-    .ut-label {
-      flex: 1 1 auto;
-      font-size: 15px;
-      font-weight: 900;
-      line-height: 1.05;
-      letter-spacing: 0.5px;
-      text-align: center;
-      text-transform: uppercase;
-      color: #e3e8f0;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
-    }
-    .ut-cost {
-      flex: 0 0 auto;
-      display: inline-flex;
-      align-items: center;
-      gap: 3px;
-      font-size: 15px;
-      font-weight: 900;
-      color: #ffe14a;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-    }
-    .ut-cost .ut-bolt { color: #ffd24a; filter: drop-shadow(0 0 4px rgba(255,210,90,0.7)); }
-    #upgradeTempleBtn.disabled .ut-cost { color: #ff9a9a; }
-    #upgradeTempleBtn.disabled .ut-cost .ut-bolt { color: #ff9090; filter: none; }
-
     /* ── Spawn bar (unit card tray) ── */
     .spawn-bar {
       display: none;
@@ -940,24 +849,6 @@
       backdrop-filter: blur(8px);
     }
     .settings-overlay.hidden { display: none; }
-    /* ── City management panel ── */
-    #cityBody { padding: 4px 2px; }
-    .city-summary {
-      display: flex; gap: 12px; margin-bottom: 16px;
-    }
-    .city-stat {
-      flex: 1; display: flex; flex-direction: column; align-items: center;
-      gap: 4px; padding: 14px 8px; border-radius: 10px;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
-    }
-    .city-stat-val { font-size: 26px; font-weight: 800; color: #ffd98a; }
-    .city-stat-lbl { font-size: 12px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
-    .city-list { display: flex; flex-direction: column; gap: 6px; }
-    .city-row {
-      display: flex; justify-content: space-between;
-      padding: 10px 14px; border-radius: 8px;
-      background: rgba(255,255,255,0.04); font-size: 14px;
-    }
     /* ── Opponent turn overlay ── */
     #opponentTurnOverlay {
       position: fixed;
@@ -1047,7 +938,7 @@
        Semantic text colours (gold capture, tinted menu labels) kept per-button.
        ============================================================ */
     .menu-btn, .lobby-btn, .zoom-btn, .action-btn, .tile-btn,
-    #captureBtn, #teleportBtn, #upgradeTempleBtn, #restartBtn,
+    #captureBtn, #teleportBtn, #restartBtn,
     .settings-reset, .settings-close, .tech-close {
       background-color: #586271;
       background-image:
@@ -1074,7 +965,7 @@
     }
     /* Hover = warm torchlight catching the surface (inset glow, not brightness) */
     .menu-btn:hover, .lobby-btn:hover, .zoom-btn:hover, .action-btn:hover, .tile-btn:hover,
-    #captureBtn:hover, #teleportBtn:hover, #upgradeTempleBtn:hover, #restartBtn:hover,
+    #captureBtn:hover, #teleportBtn:hover, #restartBtn:hover,
     .settings-reset:hover, .settings-close:hover, .tech-close:hover {
       box-shadow:
         inset 2px 2px 0 rgba(208,220,238,0.24),
@@ -1087,7 +978,7 @@
     }
     /* Pressed = stone shoved into the wall: drops, darkens, bevels flip */
     .menu-btn:active, .lobby-btn:active, .zoom-btn:active, .action-btn:active, .tile-btn:active,
-    #captureBtn:active, #teleportBtn:active, #upgradeTempleBtn:active, #restartBtn:active,
+    #captureBtn:active, #teleportBtn:active, #restartBtn:active,
     .settings-reset:active, .settings-close:active, .tech-close:active {
       transform: translateY(3px) scale(0.992);
       background-color: #474f5b;
@@ -1106,17 +997,17 @@
     }
     /* Disabled stone reads cold + sunken */
     .action-btn:disabled, .lobby-btn:disabled, #captureBtn:disabled,
-    #teleportBtn:disabled, #upgradeTempleBtn.disabled, .tile-btn.disabled {
+    #teleportBtn:disabled, .tile-btn.disabled {
       filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)) grayscale(0.55) brightness(0.7);
       cursor: not-allowed;
     }
     /* Respect reduced-motion: kill the hover/press transition + jump */
     @media (prefers-reduced-motion: reduce) {
       .menu-btn, .lobby-btn, .zoom-btn, .action-btn, .tile-btn,
-      #captureBtn, #teleportBtn, #upgradeTempleBtn, #restartBtn,
+      #captureBtn, #teleportBtn, #restartBtn,
       .settings-reset, .settings-close, .tech-close { transition: none; }
       .menu-btn:active, .lobby-btn:active, .zoom-btn:active, .action-btn:active, .tile-btn:active,
-      #captureBtn:active, #teleportBtn:active, #upgradeTempleBtn:active, #restartBtn:active,
+      #captureBtn:active, #teleportBtn:active, #restartBtn:active,
       .settings-reset:active, .settings-close:active, .tech-close:active { transform: none; }
     }
     .settings-unit-card {
@@ -1281,8 +1172,6 @@
         padding: 9px 18px;
         font-size: 13px;
       }
-      #upgradeTempleBtn { padding: 9px 12px; gap: 8px; }
-      .ut-label { font-size: 13px; }
 
       /* combat log: keep it from overlapping the reserved bottom strip */
       #combatLog { max-width: 92vw; }
@@ -1392,7 +1281,6 @@
     <div class="bottom-overlay">
       <!-- Unit cards are built dynamically in main.ts (one .unit-card per unit type) -->
       <div class="spawn-bar" id="spawnBar"></div>
-      <button id="upgradeTempleBtn" style="display:none"></button>
       <button id="captureBtn">⚔ Capture Temple</button>
       <button id="teleportBtn">⬡ Teleport</button>
       <div class="action-row">
@@ -1426,16 +1314,6 @@
           <button class="tech-close" id="techCloseBtn">✕</button>
         </div>
         <div id="techBody"></div>
-      </div>
-    </div>
-    <!-- City management overlay -->
-    <div class="tech-overlay hidden" id="cityOverlay">
-      <div class="tech-panel">
-        <div class="tech-header">
-          <div class="tech-title">🏰 Operate the City</div>
-          <button class="tech-close" id="cityCloseBtn">✕</button>
-        </div>
-        <div id="cityBody"></div>
       </div>
     </div>
   </div>

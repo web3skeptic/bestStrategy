@@ -38,7 +38,7 @@ import {
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
 } from './game';
-import { getUnitThumbnail, getTempleUpgradeThumbnail } from './unitThumbnails';
+import { getUnitThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { deserialize } from './serializer';
@@ -94,7 +94,7 @@ renderer.init(state.mapRadius);
 renderer.setHudButtons([
   { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
   { id: 'research', label: 'Research', icon: 'flask' },
-  { id: 'city', label: 'Operate the City', icon: 'city' },
+  { id: 'temple', label: 'Level Up Temple', icon: 'temple' },
 ]);
 
 // ── UI elements ──
@@ -110,7 +110,6 @@ const endTurnBtn = document.getElementById('endTurnBtn')!;
 const restartBtn = document.getElementById('restartBtn') as HTMLButtonElement;
 const spawnBar = document.getElementById('spawnBar')!;
 const captureBtn = document.getElementById('captureBtn')!;
-const upgradeTempleBtn = document.getElementById('upgradeTempleBtn')!;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
 const logToggle = document.getElementById('logToggle')!;
 const logArrow = document.getElementById('logArrow')!;
@@ -118,9 +117,6 @@ const combatLog = document.getElementById('combatLog')!;
 const techTreeBtn = document.getElementById('techTreeBtn')!;
 const techOverlay = document.getElementById('techOverlay')!;
 const techCloseBtn = document.getElementById('techCloseBtn')!;
-const cityOverlay = document.getElementById('cityOverlay')!;
-const cityCloseBtn = document.getElementById('cityCloseBtn')!;
-const cityBody = document.getElementById('cityBody')!;
 const techBody = document.getElementById('techBody')!;
 const techAuraInfo = document.getElementById('techAuraInfo')!;
 const opponentTurnOverlay = document.getElementById('opponentTurnOverlay')!;
@@ -478,7 +474,11 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
-  renderer.updateHudButton('city', myTurn);
+  // The 3rd slab upgrades the selected temple. Enabled only on my turn when a
+  // temple is selected and it can actually be upgraded (owned + affordable +
+  // below max level); greyed out otherwise — mirroring the old upgrade button.
+  const selTempleId = state.selectionMode === 'temple' ? state.selectedTempleId : null;
+  renderer.updateHudButton('temple', myTurn && !!selTempleId && canUpgradeTemple(state, selTempleId) !== null);
 
   // In spectator mode, hide all action controls
   if (spectatorMode) {
@@ -486,7 +486,6 @@ function updateUI(): void {
     restartBtn.style.display = 'none';
     spawnBar.style.display = 'none';
     captureBtn.style.display = 'none';
-    upgradeTempleBtn.style.display = 'none';
     buildTeleportBtn.style.display = 'none';
     techTreeBtn.style.display = 'none';
     settingsBtn.style.display = 'none';
@@ -557,24 +556,16 @@ function updateUI(): void {
       // Count existing portals for this temple
       const existingPortals = state.teleportBuildings.filter(t => t.templeId === temple.id).length;
       const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
-      if (unitOnTemple) {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied) — ⚡${income}/turn${portalNote}`;
-      } else {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} — ⚡${income}/turn — Spawn unit${portalNote}`;
-      }
-
-      // Upgrade button
+      // Temple level-up is now driven by the 3rd HUD slab button. Surface the
+      // cost / max-level state here so the player still sees what it takes.
       const upgradeCost = templeUpgradeCost(temple.level);
-      if (upgradeCost !== null) {
-        upgradeTempleBtn.style.display = 'flex';
-        upgradeTempleBtn.title = `Upgrade Temple Lv.${temple.level}→${temple.level + 1}`;
-        // 3D temple model + gold up-arrow, no text — just the icon and the cost.
-        upgradeTempleBtn.innerHTML =
-          `<img class="ut-thumb" src="${getTempleUpgradeThumbnail(player.color, temple.level)}" alt="Upgrade temple" draggable="false" />` +
-          `<span class="ut-cost"><span class="ut-bolt">⚡</span>${upgradeCost}</span>`;
-        upgradeTempleBtn.classList.toggle('disabled', player.aura < upgradeCost);
+      const upgradeNote = upgradeCost === null
+        ? ` | ⛩ Max level`
+        : ` | ⛩ Level up: ⚡${upgradeCost}`;
+      if (unitOnTemple) {
+        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied) — ⚡${income}/turn${portalNote}${upgradeNote}`;
       } else {
-        upgradeTempleBtn.style.display = 'none';
+        unitInfoEl.textContent = `Temple Lv.${temple.level} — ⚡${income}/turn — Spawn unit${portalNote}${upgradeNote}`;
       }
 
       // Build teleport button
@@ -593,7 +584,6 @@ function updateUI(): void {
   } else {
     unitInfoEl.textContent = '';
     captureBtn.style.display = 'none';
-    upgradeTempleBtn.style.display = 'none';
     buildTeleportBtn.style.display = 'none';
     if (buildingTeleport) clearBuildTeleport();
   }
@@ -610,11 +600,6 @@ function updateUI(): void {
     }
   } else {
     spawnBar.style.display = 'none';
-  }
-
-  // Hide upgrade btn when no temple selected
-  if (state.selectionMode !== 'temple') {
-    upgradeTempleBtn.style.display = 'none';
   }
 
   updateOpponentTurnOverlay();
@@ -1066,29 +1051,22 @@ techOverlay.addEventListener('click', (e) => {
   if (e.target === techOverlay) closeTechTree();
 });
 
-// ── City management ("Operate the City") ──
-function openCityPanel(): void {
-  if (!gameStarted || spectatorMode) return;
-  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
-  if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
-  const me = getCurrentPlayer(state);
-  const temples = state.temples.filter(t => t.ownerId === me.id);
-  const rows = temples.length
-    ? temples.map((t, i) => `<div class="city-row"><span>⛩ Temple ${i + 1}</span><span>Lvl ${t.level ?? 1}</span></div>`).join('')
-    : '<div class="city-row"><span>No temples held yet</span></div>';
-  cityBody.innerHTML = `
-    <div class="city-summary">
-      <div class="city-stat"><span class="city-stat-val">${me.aura}</span><span class="city-stat-lbl">Aura</span></div>
-      <div class="city-stat"><span class="city-stat-val">${temples.length}</span><span class="city-stat-lbl">Temples</span></div>
-    </div>
-    <div class="city-list">${rows}</div>`;
-  cityOverlay.classList.remove('hidden');
+// ── Temple level-up (3rd HUD slab) ──
+// Upgrades the currently-selected temple — same action as the old upgrade
+// button. The slab is greyed out by updateUI() unless the upgrade is valid.
+function doUpgradeTemple(): void {
+  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
+  const templeId = state.selectedTempleId;
+  const temple = state.temples.find(t => t.id === templeId);
+  if (!temple) return;
+  if (canUpgradeTemple(state, templeId) === null) return;
+  const prevLevel = temple.level;
+  sendOrCall({ type: 'action_upgrade_temple', templeId }, () => {
+    if (upgradeTemple(state, templeId)) {
+      logCombat(`Temple upgraded Lv.${prevLevel}→${temple.level}!`);
+    }
+  });
 }
-function closeCityPanel(): void { cityOverlay.classList.add('hidden'); }
-cityCloseBtn.addEventListener('click', closeCityPanel);
-cityOverlay.addEventListener('click', (e) => {
-  if (e.target === cityOverlay) closeCityPanel();
-});
 
 // ── Canvas click/tap -> game coordinates (raycast onto the 3D board) ──
 function canvasEventToHex(clientX: number, clientY: number) {
@@ -1219,20 +1197,6 @@ function handleSpawnBtn(type: UnitType): void {
 // Build the unit-card tray once; clicks are wired per-card to handleSpawnBtn.
 buildUnitCards();
 
-// ── Upgrade temple button ──
-upgradeTempleBtn.addEventListener('click', () => {
-  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
-  const templeId = state.selectedTempleId;
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple) return;
-  const prevLevel = temple.level;
-  sendOrCall({ type: 'action_upgrade_temple', templeId }, () => {
-    if (upgradeTemple(state, templeId)) {
-      logCombat(`Temple upgraded Lv.${prevLevel}→${temple.level}!`);
-    }
-  });
-});
-
 // ── Capture button ──
 captureBtn.addEventListener('click', () => {
   if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
@@ -1285,7 +1249,7 @@ canvas.addEventListener('pointerup', (e) => {
 function handleHudClick(id: string): void {
   if (id === 'endTurn') { if (state.phase !== 'gameOver') doEndTurn(); }
   else if (id === 'research') openTechTree();
-  else if (id === 'city') openCityPanel();
+  else if (id === 'temple') doUpgradeTemple();
 }
 
 canvas.addEventListener('pointercancel', () => { pointerActive = false; });
