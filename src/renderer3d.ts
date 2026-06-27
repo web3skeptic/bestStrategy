@@ -62,6 +62,9 @@ interface HudButton {
   rockMat: THREE.MeshStandardMaterial;
   labelCanvas?: HTMLCanvasElement;
   labelTex?: THREE.CanvasTexture;
+  priceCanvas?: HTMLCanvasElement;   // optional dynamic aura-price strip (e.g. temple level-up)
+  priceTex?: THREE.CanvasTexture;
+  price?: string;                    // current price text, '' = none
   iconGroup?: THREE.Group;
   iconMats?: THREE.MeshStandardMaterial[];
   label: string;
@@ -1113,7 +1116,7 @@ export class Renderer3D {
 
   // ── HUD buttons (Three.js screen-space layer) ──
 
-  setHudButtons(defs: { id: string; label: string; icon?: string }[]): void {
+  setHudButtons(defs: { id: string; label: string; icon?: string; price?: boolean }[]): void {
     for (const b of this.hudButtons) {
       this.hudScene.remove(b.group);
       b.rock.geometry.dispose();
@@ -1136,6 +1139,7 @@ export class Renderer3D {
         const { group: ig, mats } = buildHudIcon(d.icon);
         ig.position.z = ROCK_PEAK_Z + 3;
         ig.renderOrder = 1001;
+        if (d.price) { ig.position.y = 6; ig.scale.setScalar(0.78); } // lift to make room for the price strip
         group.add(ig);
         b.iconGroup = ig; b.iconMats = mats;
       } else {
@@ -1150,8 +1154,21 @@ export class Renderer3D {
         group.add(labelMesh);
         b.labelCanvas = labelCanvas; b.labelTex = labelTex;
       }
+      if (d.price) {
+        // dynamic aura-price strip along the bottom of the slab
+        const priceCanvas = document.createElement('canvas');
+        const priceTex = new THREE.CanvasTexture(priceCanvas);
+        priceTex.anisotropy = 4;
+        const priceMat = new THREE.MeshBasicMaterial({ map: priceTex, transparent: true, depthTest: false, depthWrite: false });
+        const priceMesh = new THREE.Mesh(new THREE.PlaneGeometry(this.hudW - 12, 24), priceMat);
+        priceMesh.position.set(0, -this.hudH / 2 + 13, ROCK_PEAK_Z + 4);
+        priceMesh.renderOrder = 1002;
+        group.add(priceMesh);
+        b.priceCanvas = priceCanvas; b.priceTex = priceTex;
+      }
       this.applyRockState(b);
       this.drawHudLabel(b);
+      this.drawHudPrice(b);
       this.hudScene.add(group);
       this.hudButtons.push(b);
     }
@@ -1162,7 +1179,21 @@ export class Renderer3D {
 
   updateHudButton(id: string, enabled: boolean): void {
     const b = this.hudButtons.find(x => x.id === id);
-    if (b && b.enabled !== enabled) { b.enabled = enabled; this.applyRockState(b); this.drawHudLabel(b); }
+    if (b && b.enabled !== enabled) { b.enabled = enabled; this.applyRockState(b); this.drawHudLabel(b); this.drawHudPrice(b); }
+  }
+
+  // Show/hide a single HUD slab in place (others keep their fixed positions).
+  setHudButtonVisible(id: string, visible: boolean): void {
+    const b = this.hudButtons.find(x => x.id === id);
+    if (b) b.group.visible = visible;
+  }
+
+  // Set the dynamic aura-price text on a button's price strip (e.g. '⚡12').
+  setHudButtonPrice(id: string, text: string | null): void {
+    const b = this.hudButtons.find(x => x.id === id);
+    if (!b) return;
+    const t = text || '';
+    if (b.price !== t) { b.price = t; this.drawHudPrice(b); }
   }
 
   // Which enabled HUD button (if any) is under this pointer position?
@@ -1174,7 +1205,7 @@ export class Renderer3D {
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.hudCamera);
-    const hit = this.raycaster.intersectObjects(this.hudButtons.map(b => b.rock), false);
+    const hit = this.raycaster.intersectObjects(this.hudButtons.filter(b => b.group.visible).map(b => b.rock), false);
     if (!hit.length) return null;
     const b = this.hudButtons.find(x => x.rock === hit[0].object);
     return b && b.enabled ? b.id : null;
@@ -1238,6 +1269,31 @@ export class Renderer3D {
     c.shadowColor = 'rgba(0,0,0,0.6)'; c.shadowBlur = 3 * dpr; c.shadowOffsetY = 1.5 * dpr;
     c.fillText(b.label, W / 2, H / 2 + dpr);
     b.labelTex.needsUpdate = true;
+  }
+
+  // Draw the dynamic aura-price (e.g. '⚡12') onto the bottom price strip, on a
+  // subtle dark pill so it stays legible over the icon. Gold when affordable,
+  // muted grey when the button is disabled (can't afford).
+  private drawHudPrice(b: HudButton): void {
+    if (!b.priceCanvas || !b.priceTex) return;
+    const dpr = 2;
+    const W = (b.w - 12) * dpr, H = 24 * dpr;
+    b.priceCanvas.width = W; b.priceCanvas.height = H;
+    const c = b.priceCanvas.getContext('2d')!;
+    c.clearRect(0, 0, W, H);
+    const text = b.price || '';
+    if (text) {
+      c.font = `800 ${15 * dpr}px -apple-system, system-ui, sans-serif`;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      const tw = c.measureText(text).width;
+      const pw = tw + 16 * dpr, ph = 20 * dpr, px = W / 2 - pw / 2, py = H / 2 - ph / 2;
+      c.fillStyle = 'rgba(0,0,0,0.5)';
+      c.beginPath(); c.roundRect(px, py, pw, ph, 8 * dpr); c.fill();
+      c.shadowColor = 'rgba(0,0,0,0.7)'; c.shadowBlur = 2 * dpr; c.shadowOffsetY = 1 * dpr;
+      c.fillStyle = b.enabled ? '#ffd98a' : '#9a8f73';
+      c.fillText(text, W / 2, H / 2 + dpr);
+    }
+    b.priceTex.needsUpdate = true;
   }
 
   private advanceAnimations(): void {
