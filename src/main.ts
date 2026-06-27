@@ -38,7 +38,7 @@ import {
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
 } from './game';
-import { getUnitThumbnail } from './unitThumbnails';
+import { getUnitThumbnail, getPortalThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { deserialize } from './serializer';
@@ -943,19 +943,29 @@ function renderTechTree(): void {
 
   // Section 1: Unit unlocks (no branch)
   const unitUnlockNodes = TECH_NODES.filter(n => n.unitUnlock && !n.branch && n.prereqs.length === 0);
-  appendSection(techBody, 'Unit Unlocks', undefined, unitUnlockNodes, tech, player.aura);
+  appendSection(techBody, 'Unit Unlocks', undefined, unitUnlockNodes, tech, player.aura, player.color);
 
   // Section 2: Catapult sub-upgrade
   const catapultUpgrade = TECH_NODES.filter(n => n.id === 'catapult_splash');
-  appendSection(techBody, 'Catapult Upgrade', undefined, catapultUpgrade, tech, player.aura);
+  appendSection(techBody, 'Catapult Upgrade', undefined, catapultUpgrade, tech, player.aura, player.color);
 
   // Section 3+: Branches
   const branches = ['movement', 'stat_bonus', 'support'];
   for (const branch of branches) {
     const nodes = TECH_NODES.filter(n => n.branch === branch);
     const meta = BRANCH_META[branch]!;
-    appendSection(techBody, meta.title, branch, nodes, tech, player.aura);
+    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color);
   }
+}
+
+// The art a tech card "stands for": the unlocked unit, the teleport portal, or
+// the catapult for its splash sub-upgrade. Rendered (team-coloured) the same way
+// as the build-card thumbnails, so the tech tree shows the actual game model.
+function techNodeArt(node: typeof TECH_NODES[number], color: string): string | null {
+  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color);
+  if (node.id === 'teleports') return getPortalThumbnail(color);
+  if (node.id === 'catapult_splash') return getUnitThumbnail('catapult', color);
+  return null;
 }
 
 function appendSection(
@@ -965,6 +975,7 @@ function appendSection(
   nodes: typeof TECH_NODES,
   tech: { researched: Set<TechId> },
   aura: number,
+  playerColor: string,
 ): void {
   if (nodes.length === 0) return;
 
@@ -1015,9 +1026,15 @@ function appendSection(
       statusClass = 'status-available';
     }
 
+    const artUrl = techNodeArt(node, playerColor);
+    const artHtml = artUrl
+      ? `<img class="tech-node-art" src="${artUrl}" alt="${node.name}" draggable="false">`
+      : '';
+
     const card = document.createElement('div');
     card.className = `tech-node ${stateClass}`;
     card.innerHTML = `
+      ${artHtml}
       <div class="tech-node-name">${node.name}</div>
       <div class="tech-node-cost">Cost: ${node.cost} ⚡</div>
       <div class="tech-node-desc">${node.description}</div>
