@@ -109,6 +109,9 @@ const popInfoEl = document.getElementById('popInfo')!;
 const endTurnBtn = document.getElementById('endTurnBtn')!;
 const restartBtn = document.getElementById('restartBtn') as HTMLButtonElement;
 const spawnBar = document.getElementById('spawnBar')!;
+const spawnBarWrap = document.getElementById('spawnBarWrap')!;
+const spawnArrowLeft = document.getElementById('spawnArrowLeft') as HTMLButtonElement;
+const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButtonElement;
 const captureBtn = document.getElementById('captureBtn')!;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
 const logToggle = document.getElementById('logToggle')!;
@@ -494,7 +497,7 @@ function updateUI(): void {
   if (spectatorMode) {
     endTurnBtn.style.display = 'none';
     restartBtn.style.display = 'none';
-    spawnBar.style.display = 'none';
+    setSpawnBarVisible(false);
     captureBtn.style.display = 'none';
     buildTeleportBtn.style.display = 'none';
     techTreeBtn.style.display = 'none';
@@ -603,13 +606,13 @@ function updateUI(): void {
     const temple = selectedTemple;
     const unitOnTemple = temple ? getUnitAt(state, temple.pos) : true;
     if (!unitOnTemple) {
-      spawnBar.style.display = 'flex';
+      setSpawnBarVisible(true);
       updateUnitCards();
     } else {
-      spawnBar.style.display = 'none';
+      setSpawnBarVisible(false);
     }
   } else {
-    spawnBar.style.display = 'none';
+    setSpawnBarVisible(false);
   }
 
   updateOpponentTurnOverlay();
@@ -695,7 +698,6 @@ const unitCards = new Map<UnitType, HTMLElement>();
 
 function buildUnitCards(): void {
   for (const type of UNIT_CARD_ORDER) {
-    const stats = UNIT_STATS[type];
     const card = document.createElement('div');
     card.className = 'unit-card disabled';
 
@@ -713,14 +715,7 @@ function buildUnitCards(): void {
     cost.className = 'unit-card-cost';
     // cost value gets refreshed in updateUnitCards (settings can change it)
 
-    const statsRow = document.createElement('div');
-    statsRow.className = 'unit-card-stats';
-    statsRow.innerHTML =
-      `<span><span class="cs-label">HP</span>${stats.maxHp}</span>` +
-      `<span><span class="cs-label">A</span>${stats.attack}</span>` +
-      `<span><span class="cs-label">R</span>${stats.range}</span>`;
-
-    card.append(thumb, name, cost, statsRow);
+    card.append(thumb, name, cost);
     card.addEventListener('click', () => {
       if (card.classList.contains('disabled')) return;
       handleSpawnBtn(type);
@@ -730,6 +725,38 @@ function buildUnitCards(): void {
     spawnBar.appendChild(card);
   }
 }
+
+// Show/hide the whole spawn-bar (wrapper holds the scroll arrows + tray).
+function setSpawnBarVisible(visible: boolean): void {
+  spawnBarWrap.style.display = visible ? 'flex' : 'none';
+  if (visible) updateSpawnArrows();
+}
+
+// Reveal the scroll arrows only when the tray overflows, and disable an arrow
+// once the tray is scrolled fully to that end.
+function updateSpawnArrows(): void {
+  const overflowing = spawnBar.scrollWidth > spawnBar.clientWidth + 1;
+  const display = overflowing ? 'flex' : 'none';
+  spawnArrowLeft.style.display = display;
+  spawnArrowRight.style.display = display;
+  if (!overflowing) return;
+  const max = spawnBar.scrollWidth - spawnBar.clientWidth;
+  spawnArrowLeft.disabled = spawnBar.scrollLeft <= 1;
+  spawnArrowRight.disabled = spawnBar.scrollLeft >= max - 1;
+}
+
+function scrollSpawnBar(dir: number): void {
+  // Page by roughly two card widths so each tap moves a meaningful chunk.
+  const delta = Math.max(120, Math.round(spawnBar.clientWidth * 0.7));
+  spawnBar.scrollBy({ left: dir * delta, behavior: 'smooth' });
+}
+
+spawnArrowLeft.addEventListener('click', () => scrollSpawnBar(-1));
+spawnArrowRight.addEventListener('click', () => scrollSpawnBar(1));
+spawnBar.addEventListener('scroll', updateSpawnArrows, { passive: true });
+window.addEventListener('resize', () => {
+  if (spawnBarWrap.style.display !== 'none') updateSpawnArrows();
+});
 
 function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
@@ -753,16 +780,12 @@ function updateUnitCards(): void {
       catch { /* keep the PNG fallback set in buildUnitCards */ }
     }
 
-    // Refresh cost + key stats (both editable via the settings panel).
-    const stats = UNIT_STATS[type];
+    // Refresh cost (editable via the settings panel).
     const cost = card.querySelector('.unit-card-cost')!;
     cost.innerHTML = `<span class="cost-icon">⚡</span>${UNIT_COSTS[type]}`;
-    const statsRow = card.querySelector('.unit-card-stats')!;
-    statsRow.innerHTML =
-      `<span><span class="cs-label">HP</span>${stats.maxHp}</span>` +
-      `<span><span class="cs-label">A</span>${stats.attack}</span>` +
-      `<span><span class="cs-label">R</span>${stats.range}</span>`;
   }
+  // Visible card count can change as units unlock → recheck overflow/arrows.
+  updateSpawnArrows();
 }
 
 function logCombat(msg: string): void {
