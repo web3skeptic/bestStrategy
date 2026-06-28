@@ -360,13 +360,44 @@
     }
 
     /* ── Spawn bar (unit card tray) ── */
+    /* Wrapper holds the left/right scroll arrows + the scrollable tray. */
+    .spawn-bar-wrap {
+      display: none; /* toggled to flex by main.ts when a temple is selected */
+      align-items: stretch;
+      gap: 6px;
+      max-width: min(96vw, 940px);
+    }
+    .spawn-arrow {
+      flex: 0 0 auto;
+      width: 40px;
+      min-width: 40px;
+      align-self: stretch;
+      display: none; /* shown by main.ts only when the tray overflows */
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      line-height: 1;
+      color: #dfe;
+      background: rgba(12,12,28,0.82);
+      border: 1px solid #2a2a48;
+      border-radius: 12px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s, opacity 0.12s;
+    }
+    .spawn-arrow:hover:not(:disabled) { background: rgba(30,30,56,0.92); }
+    .spawn-arrow:active:not(:disabled) { background: rgba(44,44,72,0.95); }
+    .spawn-arrow:disabled { opacity: 0.25; cursor: default; }
     .spawn-bar {
-      display: none;
+      display: flex;
+      flex: 1 1 auto;
+      min-width: 0;
       gap: 8px;
       flex-wrap: nowrap;
       justify-content: center;
       align-items: stretch;
-      max-width: min(96vw, 940px);
       overflow-x: auto;
       overflow-y: hidden;
       padding: 8px 10px;
@@ -412,8 +443,8 @@
       filter: grayscale(0.6);
     }
     .unit-card-thumb {
-      width: 52px;
-      height: 52px;
+      width: 68px;
+      height: 68px;
       object-fit: contain;
       image-rendering: auto;
       filter: drop-shadow(0 2px 3px rgba(0,0,0,0.5));
@@ -448,16 +479,6 @@
       color: #ffb0b0;
     }
     .unit-card.disabled .unit-card-cost .cost-icon { color: #ff9090; }
-    .unit-card-stats {
-      display: flex;
-      gap: 5px;
-      font-size: 9px;
-      font-weight: bold;
-      color: #9fce9f;
-      letter-spacing: 0.3px;
-      font-variant-numeric: tabular-nums;
-    }
-    .unit-card-stats .cs-label { opacity: 0.65; }
 
     /* ── Combat log (collapsible) ── */
     .log-toggle {
@@ -1162,16 +1183,18 @@
         padding: 12px 14px;
       }
 
-      /* Unit-card tray: shrink + horizontal scroll, stay centred */
+      /* Unit-card tray: shrink + horizontal scroll, stay centred.
+         Stats removed → bigger picture, slightly tighter cards. */
+      .spawn-bar-wrap { max-width: 96vw; gap: 4px; }
       .spawn-bar {
-        max-width: 96vw;
         gap: 6px;
         padding: 6px 8px;
       }
-      .unit-card { width: 76px; padding: 6px 5px 5px; }
-      .unit-card-thumb { width: 44px; height: 44px; }
+      .unit-card { width: 84px; padding: 6px 5px 5px; }
+      .unit-card-thumb { width: 64px; height: 64px; }
       .unit-card-name { font-size: 10px; }
       .unit-card-cost { font-size: 10px; padding: 2px 6px; }
+      .spawn-arrow { width: 44px; min-width: 44px; font-size: 26px; }
 
       /* contextual action buttons stay reachable + tap-sized */
       #captureBtn, #teleportBtn, .tile-btn {
@@ -1286,7 +1309,11 @@
     </div>
     <div class="bottom-overlay">
       <!-- Unit cards are built dynamically in main.ts (one .unit-card per unit type) -->
-      <div class="spawn-bar" id="spawnBar"></div>
+      <div class="spawn-bar-wrap" id="spawnBarWrap">
+        <button class="spawn-arrow" id="spawnArrowLeft" aria-label="Scroll units left">‹</button>
+        <div class="spawn-bar" id="spawnBar"></div>
+        <button class="spawn-arrow" id="spawnArrowRight" aria-label="Scroll units right">›</button>
+      </div>
       <button id="captureBtn">⚔ Capture Temple</button>
       <button id="teleportBtn">⬡ Teleport</button>
       <div class="action-row">

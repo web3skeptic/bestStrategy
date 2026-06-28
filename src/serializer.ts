@@ -55,15 +55,18 @@ export function deserialize(data: SerializedGameState): GameState {
     playerTech:       data.playerTech.map(pt => ({ researched: new Set<TechId>(pt.researched as TechId[]) })),
     // Backwards-compatibility: units saved before `hasCaptured` existed default to false.
     units:            data.units.map(u => ({ ...u, hasCaptured: u.hasCaptured ?? false })),
-    // Hygiene: UI-only highlight/selection fields are client state, never part of
-    // the persisted contract. Reset to safe empty defaults so a deserialized
-    // state never carries stale highlights from the payload.
-    selectedUnitId:   null,
-    selectedTempleId: null,
-    selectionMode:    null,
-    moveHexes:        [],
-    attackHexes:      [],
-    supportHexes:     [],
-    buildHexes:       [],
+    // Live multiplayer is authoritative for selection: the server sends the
+    // acting player their current selection + highlight hexes in every
+    // state_update (and strips them for the opponent/spectators). Honour
+    // whatever the payload carries so the actor's move/attack highlights are
+    // actually usable — defaulting to safe empties for older payloads that
+    // pre-date these fields.
+    selectedUnitId:   data.selectedUnitId ?? null,
+    selectedTempleId: data.selectedTempleId ?? null,
+    selectionMode:    data.selectionMode ?? null,
+    moveHexes:        data.moveHexes ?? [],
+    attackHexes:      data.attackHexes ?? [],
+    supportHexes:     data.supportHexes ?? [],
+    buildHexes:       data.buildHexes ?? [],
   };
 }

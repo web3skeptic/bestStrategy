@@ -212,6 +212,17 @@ function handleLogin(sess: ClientSession, username: string): void {
     send(sess.ws, { type: 'error', message: 'Invalid username (1-24 chars)' });
     return;
   }
+  // Reject a name that another live session is already using. Without this two
+  // clients can log in as the same identity, which maps to one DB player id and
+  // corrupts room slot detection (both resolve to player1). A disconnect clears
+  // the old session (see handleDisconnect), so reconnecting under the same name
+  // still works.
+  for (const other of sessions.values()) {
+    if (other !== sess && other.username === username) {
+      send(sess.ws, { type: 'error', message: 'Username already taken — pick another' });
+      return;
+    }
+  }
   upsertPlayer(username);
   sess.username = username;
   send(sess.ws, { type: 'logged_in', username });
