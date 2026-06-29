@@ -103,7 +103,9 @@ const menuVsAI = document.getElementById('menuVsAI')!;
 const menu2P = document.getElementById('menu2P')!;
 const menuBtn = document.getElementById('menuBtn')!;
 const turnInfoEl = document.getElementById('turnInfo')!;
-const unitInfoEl = document.getElementById('unitInfo')!;
+// The subtitle line was removed from the DOM; keep a detached stub so the many
+// `unitInfoEl.textContent = …` assignments below stay harmless no-ops.
+const unitInfoEl = document.getElementById('unitInfo') ?? document.createElement('div');
 const auraInfoEl = document.getElementById('auraInfo')!;
 const popInfoEl = document.getElementById('popInfo')!;
 const endTurnBtn = document.getElementById('endTurnBtn')!;
@@ -130,6 +132,13 @@ const settingsOverlay = document.getElementById('settingsOverlay')!;
 const settingsCloseBtn = document.getElementById('settingsCloseBtn')!;
 const settingsBody = document.getElementById('settingsBody')!;
 const settingsResetBtn = document.getElementById('settingsResetBtn')!;
+
+// The per-unit stat editor is a balancing/dev tool, not a player feature. It is
+// gated behind ?debug=1: the gear chip stays hidden and openSettings() is a
+// no-op in the default build.
+const DEBUG = new URLSearchParams(location.search).has('debug');
+// .hud-gear is display:none in CSS; reveal it (as a slab chip) only in debug.
+if (DEBUG) settingsBtn.style.display = 'inline-flex';
 
 // ── Lobby elements ──
 const menuOnline = document.getElementById('menuOnline')!;
@@ -394,7 +403,7 @@ function showMenu(): void {
     // Show action buttons again for next game
     endTurnBtn.style.display = '';
     techTreeBtn.style.display = '';
-    settingsBtn.style.display = '';
+    if (DEBUG) settingsBtn.style.display = 'inline-flex';
   } else if (multiplayerMode) {
     // Leaving a live multiplayer PLAYER game — disconnect the socket so its
     // state_update can't clobber a subsequent local game.
@@ -467,7 +476,10 @@ function setTurnTitle(text: string, color: string): void {
 
 function updateUI(): void {
   const player = getCurrentPlayer(state);
-  setTurnTitle(`${player.name}'s Turn`, player.color);
+  // The persistent "Player X's Turn" label was removed from the top bar; the
+  // turn banner now shows only the game-over result (set below). Turn logic is
+  // unaffected — `player` is still used for the stat pills + HUD state.
+  turnInfoEl.textContent = '';
 
   // 3D HUD action buttons (End Turn / Research) — shown during an active game;
   // End Turn is enabled only on the local player's turn.
@@ -928,6 +940,7 @@ function renderSettings(): void {
 }
 
 function openSettings(): void {
+  if (!DEBUG) return;            // unit-stat editor is debug-only (?debug=1)
   renderSettings();
   settingsOverlay.classList.remove('hidden');
 }
@@ -936,7 +949,7 @@ function closeSettings(): void {
   settingsOverlay.classList.add('hidden');
 }
 
-settingsBtn.addEventListener('click', openSettings);
+if (DEBUG) settingsBtn.addEventListener('click', openSettings);
 settingsCloseBtn.addEventListener('click', closeSettings);
 settingsOverlay.addEventListener('click', (e) => { if (e.target === settingsOverlay) closeSettings(); });
 settingsResetBtn.addEventListener('click', () => {

@@ -21,179 +21,96 @@
       position: relative;
     }
 
-    /* ── Top bar (overlay) — centered carved-stone plaque ── */
+    /* ── Top bar (overlay) — minimal low-poly stone HUD cluster ── */
     .top-bar {
       position: absolute;
       top: 0; left: 0; right: 0;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      padding: 10px 12px 0;
+      align-items: flex-start;
+      gap: 8px;
+      padding: calc(env(safe-area-inset-top, 0px) + 8px) 10px 0
+               calc(env(safe-area-inset-left, 0px) + 8px);
       pointer-events: none;
       z-index: 20;
     }
     .top-bar > * { pointer-events: auto; }
 
-    /* The castle-wall plaque: weathered masonry block. No clip-path here — an
-       ancestor clip-path would clip the overhanging Menu banner out of the paint
-       AND pointer region (it was previously unclickable), so the crenellated
-       parapet is drawn as an overflowing ::before strip instead. */
-    .stone-plaque {
-      position: relative;
-      width: min(92vw, 360px);
-      margin-top: 20px; /* room for the parapet + Menu banner overhanging the top */
-      padding: 26px 18px 16px;
-      /* stacked stone courses + vertical joints over top-lit weathered stone */
-      background:
-        repeating-linear-gradient(0deg, transparent 0 21px, rgba(0,0,0,0.30) 21px 23px),
-        repeating-linear-gradient(90deg, transparent 0 52px, rgba(0,0,0,0.22) 52px 54px),
-        linear-gradient(180deg, #5b606b 0%, #4b505a 46%, #3a3f49 100%);
-      background-color: #4b505a;
-      border: 3px solid #0e1118;            /* chunky hewn-rock border */
-      border-radius: 9px;                   /* gently worn block corners */
-      box-shadow:
-        inset 0 3px 0 rgba(170,185,205,0.26),       /* sun-lit top course */
-        inset 0 -4px 10px rgba(0,0,0,0.6),           /* deep base shadow */
-        inset 0 0 0 2px rgba(36,40,48,0.75),         /* dark inner rim */
-        0 6px 14px rgba(0,0,0,0.6);                  /* drop shadow */
+    /* Top-left cluster: Menu → Aura → Population. Each is a flat stone slab
+       echo of the bottom 3D HUD slabs — same #5e6470 grey, octagon bevel
+       silhouette, one lit top-left bevel + one shadowed bottom-right bevel,
+       a hewn dark rim, and an outer drop-shadow so it sits proud. Reads as
+       the same carved stone material as the End Turn / Research slabs. */
+    .hud-cluster {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
     }
-    /* Crenellated parapet (merlons + crenel gaps) standing on the top edge. As a
-       pseudo-element of an unclipped plaque it is free to overflow upward. */
-    .stone-plaque::before {
-      content: '';
-      position: absolute;
-      left: 5%; right: 5%;
-      top: -12px;
-      height: 13px;
-      background: linear-gradient(180deg, #5b606b 0%, #474c56 100%);
-      border: 2px solid #0e1118;
-      border-bottom: none;
-      border-radius: 3px 3px 0 0;
-      box-shadow: inset 0 2px 0 rgba(170,185,205,0.28);
-      /* punch the crenels (gaps) between merlons */
-      -webkit-mask: repeating-linear-gradient(90deg, #000 0 30px, transparent 30px 48px);
-              mask: repeating-linear-gradient(90deg, #000 0 30px, transparent 30px 48px);
-      z-index: 0;
-    }
-
-    /* Menu tab/badge centered on the TOP edge of the plaque — a little rock tab */
-    .plaque-menu-tab {
-      position: absolute;
-      top: -18px;
-      left: 50%;
-      transform: translateX(-50%);
+    .hud-chip {
       display: inline-flex;
       align-items: center;
-      gap: 5px;
-      padding: 5px 18px 6px;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.6px;
-      color: #ecd9af; /* aged bronze/parchment lettering */
-      cursor: pointer;
-      background: linear-gradient(180deg, #565b65 0%, #3f444e 100%);
-      border: 2px solid #0e1118;
-      box-shadow:
-        inset 0 1px 0 rgba(175,190,210,0.32),
-        inset 0 -2px 4px rgba(0,0,0,0.6),
-        0 3px 7px rgba(0,0,0,0.5);
-      clip-path: polygon(10% 0%, 90% 0%, 100% 50%, 90% 100%, 10% 100%, 0% 50%);
-      z-index: 3; /* gatehouse banner sits in front of the parapet */
-    }
-    .plaque-menu-tab:active { transform: translateX(-50%) translateY(1px); }
-    .plaque-menu-glyph { font-size: 12px; color: #e7c24a; line-height: 1; }
-    .plaque-menu-label { line-height: 1; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
-
-    /* Title row */
-    .plaque-title-row {
-      position: relative;
-      display: flex;
-      align-items: center;
       justify-content: center;
-      gap: 8px;
-      margin-bottom: 10px;
+      gap: 6px;
+      min-height: 44px;
+      padding: 0 12px;
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1;
+      color: #e3e8f0;
+      background: #5e6470;                /* = ROCK_NORMAL, matches 3D slabs */
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      /* octagon bevel silhouette — same family as the bottom slabs */
+      clip-path: polygon(11% 0%, 89% 0%, 100% 26%, 100% 74%, 89% 100%, 11% 100%, 0% 74%, 0% 26%);
+      box-shadow:
+        inset 0 0 0 2px #11141c,                  /* hewn rim */
+        inset 2px 2px 0 rgba(160,175,200,0.30),    /* lit top-left bevel */
+        inset -2px -2px 0 rgba(0,0,0,0.45);         /* shadowed bottom-right bevel */
+      filter: drop-shadow(0 4px 7px rgba(0,0,0,0.55));
     }
-    .top-bar .turn-info {
-      font-size: 24px;
+    .hud-chip:active { transform: translateY(2px); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+    /* Menu slab — gold glyph */
+    .hud-menu { color: #e7c24a; font-size: 19px; padding: 0 15px; }
+    /* Gear (unit-stat editor) — DEBUG only; revealed by JS when ?debug=1 */
+    .hud-gear { display: none; color: #e7c24a; font-size: 17px; }
+    #myPlayerBadge {
+      display: none;
+      align-self: center;
+      font-size: 10px;
+      font-weight: bold;
+      padding: 2px 7px;
+      margin-left: 2px;
+      border-radius: 7px;
+      border: 1px solid currentColor;
+      opacity: 0.9;
+    }
+
+    /* Game-over result banner — empty (hidden) during normal play; shows only
+       the win/draw outcome. Replaces the old persistent "Player X's Turn"
+       plaque title (the awkward turn label that was removed). */
+    .turn-banner {
+      align-self: center;
+      margin-top: 2px;
+      font-size: 22px;
       font-weight: 900;
       letter-spacing: 0.5px;
-      line-height: 1.05;
       text-align: center;
-      /* warm orange/peach gradient display text */
       background: linear-gradient(180deg, #ffd9a8 0%, #ffae5e 48%, #f4863a 100%);
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
-      color: #ffb066; /* fallback / data-binding tint applied via JS on a wrapper */
+      color: #ffb066;
       filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
     }
-    /* small gear button tucked at the title's edge — chiselled rock chip */
-    .plaque-gear {
-      position: absolute;
-      right: -2px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 24px;
-      height: 24px;
-      padding: 0;
-      font-size: 13px;
-      line-height: 1;
-      color: #d6c08a; /* aged bronze */
-      background: radial-gradient(circle at 35% 30%, #6a6f79 0%, #3f444e 68%, #2a2e36 100%);
-      border: 2px solid #0e1118;
-      box-shadow:
-        inset 0 1px 0 rgba(175,190,210,0.30),
-        inset 0 -2px 3px rgba(0,0,0,0.6),
-        0 2px 4px rgba(0,0,0,0.5);
-      clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%);
-      cursor: pointer;
-    }
-    .plaque-gear:active { transform: translateY(-50%) translateY(1px); }
-    #myPlayerBadge {
-      display: none;
-      font-size: 10px;
-      font-weight: bold;
-      padding: 1px 6px;
-      border-radius: 7px;
-      border: 1px solid currentColor;
-      opacity: 0.85;
-    }
-    .top-bar .unit-info {
-      font-size: 11px;
-      color: #c2c8d4;
-      text-align: center;
-      max-width: 92vw;
-      margin-top: 6px;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
-    }
+    .turn-banner:empty { display: none; }
 
-    /* Two inset rounded stat boxes side by side */
-    .plaque-stats {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-    .stat-box {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 7px;
-      font-size: 16px;
-      font-weight: 800;
-      line-height: 1;
-      padding: 9px 10px;
-      /* iron-rimmed slot carved INTO the wall (dark sunk fill) */
-      background: linear-gradient(180deg, #15181e 0%, #1d212a 100%);
-      border: 2px solid #0e1118;
-      box-shadow:
-        inset 0 2px 6px rgba(0,0,0,0.8),
-        inset 0 -1px 0 rgba(130,140,156,0.22),
-        inset 0 0 0 1px rgba(96,84,56,0.28);   /* faint bronze inner rim */
-      clip-path: polygon(8% 0%, 92% 0%, 100% 22%, 100% 78%, 92% 100%, 8% 100%, 0% 78%, 0% 22%);
-      white-space: nowrap;
-    }
+    /* Aura + Population stat slabs share the .hud-chip slab look; these style
+       only their inner contents (icon + value). */
     .stat-box .pill-icon {
-      font-size: 19px;
+      font-size: 18px;
       line-height: 1;
       filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5));
     }
@@ -203,33 +120,27 @@
       text-shadow: 0 1px 2px rgba(0,0,0,0.6);
     }
     .stat-box .pill-sub {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
-      opacity: 0.85;
+      opacity: 0.8;
       font-variant-numeric: tabular-nums;
     }
-    /* Aura box — glowing crystal/gem with gold value */
+    /* Aura slab — glowing crystal/gem with gold value */
     #auraInfo .pill-value { color: #e7c24a; }
     #auraInfo .pill-sub  { color: #cdd6e6; opacity: 0.7; }
     .gem-icon {
       display: inline-block;
-      width: 16px;
-      height: 20px;
+      width: 14px;
+      height: 18px;
       /* cyan-teal gem (#33e0a0 / #5fd0ff aura glow) */
       background: linear-gradient(150deg, #eafffb 0%, #5fd0ff 36%, #33e0a0 72%, #1c9d78 100%);
       clip-path: polygon(50% 0%, 100% 30%, 78% 100%, 22% 100%, 0% 30%);
       box-shadow: 0 0 9px rgba(95,208,255,0.85), 0 0 3px rgba(255,255,255,0.9) inset;
       filter: drop-shadow(0 0 4px rgba(51,224,160,0.65));
     }
-    /* Population box — people */
-    #popInfo .pill-icon { color: #9fb6ee; }
+    /* Population slab — people */
+    #popInfo .pill-icon { color: #9fb6ee; font-size: 15px; }
     /* "at population cap" — amber/bronze caution, not an alarming red error state */
-    #popInfo.pop-full {
-      box-shadow:
-        inset 0 2px 5px rgba(0,0,0,0.7),
-        inset 0 0 0 1px rgba(230,180,90,0.5),
-        0 0 8px rgba(230,170,70,0.22);
-    }
     #popInfo.pop-full .pill-value,
     #popInfo.pop-full .pill-icon { color: #e8b45a; }
 
@@ -257,20 +168,31 @@
       z-index: 20;
     }
     .zoom-btn {
-      width: 40px;
-      height: 40px;
-      border-radius: 50%;
-      border: 2px solid #555;
-      background: rgba(20,20,40,0.85);
-      color: #fff;
+      width: 42px;
+      height: 42px;
       font-size: 22px;
       font-weight: bold;
+      color: #e7c24a;                    /* gold +/- glyph */
+      background: #5e6470;               /* = ROCK_NORMAL, matches 3D slabs */
+      border: none;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      /* octagon stone disc — a small sibling of the bottom slabs */
+      clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%);
+      box-shadow:
+        inset 0 0 0 2px #11141c,                  /* hewn rim */
+        inset 2px 2px 0 rgba(160,175,200,0.30),    /* lit top-left bevel */
+        inset -2px -2px 0 rgba(0,0,0,0.45);         /* shadowed bottom-right */
+      filter: drop-shadow(0 3px 6px rgba(0,0,0,0.5));
     }
-    .zoom-btn:active { background: rgba(50,50,80,0.9); }
+    .zoom-btn:active { transform: translateY(2px); filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5)); }
+    /* Hide zoom +/- on touch phones — pinch handles zoom there. */
+    @media (hover: none) and (pointer: coarse) {
+      .zoom-controls { display: none; }
+    }
 
     /* ── Bottom overlay ── */
     /* Bottom-centre ~80px is reserved for the 3D End Turn/Research slabs,
@@ -949,78 +871,46 @@
     .settings-reset:active { background: rgba(90,50,30,0.9); }
 
     /* ============================================================
-       Rough-hewn STONE buttons — one rocky skin for every button.
-       NO smooth gradient sheen. Surface is built in layers, bottom→top:
-         1. base color  — cool blue-grey stone (background-color)
-         2. tonal mottle — two big soft radial blotches (lit top-left,
-                           shadowed bottom-right) for uneven rock tone
-         3. grain        — static SVG feTurbulence fractalNoise speckle,
-                           inline data-URI, OVERLAY-blended so it carves
-                           light/dark flecks into the stone (no tiling sheen)
-         4. inset bevels — stacked insets keyed to a top-left light source
-                           (lit TL rim, shadowed BR rim, deep underside)
-         5. edge rim     — dark chiselled inner outline + clip-path silhouette
-       Depth (slab sitting proud) = an outer drop-shadow filter, which
-       follows the clipped silhouette (box-shadow would be clipped away).
-       Semantic text colours (gold capture, tinted menu labels) kept per-button.
+       Unified low-poly STONE button kit — a flat matte slab echo of the
+       3D HUD slabs. One fill (#5e6470 = ROCK_NORMAL), an octagon bevel
+       silhouette, a single lit top-left bevel + a single shadowed
+       bottom-right bevel, a hewn dark rim, and an outer drop-shadow so
+       the slab sits proud. NO raster grain, NO torn-ticket silhouette
+       (that distortion is what squished the wide "Connect" button).
+       The octagon scales cleanly to any button width.
        ============================================================ */
-    .menu-btn, .lobby-btn, .zoom-btn, .action-btn, .tile-btn,
+    .menu-btn, .lobby-btn, .action-btn, .tile-btn,
     #captureBtn, #teleportBtn, #restartBtn,
     .settings-reset, .settings-close, .tech-close {
-      background-color: #586271;
-      background-image:
-        radial-gradient(130% 95% at 26% 14%, rgba(134,146,166,0.24), rgba(134,146,166,0) 55%),
-        radial-gradient(150% 110% at 82% 94%, rgba(14,19,28,0.44), rgba(14,19,28,0) 55%),
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='1.7' intercept='-0.5'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E"),
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='104' height='104'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.4' numOctaves='4' seed='14' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.95'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E"),
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='170' height='170'%3E%3Cfilter id='b'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.14' numOctaves='2' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.55'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23b)'/%3E%3C/svg%3E");
-      background-size: auto, auto, 72px 72px, 104px 104px, 170px 170px;
-      background-blend-mode: normal, normal, multiply, overlay, soft-light;
+      background: #5e6470;
       border: none;
-      border-radius: 7px;
+      color: #e3e8f0;
+      /* gentle octagon — bevelled corners that scale cleanly to any width */
+      clip-path: polygon(4% 0%, 96% 0%, 100% 26%, 100% 74%, 96% 100%, 4% 100%, 0% 74%, 0% 26%);
       box-shadow:
-        inset 2px 2px 0 rgba(206,218,236,0.22),       /* lit top-left facet */
-        inset -2px -2px 0 rgba(0,0,0,0.45),            /* shadowed bottom-right */
-        inset 0 6px 11px -6px rgba(214,224,240,0.12),  /* faint upper light, no sheen */
-        inset 0 -9px 15px -4px rgba(0,0,0,0.52),       /* deep carved underside */
-        inset 0 0 0 1.5px rgba(16,21,30,0.88);         /* dark chiselled rim */
+        inset 0 0 0 2px #11141c,                  /* hewn rim */
+        inset 2px 2px 0 rgba(160,175,200,0.30),    /* lit top-left bevel */
+        inset -2px -2px 0 rgba(0,0,0,0.45);         /* shadowed bottom-right */
       filter: drop-shadow(0 4px 7px rgba(0,0,0,0.55)); /* slab proud of the wall */
       text-shadow: 0 1px 2px rgba(0,0,0,0.7);
       backdrop-filter: none;
-      clip-path: polygon(2% 15%, 8% 0%, 93% 4%, 100% 17%, 98% 84%, 91% 100%, 7% 96%, 0% 82%);
-      transition: box-shadow 0.14s ease, filter 0.12s ease, transform 0.05s ease;
+      transition: filter 0.12s ease, transform 0.05s ease;
     }
-    /* Hover = warm torchlight catching the surface (inset glow, not brightness) */
-    .menu-btn:hover, .lobby-btn:hover, .zoom-btn:hover, .action-btn:hover, .tile-btn:hover,
+    .menu-btn:hover, .lobby-btn:hover, .action-btn:hover, .tile-btn:hover,
     #captureBtn:hover, #teleportBtn:hover, #restartBtn:hover,
     .settings-reset:hover, .settings-close:hover, .tech-close:hover {
-      box-shadow:
-        inset 2px 2px 0 rgba(208,220,238,0.24),
-        inset -2px -2px 0 rgba(0,0,0,0.42),
-        inset 0 9px 18px -6px rgba(255,188,118,0.24),  /* warm torch glow, upper */
-        inset 0 0 22px -2px rgba(255,158,82,0.18),      /* warm wash across face */
-        inset 0 -9px 15px -4px rgba(0,0,0,0.46),
-        inset 0 0 0 1.5px rgba(16,21,30,0.88);
-      filter: drop-shadow(0 6px 11px rgba(0,0,0,0.6));
+      filter: drop-shadow(0 6px 11px rgba(0,0,0,0.6)) brightness(1.08);
     }
-    /* Pressed = stone shoved into the wall: drops, darkens, bevels flip */
-    .menu-btn:active, .lobby-btn:active, .zoom-btn:active, .action-btn:active, .tile-btn:active,
+    /* Pressed = slab shoved in: drops + bevel flips */
+    .menu-btn:active, .lobby-btn:active, .action-btn:active, .tile-btn:active,
     #captureBtn:active, #teleportBtn:active, #restartBtn:active,
     .settings-reset:active, .settings-close:active, .tech-close:active {
-      transform: translateY(3px) scale(0.992);
-      background-color: #474f5b;
+      transform: translateY(2px);
       filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
       box-shadow:
-        inset -2px -2px 0 rgba(196,208,226,0.12),      /* light now bottom-right (flipped) */
-        inset 2px 2px 0 rgba(0,0,0,0.5),               /* shadow now top-left */
-        inset 0 9px 15px -3px rgba(0,0,0,0.62),         /* shoved-in upper shadow */
-        inset 0 0 0 1.5px rgba(12,16,24,0.9);
-    }
-    /* Octagonal chiselled stone disc for the zoom +/- buttons */
-    .zoom-btn {
-      border-radius: 9px;
-      clip-path: polygon(20% 0%, 80% 0%, 100% 20%, 100% 80%, 80% 100%, 20% 100%, 0% 80%, 0% 20%);
-      color: #e8edf5;
+        inset 0 0 0 2px #11141c,
+        inset 2px 2px 0 rgba(0,0,0,0.5),            /* shadow now top-left */
+        inset -2px -2px 0 rgba(160,175,200,0.18);    /* light now bottom-right */
     }
     /* Disabled stone reads cold + sunken */
     .action-btn:disabled, .lobby-btn:disabled, #captureBtn:disabled,
@@ -1028,12 +918,12 @@
       filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)) grayscale(0.55) brightness(0.7);
       cursor: not-allowed;
     }
-    /* Respect reduced-motion: kill the hover/press transition + jump */
+    /* Respect reduced-motion: kill the press jump */
     @media (prefers-reduced-motion: reduce) {
-      .menu-btn, .lobby-btn, .zoom-btn, .action-btn, .tile-btn,
+      .menu-btn, .lobby-btn, .action-btn, .tile-btn,
       #captureBtn, #teleportBtn, #restartBtn,
       .settings-reset, .settings-close, .tech-close { transition: none; }
-      .menu-btn:active, .lobby-btn:active, .zoom-btn:active, .action-btn:active, .tile-btn:active,
+      .menu-btn:active, .lobby-btn:active, .action-btn:active, .tile-btn:active,
       #captureBtn:active, #teleportBtn:active, #restartBtn:active,
       .settings-reset:active, .settings-close:active, .tech-close:active { transform: none; }
     }
@@ -1280,22 +1170,17 @@
     </div>
 
     <div class="top-bar">
-      <div class="stone-plaque" id="topPlaque">
-        <!-- Menu tab on the top edge of the plaque -->
-        <button id="menuBtn" class="plaque-menu-tab">
-          <span class="plaque-menu-glyph">⚔</span><span class="plaque-menu-label">Menu</span>
-        </button>
-        <div class="plaque-title-row">
-          <div class="turn-info" id="turnInfo">Player 1's Turn</div>
-          <button id="settingsBtn" class="plaque-gear" title="Settings">⚙</button>
-          <div id="myPlayerBadge"></div>
-        </div>
-        <div class="plaque-stats">
-          <div class="stat-box" id="auraInfo" title="Aura — your spendable resource (income per turn)"></div>
-          <div class="stat-box" id="popInfo" title="Population / population cap"></div>
-        </div>
+      <!-- Top-left cluster: Menu → Aura → Population (low-poly stone slabs). -->
+      <div class="hud-cluster">
+        <button id="menuBtn" class="hud-chip hud-menu" title="Menu">☰</button>
+        <div class="hud-chip stat-box" id="auraInfo" title="Aura — your spendable resource (income per turn)"></div>
+        <div class="hud-chip stat-box" id="popInfo" title="Population / population cap"></div>
+        <!-- Unit-stat editor entry — DEBUG ONLY, revealed by JS when ?debug=1. -->
+        <button id="settingsBtn" class="hud-chip hud-gear" title="Unit stats (debug)">⚙</button>
+        <div id="myPlayerBadge"></div>
       </div>
-      <div class="unit-info" id="unitInfo"></div>
+      <!-- Game-over result only (empty during normal play). -->
+      <div class="turn-banner" id="turnInfo"></div>
     </div>
     <div id="spectatorBanner">
       👁 SPECTATING <span class="spec-info" id="spectatorInfo"></span>
