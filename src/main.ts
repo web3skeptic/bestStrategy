@@ -41,7 +41,7 @@ import {
 import { getUnitThumbnail, getPortalThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
-import { deserialize } from './serializer';
+import { serialize, deserialize, SerializedGameState } from './serializer';
 import type { ServerMessage } from './protocol';
 
 // ── Unit artwork (bundled by Vite) — same sprites the board renderer uses ──
@@ -102,6 +102,7 @@ const menuOverlay = document.getElementById('menuOverlay')!;
 const menuVsAI = document.getElementById('menuVsAI')!;
 const menu2P = document.getElementById('menu2P')!;
 const menuBtn = document.getElementById('menuBtn')!;
+const menuContinueBtn = document.getElementById('menuContinue') as HTMLButtonElement;
 const turnInfoEl = document.getElementById('turnInfo')!;
 // The subtitle line was removed from the DOM; keep a detached stub so the many
 // `unitInfoEl.textContent = …` assignments below stay harmless no-ops.
@@ -171,6 +172,7 @@ function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting'): void {
   lobbyLogin.classList.toggle('hidden', panel !== 'login');
   lobbyRoomListPanel.classList.toggle('hidden', panel !== 'rooms');
   lobbyWaiting.classList.toggle('hidden', panel !== 'waiting');
+  if (panel === 'main') updateContinueButton(); // reflect any saved local game
 }
 
 // ── sendOrCall: in multiplayer mode send action to server; locally call fn ──
@@ -394,6 +396,7 @@ function leaveActiveGame(): void {
 }
 
 function showMenu(): void {
+  saveGame(); // snapshot the local game before leaving to the menu (no-op online)
   menuOverlay.classList.remove('hidden');
   if (spectatorMode) {
     // Disconnect spectator and clean up
@@ -410,10 +413,96 @@ function showMenu(): void {
     leaveActiveGame();
   }
   if (!gameStarted) showLobbyPanel('main');
+  // Refresh the Continue CTA every time the menu opens — including mid-game,
+  // where showLobbyPanel('main') is skipped (gameStarted is true) but the main
+  // menu panel is still what's shown over the board.
+  updateContinueButton();
 }
 
 function hideMenu(): void {
   menuOverlay.classList.add('hidden');
+}
+
+// ── Save / resume (LOCAL modes only) ──────────────────────────────────────
+// Persist the logical game state to localStorage so a player can leave to the
+// menu (or reload) and resume vs AI / vs Hard AI / 2P exactly where they left
+// off. Online play is server-authoritative and is never saved here.
+const SAVE_KEY = 'bs:savedGame:v1';
+type LocalMode = 'vsAI' | 'vsHardAI' | '2P';
+interface SavedGame {
+  v: 1;
+  mode: LocalMode;
+  aiEnabled: boolean;
+  aiDifficulty: 'normal' | 'hard';
+  state: SerializedGameState; // full board/units/temples/resources/turn (Sets→arrays)
+}
+
+function currentLocalMode(): LocalMode {
+  if (!aiEnabled) return '2P';
+  return aiDifficulty === 'hard' ? 'vsHardAI' : 'vsAI';
+}
+
+// Best-effort snapshot of the active local game. A finished game clears the
+// save so we never "continue" a game that's already over. Never throws.
+function saveGame(): void {
+  if (!gameStarted || multiplayerMode || spectatorMode) return; // local active only
+  try {
+    if (state.phase === 'gameOver') { localStorage.removeItem(SAVE_KEY); return; }
+    const save: SavedGame = {
+      v: 1,
+      mode: currentLocalMode(),
+      aiEnabled,
+      aiDifficulty,
+      state: serialize(state),
+    };
+    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+  } catch { /* persistence is best-effort — never break gameplay */ }
+}
+
+function loadSavedGame(): SavedGame | null {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const save = JSON.parse(raw) as SavedGame;
+    if (!save || save.v !== 1 || !save.state) return null;
+    if (save.mode !== 'vsAI' && save.mode !== 'vsHardAI' && save.mode !== '2P') return null;
+    if (save.state.phase === 'gameOver') return null; // don't resume a finished game
+    return save;
+  } catch { return null; }
+}
+
+function hasValidLocalSave(): boolean {
+  return loadSavedGame() !== null;
+}
+
+// Rebuild the scene + HUD from a saved snapshot, mirroring the start-game path
+// (the same renderer.init + render the multiplayer game_start handler uses),
+// just seeded from saved state instead of a fresh map.
+function restoreGame(): void {
+  const save = loadSavedGame();
+  if (!save) return;
+  cancelAITurn();
+  leaveActiveGame();             // resets multiplayer/spectator flags + socket
+  spectatorBanner.style.display = 'none';
+  aiEnabled = save.aiEnabled;
+  aiDifficulty = save.aiDifficulty;
+  buildingTeleport = null;
+  state = deserialize(save.state);
+  renderer.init(state.mapRadius);
+  gameStarted = true;
+  hideMenu();
+  closeTechTree();
+  combatLog.innerHTML = '';
+  logCombat('--- Resumed saved game ---');
+  // Preselect the human's temple unless it's the AI's move to resume.
+  if (!(aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID)) autoSelectTemple();
+  render();
+  maybeRunAITurn();              // if it was the AI's turn, let it continue
+}
+
+// Show the "Continue game" CTA only when a valid local save exists.
+function updateContinueButton(): void {
+  menuContinueBtn.style.display = hasValidLocalSave() ? 'block' : 'none';
 }
 
 function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
@@ -442,6 +531,7 @@ function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): voi
   maybeRunAITurn();     // if the AI won the coin flip, let it take its first turn
 }
 
+menuContinueBtn.addEventListener('click', () => restoreGame());
 menuVsAI.addEventListener('click', () => startGame(true, 'normal'));
 menu2P.addEventListener('click', () => startGame(false));
 (document.getElementById('menuVsHardAI') as HTMLButtonElement).addEventListener('click', () => startGame(true, 'hard'));
@@ -464,6 +554,9 @@ function render(): void {
     renderer.render(state, multiplayerMode ? myPlayerSlot : undefined);
   }
   updateUI();
+  // Persist after every state change in a local game (render() is the chokepoint
+  // for all local mutations via sendOrCall + end-turn + AI turns). No-op online.
+  saveGame();
 }
 
 // Tint the orange/peach gradient title toward the active player's colour while
