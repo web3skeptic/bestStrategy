@@ -301,6 +301,17 @@ export class Renderer3D {
     this.controls.minDistance = 6;
     this.controls.maxDistance = 70;
     this.controls.maxPolarAngle = Math.PI * 0.49; // stay above the board
+    this.controls.enablePan = true;
+    this.controls.enableRotate = true;
+    this.controls.enableZoom = true;
+    // Pan parallel to the ground plane (map-style) rather than in screen space,
+    // so a one-finger drag slides the camera across the board.
+    this.controls.screenSpacePanning = false;
+    // Mobile (touch) gesture map: one finger pans the camera position across the
+    // board; two fingers pinch-to-zoom AND orbit the view angle (azimuth + pitch).
+    // Desktop mouse mapping is left at the OrbitControls defaults (left=rotate,
+    // right=pan, wheel=zoom) so desktop behaviour is unchanged.
+    this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
 
     // Main lighting — dimmed so the map / terrain / structures read less bright.
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.48));
@@ -537,6 +548,30 @@ export class Renderer3D {
     const hex = hexRound({ q, r });
     if (hexDistance({ q: 0, r: 0 }, hex) > this.mapRadius) return null;
     return hex;
+  }
+
+  /** Debug snapshot of the camera/controls state (used by tests/verification). */
+  cameraDebug() {
+    const t = this.controls.target;
+    const p = this.camera.position;
+    return {
+      pos: { x: p.x, y: p.y, z: p.z },
+      target: { x: t.x, y: t.y, z: t.z },
+      azimuth: this.controls.getAzimuthalAngle(),
+      polar: this.controls.getPolarAngle(),
+      distance: this.camera.position.distanceTo(this.controls.target),
+    };
+  }
+
+  /** Project a hex's board position to screen pixel coords (for tests). */
+  projectHex(h: HexCoord): { x: number; y: number } {
+    const w = hexToWorld(h);
+    const v = new THREE.Vector3(w.x, 0, w.z).project(this.camera);
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: (v.x * 0.5 + 0.5) * rect.width + rect.left,
+      y: (-v.y * 0.5 + 0.5) * rect.height + rect.top,
+    };
   }
 
   // ── state → scene sync ──

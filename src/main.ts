@@ -89,6 +89,20 @@ const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 let state: GameState = createGameState();
 const renderer = new Renderer3D(canvas);
 renderer.init(state.mapRadius);
+// Debug-only getters for automated verification of touch camera controls.
+(window as any).__cam = () => renderer.cameraDebug();
+(window as any).__sel = () => ({
+  mode: state.selectionMode,
+  templeId: state.selectedTempleId,
+  unitId: state.selectedUnitId,
+});
+(window as any).__own = () => {
+  const myId = state.players[myPlayerSlot]?.id;
+  return {
+    temples: state.temples.filter(t => t.ownerId === myId).map(t => ({ id: t.id, ...renderer.projectHex(t.pos) })),
+    units: state.units.filter(u => u.playerId === myId).map(u => ({ id: u.id, ...renderer.projectHex(u.pos) })),
+  };
+};
 // End Turn / Research are rendered as Three.js HUD buttons (bottom-centre) with
 // 3D icons instead of text: a forward arrow for End Turn, a flask for Research.
 renderer.setHudButtons([
