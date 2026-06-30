@@ -312,6 +312,10 @@ export class Renderer3D {
     // Desktop mouse mapping is left at the OrbitControls defaults (left=rotate,
     // right=pan, wheel=zoom) so desktop behaviour is unchanged.
     this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+    // Snappier pan/orbit response (default is 1.0). Affects mouse + touch; kept
+    // moderate so desktop stays usable while touch feels noticeably faster.
+    this.controls.rotateSpeed = 2.0;
+    this.controls.panSpeed = 2.0;
 
     // Main lighting — dimmed so the map / terrain / structures read less bright.
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.48));
