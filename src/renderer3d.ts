@@ -312,10 +312,27 @@ export class Renderer3D {
     // Desktop mouse mapping is left at the OrbitControls defaults (left=rotate,
     // right=pan, wheel=zoom) so desktop behaviour is unchanged.
     this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
-    // Snappier pan/orbit response (default is 1.0). Affects mouse + touch; kept
-    // moderate so desktop stays usable while touch feels noticeably faster.
-    this.controls.rotateSpeed = 2.0;
+    // Snappier pan (default is 1.0). panSpeed affects mouse + touch; kept high so
+    // one-finger pan feels fast. rotateSpeed is kept moderate so the two-finger
+    // orbit (midpoint-driven in OrbitControls) isn't over-sensitive/twitchy.
+    this.controls.rotateSpeed = 1.1;
     this.controls.panSpeed = 2.0;
+    // Touch: while two or more fingers are down, freeze the pitch (polar) so the
+    // two-finger gesture is only azimuth-rotate + pinch-zoom — no accidental tilt
+    // and no getting stuck at the maxPolarAngle clamp. The full tilt range is
+    // restored on release, so desktop mouse-drag tilt is unaffected.
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length >= 2) {
+        const pol = this.controls.getPolarAngle();
+        this.controls.minPolarAngle = this.controls.maxPolarAngle = pol;
+      }
+    }, { passive: true });
+    const restoreTilt = () => {
+      this.controls.minPolarAngle = 0;
+      this.controls.maxPolarAngle = Math.PI * 0.49;
+    };
+    canvas.addEventListener('touchend', restoreTilt);
+    canvas.addEventListener('touchcancel', restoreTilt);
 
     // Main lighting — dimmed so the map / terrain / structures read less bright.
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.48));
@@ -563,6 +580,8 @@ export class Renderer3D {
       target: { x: t.x, y: t.y, z: t.z },
       azimuth: this.controls.getAzimuthalAngle(),
       polar: this.controls.getPolarAngle(),
+      polarMin: this.controls.minPolarAngle,
+      polarMax: this.controls.maxPolarAngle,
       distance: this.camera.position.distanceTo(this.controls.target),
     };
   }
