@@ -1094,6 +1094,28 @@ export function getTeleportAt(state: GameState, pos: HexCoord): TeleportBuilding
   return state.teleportBuildings.find(t => hexEqual(t.pos, pos));
 }
 
+// Single source of truth for teleport-portal placement validity. A portal may sit
+// on any reachable terrain (plains, hills, forests) within TELEPORT_RADIUS of the
+// owning temple, but NOT on:
+//   • walls (the impassable rock mountains — a unit could never step on the portal)
+//   • the temple tile itself
+//   • a tile that already holds a portal
+//   • a tile occupied by a unit
+//   • off-map tiles
+// The placement highlight (main.ts buildHexes) and the actual placement rule
+// (buildTeleportPair) BOTH go through this predicate so the highlighted set is
+// exactly the placeable set.
+export function isValidTeleportHex(state: GameState, temple: Temple, hex: HexCoord): boolean {
+  if (hexDistance(temple.pos, hex) > TELEPORT_RADIUS) return false;
+  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return false;
+  const key = hexKey(hex);
+  if (state.walls.has(key)) return false;      // mountains — impassable
+  if (hexEqual(hex, temple.pos)) return false; // not on the temple itself
+  if (getTeleportAt(state, hex)) return false; // already has a portal
+  if (getUnitAt(state, hex)) return false;     // occupied by a unit
+  return true;
+}
+
 export function getValidTeleportHexes(state: GameState, templeId: string): HexCoord[] {
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple) return [];
@@ -1101,15 +1123,7 @@ export function getValidTeleportHexes(state: GameState, templeId: string): HexCo
   for (let dq = -TELEPORT_RADIUS; dq <= TELEPORT_RADIUS; dq++) {
     for (let dr = Math.max(-TELEPORT_RADIUS, -dq - TELEPORT_RADIUS); dr <= Math.min(TELEPORT_RADIUS, -dq + TELEPORT_RADIUS); dr++) {
       const hex: HexCoord = { q: temple.pos.q + dq, r: temple.pos.r + dr };
-      if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue;
-      const key = hexKey(hex);
-      // Portals can be placed on any reachable terrain (plains, hills, forests).
-      // Walls stay excluded: they are impassable, so a unit could never step onto
-      // a portal placed there to use it.
-      if (state.walls.has(key)) continue;
-      if (hexEqual(hex, temple.pos)) continue;  // don't place on the temple itself
-      if (getTeleportAt(state, hex)) continue;   // already has a portal
-      result.push(hex);
+      if (isValidTeleportHex(state, temple, hex)) result.push(hex);
     }
   }
   return result;
@@ -1159,11 +1173,7 @@ export function buildTeleportPair(
     t.ownerId === player.id &&
     t.id !== templeIdA &&
     state.teleportBuildings.filter(b => b.templeId === t.id).length < TELEPORT_MAX_PER_TEMPLE &&
-    hexDistance(t.pos, posB) <= TELEPORT_RADIUS &&
-    !state.hills.has(hexKey(posB)) &&
-    !state.forests.has(hexKey(posB)) &&
-    !state.walls.has(hexKey(posB)) &&
-    !hexEqual(posB, t.pos),
+    isValidTeleportHex(state, t, posB),
   );
   if (!templeB) return false;
   player.aura -= TELEPORT_BUILD_COST;
