@@ -675,7 +675,10 @@ function render(): void {
   // board on the local player's last frame so their private movements never get
   // rendered — the curtain overlay covers it too, but this avoids ever syncing
   // the enemy's perspective into the scene.
-  if (!isOpponentActive()) {
+  if (localPlayerEliminated()) {
+    // Eliminated online player watches the whole board (omniscient), like a spectator.
+    renderer.render(state, undefined, true);
+  } else if (!isOpponentActive()) {
     renderer.render(state, multiplayerMode ? myPlayerSlot : undefined);
   }
   updateUI();
@@ -874,17 +877,37 @@ function updateUI(): void {
   updateMyPlayerBadge();
 }
 
+// True once the LOCAL online player has been eliminated (no units, no temples)
+// while the game is still running. In an N-player (>2) online game the turn
+// rotation skips this player forever, so `currentPlayerIndex` never equals their
+// slot again — without this guard they'd be stuck behind the opponent-turn
+// curtain indefinitely. Instead they should watch the rest of the game like a
+// spectator. (2-player games can't hit this: losing all units/temples there ends
+// the game, so phase is already 'gameOver'.)
+function localPlayerEliminated(): boolean {
+  if (!multiplayerMode || spectatorMode || !gameStarted || state.phase !== 'playing') return false;
+  const me = state.players[myPlayerSlot];
+  if (!me) return false;
+  const hasUnits = state.units.some(u => u.playerId === me.id && u.hp > 0);
+  const hasTemples = state.temples.some(t => t.ownerId === me.id);
+  return !hasUnits && !hasTemples;
+}
+
 // True while the active turn belongs to someone other than the local human:
 // a remote opponent in online play, or the AI in single-player vs-AI (both
 // "normal" and "hard"). False in pure hotseat 2-player (no AI, no remote), so
-// the curtain never shows there.
+// the curtain never shows there — and false for an eliminated online player, who
+// watches the remaining game instead of being frozen behind the curtain.
 function isOpponentActive(): boolean {
   if (spectatorMode || state.phase === 'gameOver') return false;
+  if (localPlayerEliminated()) return false;
   if (multiplayerMode) return state.currentPlayerIndex !== myPlayerSlot;
   return isAISlot(state.currentPlayerIndex);
 }
 
 function updateOpponentTurnOverlay(): void {
+  // An eliminated online player watches the board (no curtain); the badge shows
+  // their status instead.
   if (isOpponentActive()) {
     opponentTurnNameEl.textContent = getCurrentPlayer(state).name;
     opponentTurnOverlay.classList.remove('hidden');
@@ -907,8 +930,13 @@ function updateMyPlayerBadge(): void {
   const me = state.players[myPlayerSlot];
   if (!me) return;
   myPlayerBadge.style.display = 'inline-block';
-  myPlayerBadge.style.color = me.color;
-  myPlayerBadge.textContent = `You: P${myPlayerSlot + 1}`;
+  if (localPlayerEliminated()) {
+    myPlayerBadge.style.color = '#e90';
+    myPlayerBadge.textContent = `P${myPlayerSlot + 1} — eliminated (watching)`;
+  } else {
+    myPlayerBadge.style.color = me.color;
+    myPlayerBadge.textContent = `You: P${myPlayerSlot + 1}`;
+  }
 }
 
 // ── Stat pills (aura income + population) ──
