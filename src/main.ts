@@ -1699,7 +1699,12 @@ function autoSelectTemple(): void {
 function maybeRunAITurn(): void {
   if (!aiRunning && state.phase !== 'gameOver' && isAISlot(state.currentPlayerIndex)) {
     aiRunning = true;
-    aiTimer = setTimeout(() => { aiTimer = null; runAI(); aiRunning = false; }, AI_DELAY_MS);
+    // Clear `aiRunning` BEFORE runAI() runs, not after. runAI() ends by calling
+    // maybeRunAITurn() again to chain the next turn; if the guard were still set
+    // that re-arm would be suppressed and consecutive AI seats (N-player games
+    // with ≥2 AI) would stall behind the turn curtain. runAI() is fully
+    // synchronous, so there is no re-entrancy window while the flag is down.
+    aiTimer = setTimeout(() => { aiTimer = null; aiRunning = false; runAI(); }, AI_DELAY_MS);
   }
 }
 
