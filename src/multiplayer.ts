@@ -45,8 +45,8 @@ export class MultiplayerClient {
     this.send({ type: 'login', username });
   }
 
-  createRoom(): void {
-    this.send({ type: 'create_room' });
+  createRoom(expectedPlayers?: number): void {
+    this.send({ type: 'create_room', expectedPlayers });
   }
 
   joinRoom(roomId: string): void {

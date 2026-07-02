@@ -20,7 +20,9 @@ export type UnifiedActionName =
 
 export type ClientMessage =
   | { type: 'login';                username: string }
-  | { type: 'create_room' }
+  // expectedPlayers: how many players the room waits for before starting (2..6).
+  // Omitted / undefined → 2, preserving the classic 2-player room behaviour.
+  | { type: 'create_room';          expectedPlayers?: number }
   | { type: 'join_room';            roomId: string }
   | { type: 'list_rooms' }
   | { type: 'rejoin_room';          roomId: string }
@@ -53,6 +55,9 @@ export interface RoomSummary {
   id: string;
   player1Name: string;
   status: 'open' | 'active' | 'done';
+  /** How many players the room is waiting for, and how many have joined. */
+  expectedPlayers: number;
+  joinedPlayers: number;
 }
 
 export interface ActiveGameSummary {
@@ -68,10 +73,13 @@ export interface ActiveGameSummary {
 export type ServerMessage =
   | { type: 'logged_in';             username: string }
   | { type: 'error';                 message: string }
-  | { type: 'room_created';          roomId: string }
+  | { type: 'room_created';          roomId: string; expectedPlayers: number }
+  // Sent to a player who has joined a not-yet-full room, and (as a progress
+  // ping) to everyone in the room whenever the joined count changes.
+  | { type: 'room_waiting';          roomId: string; joined: number; expected: number }
   | { type: 'room_list';             rooms: RoomSummary[] }
   | { type: 'game_list';             games: ActiveGameSummary[] }
-  | { type: 'game_start';            playerSlot: 0 | 1; state: SerializedGameState }
+  | { type: 'game_start';            playerSlot: number; state: SerializedGameState }
   | { type: 'spectate_start';        state: SerializedGameState; player1Name: string; player2Name: string }
   | { type: 'state_update';          state: SerializedGameState; lastAction: string }
   // action_error now optionally carries legalMoves so agents can recover from

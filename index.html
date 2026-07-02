@@ -494,7 +494,41 @@
     #menuVsAI     { color: #bcd0ff; }
     #menu2P       { color: #bfe9bf; }
     #menuVsHardAI { color: #ffbcbc; }
+    #menuCustom   { color: #e8dca6; }
     #menuOnline   { color: #d8c9ff; }
+
+    /* ── Custom-game setup panel ── */
+    .setup-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin: 8px 0; font-size: 14px; color: #cdbb93;
+    }
+    .setup-stepper { display: flex; align-items: center; gap: 12px; }
+    .setup-stepper span { min-width: 20px; text-align: center; font-size: 18px; color: #f0e4c4; }
+    .setup-stepper .lobby-btn { padding: 4px 12px; font-size: 18px; min-width: 40px; }
+    .setup-slot {
+      display: flex; align-items: center; gap: 10px;
+      margin: 6px 0; padding: 6px 8px; border-radius: 8px;
+      background: rgba(0,0,0,0.25);
+    }
+    .setup-slot .slot-swatch { width: 16px; height: 16px; border-radius: 4px; flex: 0 0 auto; }
+    .setup-slot .slot-label { flex: 1; font-size: 13px; color: #cdbb93; }
+    .setup-slot select {
+      background: #1a1e28; color: #e6dcc2; border: 1px solid #4a4030;
+      border-radius: 6px; padding: 4px 6px; font-size: 13px;
+    }
+
+    /* ── Per-player HUD status chips ── */
+    .player-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .player-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px; border-radius: 8px; font-size: 12px;
+      background: rgba(12,14,20,0.72); border: 1px solid rgba(0,0,0,0.5);
+      color: #d8cdb2; opacity: 0.72; transition: opacity 0.15s, box-shadow 0.15s;
+    }
+    .player-chip.current { opacity: 1; box-shadow: 0 0 0 1px #ffe0bd, 0 0 8px rgba(255,224,189,0.35); }
+    .player-chip.dead { opacity: 0.32; text-decoration: line-through; }
+    .player-chip .chip-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+    .player-chip .chip-stat { color: #b8ab8c; font-size: 11px; }
     /* Continue game — primary CTA. Same stone slab + a gold accent rim/glow and
        gold label so it reads as the highlighted action. Hidden until JS finds a
        saved local game. */
@@ -1137,8 +1171,26 @@
           <button class="menu-btn" id="menuVsAI">⚔ vs AI</button>
           <button class="menu-btn" id="menuVsHardAI">💀 vs Hard AI</button>
           <button class="menu-btn" id="menu2P">👥 2 Players</button>
+          <button class="menu-btn" id="menuCustom">⚙ Custom Game (2–6)</button>
           <button class="menu-btn" id="menuOnline">🌐 Online Multiplayer</button>
         </div>
+      </div>
+
+      <!-- Custom local game setup: player count + per-seat human/AI picker -->
+      <div class="lobby-panel hidden" id="lobbySetup">
+        <div class="lobby-title">Custom Game</div>
+        <div class="setup-row">
+          <span>Players</span>
+          <div class="setup-stepper">
+            <button class="lobby-btn" id="setupPlayersDec">−</button>
+            <span id="setupPlayersCount">2</span>
+            <button class="lobby-btn" id="setupPlayersInc">+</button>
+          </div>
+        </div>
+        <div id="setupSlots"></div>
+        <div class="lobby-status" id="setupInfo"></div>
+        <button class="lobby-btn primary" id="setupStartBtn">Start Game</button>
+        <div class="lobby-back" id="setupBack">← Back</div>
       </div>
 
       <!-- Online lobby: login step -->
@@ -1154,6 +1206,14 @@
       <div class="lobby-panel hidden" id="lobbyRoomList">
         <div class="lobby-title">Lobby</div>
         <div class="lobby-status ok" id="lobbyWelcomeMsg"></div>
+        <div class="setup-row">
+          <span>Room size</span>
+          <div class="setup-stepper">
+            <button class="lobby-btn" id="lobbyPlayersDec">−</button>
+            <span id="lobbyPlayersCount">2</span>
+            <button class="lobby-btn" id="lobbyPlayersInc">+</button>
+          </div>
+        </div>
         <button class="lobby-btn primary" id="lobbyCreateRoomBtn">+ Create Room</button>
         <hr class="lobby-divider" />
         <div style="font-size:12px;color:#668;margin-bottom:2px">Open Rooms</div>
@@ -1195,6 +1255,8 @@
       </div>
       <!-- Game-over result only (empty during normal play). -->
       <div class="turn-banner" id="turnInfo"></div>
+      <!-- Per-player status chips (colour + aura + pop), current player highlighted. -->
+      <div class="player-list" id="playerList"></div>
     </div>
     <div id="spectatorBanner">
       👁 SPECTATING <span class="spec-info" id="spectatorInfo"></span>

@@ -3,11 +3,11 @@ import { ClientSession, RoomState } from './types';
 import { ClientMessage, ServerMessage, RoomSummary, ActiveGameSummary } from '../src/protocol';
 import {
   upsertPlayer, createRoom, joinRoom, setRoomStatus,
-  getOpenRooms, getRoomById, saveGameState, loadGameState,
+  getRoomById, saveGameState, loadGameState,
 } from './db';
 import { serialize, deserialize, SerializedGameState } from '../src/serializer';
 import { createGameState, selectUnit, selectTemple, deselectAll } from '../src/game';
-import { GameState, HexCoord, UnitType, TechId } from '../src/types';
+import { GameState, HexCoord, UnitType, TechId, PLAYER_COLORS, MAX_PLAYERS } from '../src/types';
 import { headlessSessions, setHeadlessSpectatorPush } from './headlessApi';
 import { resyncCounters } from './stateUtils';
 import {
@@ -87,7 +87,7 @@ function stripSelectionState(s: ReturnType<typeof serialize>): ReturnType<typeof
   };
 }
 
-function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: 0 | 1, toAll: boolean): void {
+function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: number, toAll: boolean): void {
   const serialized = serialize(room.state!);
   const gameOver = room.state!.phase === 'gameOver';
 
@@ -133,10 +133,13 @@ export function handleDisconnect(ws: WebSocket): void {
         // Remove spectator from room
         room.spectators = room.spectators.filter(s => s.ws !== ws);
       } else {
-        const other = room.sessions[sess.playerSlot === 0 ? 1 : 0];
-        if (other) send(other.ws, { type: 'opponent_disconnected' });
-        // Keep room in memory for rejoin; nullify the slot
-        room.sessions[sess.playerSlot!] = null;
+        // Notify every other seated player, then nullify this slot (kept in the
+        // room for rejoin; playerNames retains the username→slot mapping).
+        for (let i = 0; i < room.sessions.length; i++) {
+          const other = room.sessions[i];
+          if (other && i !== sess.playerSlot) send(other.ws, { type: 'opponent_disconnected' });
+        }
+        if (sess.playerSlot !== null) room.sessions[sess.playerSlot] = null;
       }
     }
   }
@@ -158,7 +161,7 @@ export function handleMessage(ws: WebSocket, raw: string): void {
 
   switch (msg.type) {
     case 'login': return handleLogin(sess, msg.username);
-    case 'create_room': return handleCreateRoom(sess);
+    case 'create_room': return handleCreateRoom(sess, msg.expectedPlayers);
     case 'join_room': return handleJoinRoom(sess, msg.roomId);
     case 'list_rooms': return handleListRooms(sess);
     case 'rejoin_room': return handleRejoinRoom(sess, msg.roomId);
@@ -228,92 +231,147 @@ function handleLogin(sess: ClientSession, username: string): void {
   send(sess.ws, { type: 'logged_in', username });
 }
 
-function handleCreateRoom(sess: ClientSession): void {
+// Clamp a requested player count into the supported range (2..MAX_PLAYERS).
+function normalizeExpectedPlayers(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.floor(n) : 2;
+  return Math.max(2, Math.min(MAX_PLAYERS, v));
+}
+
+// Once a room is full, build the N-player game state and broadcast game_start
+// with each session's own slot. Shared by 2-player and N-player rooms.
+function startGameInRoom(room: RoomState): void {
+  const configs = room.playerNames.map((name, i) => ({
+    name: name ?? `Player ${i + 1}`,
+    color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
+  }));
+  room.state = createGameState(configs);
+  room.status = 'active';
+
+  const serialized = serialize(room.state);
+  saveGameState(room.id, JSON.stringify(serialized));
+
+  for (let slot = 0; slot < room.sessions.length; slot++) {
+    const s = room.sessions[slot];
+    if (s) send(s.ws, { type: 'game_start', playerSlot: slot, state: serialized });
+  }
+}
+
+function handleCreateRoom(sess: ClientSession, expectedPlayers?: number): void {
   if (!sess.username) { send(sess.ws, { type: 'error', message: 'Login first' }); return; }
+  const expected = normalizeExpectedPlayers(expectedPlayers);
   const playerId = upsertPlayer(sess.username);
   const roomId = createRoom(playerId);
   const room: RoomState = {
     id: roomId,
     status: 'open',
-    sessions: [sess, null],
+    sessions: new Array(expected).fill(null),
+    expectedPlayers: expected,
+    playerNames: new Array(expected).fill(null),
     spectators: [],
     state: null,
   };
+  room.sessions[0] = sess;
+  room.playerNames[0] = sess.username;
   rooms.set(roomId, room);
   sess.roomId = roomId;
   sess.playerSlot = 0;
-  send(sess.ws, { type: 'room_created', roomId });
+  send(sess.ws, { type: 'room_created', roomId, expectedPlayers: expected });
 }
 
 function handleJoinRoom(sess: ClientSession, roomId: string): void {
   if (!sess.username) { send(sess.ws, { type: 'error', message: 'Login first' }); return; }
-  const dbRoom = getRoomById(roomId);
-  if (!dbRoom || dbRoom.status !== 'open') {
+
+  // In-memory room is authoritative for open (waiting) rooms — this supports N
+  // players without needing extra DB columns.
+  const room = rooms.get(roomId);
+  if (!room || room.status !== 'open') {
     send(sess.ws, { type: 'error', message: 'Room not found or already started' });
     return;
   }
-  const playerId = upsertPlayer(sess.username);
-  if (!joinRoom(roomId, playerId)) {
-    send(sess.ws, { type: 'error', message: 'Could not join room' });
+  if (room.playerNames.includes(sess.username)) {
+    send(sess.ws, { type: 'error', message: 'You are already in this room' });
+    return;
+  }
+  const slot = room.sessions.findIndex(s => s === null);
+  if (slot === -1) {
+    send(sess.ws, { type: 'error', message: 'Room is full' });
     return;
   }
 
-  let room = rooms.get(roomId);
-  if (!room) {
-    room = { id: roomId, status: 'active', sessions: [null, null], spectators: [], state: null };
-    rooms.set(roomId, room);
-  }
-  room.sessions[1] = sess;
-  room.status = 'active';
+  const playerId = upsertPlayer(sess.username);
+  // Keep the DB's 2-player columns populated for the classic case so existing
+  // 2-player rejoin-after-restart keeps working. For slots ≥2 we rely on the
+  // in-memory room (rejoin for N>2 is best-effort — see handleRejoinRoom).
+  if (slot === 1) joinRoom(roomId, playerId);
+
+  room.sessions[slot] = sess;
+  room.playerNames[slot] = sess.username;
   sess.roomId = roomId;
-  sess.playerSlot = 1;
+  sess.playerSlot = slot;
 
-  // Create game state
-  const player1Name = room.sessions[0]?.username ?? 'Player 1';
-  const player2Name = sess.username!;
-  const gameState = createGameState([
-    { name: player1Name, color: '#ff4444' },
-    { name: player2Name, color: '#4488ff' },
-  ]);
-  room.state = gameState;
-
-  const serialized = serialize(gameState);
-  saveGameState(roomId, JSON.stringify(serialized));
-
-  // Send game_start to each player with their slot
-  if (room.sessions[0]) send(room.sessions[0].ws, { type: 'game_start', playerSlot: 0, state: serialized });
-  send(sess.ws, { type: 'game_start', playerSlot: 1, state: serialized });
+  const joined = room.sessions.filter(s => s !== null).length;
+  if (joined >= room.expectedPlayers) {
+    startGameInRoom(room);
+  } else {
+    // Not full yet — tell the joiner (and everyone waiting) the progress.
+    for (const s of room.sessions) {
+      if (s) send(s.ws, { type: 'room_waiting', roomId, joined, expected: room.expectedPlayers });
+    }
+  }
 }
 
 function handleListRooms(sess: ClientSession): void {
-  const rows = getOpenRooms();
-  const roomList: RoomSummary[] = rows.map(r => ({
-    id: r.id,
-    player1Name: r.player1_name ?? 'Unknown',
-    status: r.status as 'open',
-  }));
+  // Open (waiting) rooms are ephemeral and now support N players, so list them
+  // from the in-memory store — this is the single source of truth for the
+  // expected/joined counts. (Persistence + rejoin still go through the DB.)
+  const roomList: RoomSummary[] = [];
+  for (const [id, room] of rooms) {
+    if (room.status !== 'open') continue;
+    const joined = room.sessions.filter(s => s !== null).length;
+    roomList.push({
+      id,
+      player1Name: room.playerNames[0] ?? 'Unknown',
+      status: 'open',
+      expectedPlayers: room.expectedPlayers,
+      joinedPlayers: joined,
+    });
+  }
   send(sess.ws, { type: 'room_list', rooms: roomList });
 }
 
 function handleRejoinRoom(sess: ClientSession, roomId: string): void {
   if (!sess.username) { send(sess.ws, { type: 'error', message: 'Login first' }); return; }
 
-  const dbRoom = getRoomById(roomId);
-  if (!dbRoom) { send(sess.ws, { type: 'error', message: 'Room not found' }); return; }
-
   let room = rooms.get(roomId);
 
-  // Determine slot
-  const playerId = upsertPlayer(sess.username);
-  let slot: 0 | 1 | null = null;
-  if (dbRoom.player1_id === playerId) slot = 0;
-  else if (dbRoom.player2_id === playerId) slot = 1;
-  if (slot === null) { send(sess.ws, { type: 'error', message: 'Not a player in this room' }); return; }
-
-  if (!room) {
-    room = { id: roomId, status: dbRoom.status as 'open' | 'active' | 'done', sessions: [null, null], spectators: [], state: null };
-    rooms.set(roomId, room);
+  // Determine the rejoining player's slot. Prefer the in-memory room (which
+  // tracks all N slots by username); fall back to the DB's 2-player columns so a
+  // classic 2-player room survives a server restart.
+  let slot: number | null = null;
+  if (room) {
+    const idx = room.playerNames.indexOf(sess.username);
+    if (idx !== -1) slot = idx;
   }
+  if (slot === null) {
+    const dbRoom = getRoomById(roomId);
+    if (!dbRoom) { send(sess.ws, { type: 'error', message: 'Room not found' }); return; }
+    const playerId = upsertPlayer(sess.username);
+    if (dbRoom.player1_id === playerId) slot = 0;
+    else if (dbRoom.player2_id === playerId) slot = 1;
+    if (slot === null) { send(sess.ws, { type: 'error', message: 'Not a player in this room' }); return; }
+    if (!room) {
+      // Reconstruct a minimal 2-player room from the DB (N>2 rooms can't be fully
+      // rebuilt after a restart — that's the documented rejoin caveat).
+      room = {
+        id: roomId, status: dbRoom.status as 'open' | 'active' | 'done',
+        sessions: [null, null], expectedPlayers: 2, playerNames: [null, null],
+        spectators: [], state: null,
+      };
+      rooms.set(roomId, room);
+    }
+  }
+
+  if (!room) { send(sess.ws, { type: 'error', message: 'Room not found' }); return; }
 
   // Restore state from DB if not in memory
   if (!room.state) {
@@ -326,18 +384,21 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
   }
 
   room.sessions[slot] = sess;
+  room.playerNames[slot] = sess.username;
   sess.roomId = roomId;
   sess.playerSlot = slot;
 
   if (room.state) {
-    const currentTurnSlot = room.state.currentPlayerIndex as 0 | 1;
+    const currentTurnSlot = room.state.currentPlayerIndex;
     const serialized = serialize(room.state);
     // If rejoining player is NOT the acting player, strip selections so they
-    // cannot see the opponent's in-progress moves from the saved state.
+    // cannot see the acting player's in-progress moves from the saved state.
     const payload = slot === currentTurnSlot ? serialized : stripSelectionState(serialized);
     send(sess.ws, { type: 'game_start', playerSlot: slot, state: payload });
-    const other = room.sessions[slot === 0 ? 1 : 0];
-    if (other) send(other.ws, { type: 'opponent_reconnected' });
+    for (let i = 0; i < room.sessions.length; i++) {
+      const other = room.sessions[i];
+      if (other && i !== slot) send(other.ws, { type: 'opponent_reconnected' });
+    }
   }
 }
 

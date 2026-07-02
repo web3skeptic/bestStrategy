@@ -6,6 +6,7 @@ import {
   SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
   TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
+  PLAYER_COLORS, mapRadiusForPlayers, templeCountForPlayers,
 } from './types';
 import {
   hexDistance, hexEqual, hexNeighbors, getReachableHexes,
@@ -439,52 +440,155 @@ export function getPopulationCount(state: GameState, playerId: number): number {
   return state.units.filter(u => u.hp > 0 && u.playerId === playerId).length;
 }
 
+// ── Temple placement (change #5) ──
+
+// Minimum hex distance allowed between ANY two temples. 2 == never adjacent
+// (always at least one tile between two temples). Single tunable knob for temple
+// spacing. NOTE: Max phrased it as "at least 2 tiles between temples", which
+// could instead mean hexDistance 3 (two empty tiles between). Bump this to 3 for
+// that reading — placement will still spread temples out and back off gracefully.
+export const MIN_TEMPLE_SEPARATION = 2;
+
+const STARTING_UNITS_PER_PLAYER = 2;
+
+function shuffle<T>(arr: T[]): T[] {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i]!; arr[i] = arr[j]!; arr[j] = tmp;
+  }
+  return arr;
+}
+
+interface TempleLayout {
+  starts: HexCoord[];            // one start temple per player (index === player id)
+  neutrals: HexCoord[];          // shared neutral temples
+  unitPositions: HexCoord[][];   // per-player starting-unit positions
+}
+
+// Randomly place N start temples + M neutral temples so that:
+//  • no two temples are closer than MIN_TEMPLE_SEPARATION (hex distance),
+//  • player starts are spread out (prefer a larger separation, backing off until
+//    a layout is found) and never adjacent to each other,
+//  • each start temple has room for its starting units on free neighbour tiles,
+//  • temples MAY sit on the map border (edge hexes are eligible).
+// Never hangs / crashes: the separation is relaxed down to MIN_TEMPLE_SEPARATION,
+// and a guaranteed best-effort fallback runs if the constraints can't be met.
+function placeTemples(mapRadius: number, numPlayers: number, numNeutral: number): TempleLayout {
+  const all = generateHexMap(mapRadius);
+  const idealStartSep = Math.max(MIN_TEMPLE_SEPARATION + 1, Math.floor(mapRadius * 1.2));
+
+  const freeNeighbors = (pos: HexCoord, taken: HexCoord[]): HexCoord[] =>
+    hexNeighbors(pos).filter(n =>
+      hexDistance({ q: 0, r: 0 }, n) <= mapRadius && !taken.some(t => hexEqual(t, n)));
+
+  for (let startSep = idealStartSep; startSep >= MIN_TEMPLE_SEPARATION; startSep--) {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const starts: HexCoord[] = [];
+      for (const hex of shuffle([...all])) {
+        if (starts.length >= numPlayers) break;
+        if (starts.some(s => hexDistance(s, hex) < startSep)) continue;
+        if (freeNeighbors(hex, starts).length < STARTING_UNITS_PER_PLAYER) continue;
+        starts.push(hex);
+      }
+      if (starts.length < numPlayers) continue;
+
+      const placed = [...starts];
+      const neutrals: HexCoord[] = [];
+      for (const hex of shuffle([...all])) {
+        if (neutrals.length >= numNeutral) break;
+        if (placed.some(t => hexDistance(t, hex) < MIN_TEMPLE_SEPARATION)) continue;
+        neutrals.push(hex); placed.push(hex);
+      }
+      if (neutrals.length < numNeutral) continue;
+
+      const allTemples = [...starts, ...neutrals];
+      const usedUnitTiles: HexCoord[] = [];
+      const unitPositions: HexCoord[][] = [];
+      let ok = true;
+      for (const s of starts) {
+        const free = freeNeighbors(s, [...allTemples, ...usedUnitTiles]);
+        if (free.length < STARTING_UNITS_PER_PLAYER) { ok = false; break; }
+        const chosen = free.slice(0, STARTING_UNITS_PER_PLAYER);
+        unitPositions.push(chosen);
+        usedUnitTiles.push(...chosen);
+      }
+      if (!ok) continue;
+
+      return { starts, neutrals, unitPositions };
+    }
+  }
+
+  // Guaranteed fallback: place greedily with the loosest separation we can,
+  // returning fewer neutral temples / units rather than ever failing.
+  const greedy = (count: number, minSep: number, existing: HexCoord[]): HexCoord[] => {
+    const out: HexCoord[] = [];
+    for (let sep = minSep; sep >= 0 && out.length < count; sep--) {
+      for (const hex of shuffle([...all])) {
+        if (out.length >= count) break;
+        const conflicts = [...existing, ...out];
+        if (conflicts.some(t => hexEqual(t, hex))) continue;
+        if (conflicts.some(t => hexDistance(t, hex) < sep)) continue;
+        out.push(hex);
+      }
+    }
+    return out;
+  };
+  const starts = greedy(numPlayers, MIN_TEMPLE_SEPARATION, []);
+  const neutrals = greedy(numNeutral, MIN_TEMPLE_SEPARATION, starts);
+  const allTemples = [...starts, ...neutrals];
+  const usedUnitTiles: HexCoord[] = [];
+  const unitPositions = starts.map(s => {
+    const free = freeNeighbors(s, [...allTemples, ...usedUnitTiles]).slice(0, STARTING_UNITS_PER_PLAYER);
+    usedUnitTiles.push(...free);
+    return free;
+  });
+  return { starts, neutrals, unitPositions };
+}
+
 // ── Game creation ──
 
 export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
-  const mapRadius = 6;
   const configs = playerConfigs || DEFAULT_PLAYERS;
+  const numPlayers = configs.length;
+  const mapRadius = mapRadiusForPlayers(numPlayers);
+  const numNeutral = templeCountForPlayers(numPlayers) - numPlayers;
 
-  // Balance v2.2 (2026-05-17): Symmetric starting aura. The aura compensation
-  // experiments (v2.0: +1, v2.1: +2) only closed the first-mover gap from
-  // 63% to ~59% — never enough to reach 50%. The proper fix is randomizing
-  // who acts first (see `firstPlayer` below) so neither slot is "fixed P0".
-  // With random first-mover the asymmetric aura would itself become unfair.
+  // Balance v2.2 (2026-05-17): Symmetric starting aura. The proper fix for the
+  // first-mover gap is randomizing who acts first (see `firstPlayer` below) so
+  // no slot is "fixed P0"; with that, asymmetric aura would itself be unfair.
   const players: Player[] = configs.map((cfg, i) => ({
-    id: i, name: cfg.name, color: cfg.color, aura: 2,
+    id: i,
+    name: cfg.name,
+    color: cfg.color || PLAYER_COLORS[i % PLAYER_COLORS.length]!,
+    aura: 2,
   }));
 
   const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>() }));
 
-  const temples: Temple[] = [
-    createTemple({ q: -4, r: 2 }, 0),
-    createTemple({ q: 4, r: -2 }, 1),
-    createTemple({ q: -2, r: -2 }, null),
-    createTemple({ q: 2, r: 2 }, null),
-  ];
+  // Change #5: randomized temple placement each game (starts + neutrals), with a
+  // minimum separation. Temples may sit on the border.
+  const layout = placeTemples(mapRadius, numPlayers, numNeutral);
 
-  const unitPositions: HexCoord[] = [
-    { q: -3, r: 1 }, { q: -3, r: 2 },
-    { q: 3, r: -1 }, { q: 3, r: -2 },
-  ];
+  const temples: Temple[] = [];
+  layout.starts.forEach((pos, i) => {
+    const t = createTemple(pos, i);
+    temples.push(t);
+    players[i]!.startTempleId = t.id; // durable "home temple" signal for the AI
+  });
+  for (const pos of layout.neutrals) temples.push(createTemple(pos, null));
 
-  const { hills, walls, forests } = generateTerrain(mapRadius, temples.map(t => t.pos), unitPositions);
+  const allUnitPositions = layout.unitPositions.flat();
+  const { hills, walls, forests } = generateTerrain(mapRadius, temples.map(t => t.pos), allUnitPositions);
 
-  const units: Unit[] = [
-    createUnit('warrior', 0, unitPositions[0]!),
-    createUnit('warrior', 0, unitPositions[1]!),
-    createUnit('warrior', 1, unitPositions[2]!),
-    createUnit('warrior', 1, unitPositions[3]!),
-  ];
+  const units: Unit[] = [];
+  layout.unitPositions.forEach((positions, playerId) => {
+    for (const pos of positions) units.push(createUnit('warrior', playerId, pos));
+  });
 
   const explored: Set<string>[] = players.map(() => new Set<string>());
 
-  // Balance v2.2 (2026-05-17): Random first-mover. Previously P0 always acted
-  // first, which (in the 132-game bot tournament) caused a 63/37 win split
-  // toward P0 regardless of strategy. Applies to every code path that builds
-  // a new game — local AI matches, online multiplayer rooms, headless API
-  // games, the bot tournament — so the asymmetry is removed everywhere.
-  const firstPlayer = Math.random() < 0.5 ? 0 : 1;
+  // Balance v2.2 (2026-05-17): Random first-mover, generalized to N players.
+  const firstPlayer = Math.floor(Math.random() * numPlayers);
 
   const state: GameState = {
     players, units, temples, hills, walls, forests, explored,
@@ -1024,10 +1128,23 @@ function checkWinCondition(state: GameState): void {
  */
 export function resignGame(state: GameState, playerId: number): boolean {
   if (state.phase === 'gameOver') return false;
-  const opponent = state.players.find(p => p.id !== playerId);
-  if (!opponent) return false;
-  state.phase = 'gameOver';
-  state.winner = opponent;
+  if (!state.players.some(p => p.id === playerId)) return false;
+  // Eliminate the resigner: their units die and their temples go neutral. With
+  // 2 players this immediately leaves one player standing (win). With N players
+  // the game continues until only one remains — checkWinCondition handles both.
+  for (const u of state.units) {
+    if (u.playerId === playerId) u.hp = 0;
+  }
+  for (const t of state.temples) {
+    if (t.ownerId === playerId) t.ownerId = null;
+  }
+  checkWinCondition(state);
+  // If the resigner was the active player and the game isn't over, advance past
+  // them to the next surviving player. (Cast avoids a literal-type narrowing
+  // false-positive: checkWinCondition may have set phase to 'gameOver'.)
+  if ((state.phase as string) !== 'gameOver' && state.currentPlayerIndex === playerId) {
+    endTurn(state);
+  }
   return true;
 }
 

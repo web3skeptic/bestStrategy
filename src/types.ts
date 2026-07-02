@@ -100,6 +100,42 @@ export interface Player {
   name: string;
   color: string;
   aura: number;
+  /**
+   * Id of the temple this player started on. Set once by createGameState and
+   * carried through serialization. Gives the AI (and anything else) a durable
+   * "home temple" signal that survives randomized temple placement, instead of
+   * hard-coding a fixed board coordinate.
+   */
+  startTempleId?: string;
+}
+
+// ── Multiplayer / N-player support ──
+
+// Maximum number of players a single game supports. The colour palette below
+// must have at least this many visually-distinct entries.
+export const MAX_PLAYERS = 6;
+
+// Per-player colour palette. Index === player slot. Slots 0 and 1 keep the
+// original red / blue so existing 1-player and 2-player games look unchanged.
+export const PLAYER_COLORS: readonly string[] = [
+  '#ff4444', // 0 red
+  '#4488ff', // 1 blue
+  '#44cc55', // 2 green
+  '#ffcc33', // 3 gold
+  '#cc55dd', // 4 purple
+  '#ff8833', // 5 orange
+];
+
+// Map radius as a function of player count: 2p keeps the classic radius 6,
+// growing by 1 per extra player so every player still gets a fair start.
+export function mapRadiusForPlayers(numPlayers: number): number {
+  return 6 + Math.max(0, numPlayers - 2);
+}
+
+// Total temple count: one starting temple per player plus one neutral temple
+// per player (2p → 4 temples, matching the classic layout).
+export function templeCountForPlayers(numPlayers: number): number {
+  return numPlayers * 2;
 }
 
 export type GamePhase = 'playing' | 'gameOver';

@@ -1,4 +1,4 @@
-import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player } from './types';
+import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, MAX_PLAYERS } from './types';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -67,8 +67,20 @@ const UNIT_ART: Record<UnitType, string> = {
   rangeBooster:  rangeBoosterImg,
 };
 
-const AI_PLAYER_ID = 1;
 const AI_DELAY_MS = 600;
+
+// Per-slot controller kind for the current LOCAL game (index === player slot).
+// 'human' = a local seat, 'normal'/'hard' = an AI seat of that difficulty. This
+// generalizes the old single "AI is slot 1" assumption to N players with any mix
+// of humans and AIs (1 human + 3 AI, hotseat N humans, etc.).
+type ControllerKind = 'human' | 'normal' | 'hard';
+let controllers: ControllerKind[] = ['human', 'normal'];
+
+// Is the given local slot controlled by an AI? (Never true in online play — the
+// server is authoritative there and no local AI runs.)
+function isAISlot(idx: number): boolean {
+  return !multiplayerMode && controllers[idx] !== undefined && controllers[idx] !== 'human';
+}
 
 // ── Settings defaults (snapshot at startup for reset) ──
 const UNIT_STATS_DEFAULT: Record<UnitType, UnitStats> = Object.fromEntries(
@@ -76,12 +88,10 @@ const UNIT_STATS_DEFAULT: Record<UnitType, UnitStats> = Object.fromEntries(
 ) as Record<UnitType, UnitStats>;
 const UNIT_COSTS_DEFAULT: Record<UnitType, number> = { ...UNIT_COSTS };
 
-let aiEnabled = true;
-let aiDifficulty: 'normal' | 'hard' = 'normal';
 let gameStarted = false;
 let multiplayerMode = false;
 let spectatorMode = false;
-let myPlayerSlot: 0 | 1 = 0;
+let myPlayerSlot = 0;
 let mpClient: MultiplayerClient | null = null;
 
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
@@ -180,13 +190,17 @@ const lobbyGameListEl = document.getElementById('lobbyGameListEl')!;
 const lobbyRefreshGamesBtn = document.getElementById('lobbyRefreshGamesBtn')!;
 const spectatorBanner = document.getElementById('spectatorBanner')!;
 const spectatorInfo = document.getElementById('spectatorInfo')!;
+const lobbySetup = document.getElementById('lobbySetup')!;
+const playerListEl = document.getElementById('playerList')!;
 
-function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting'): void {
+function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup'): void {
   lobbyMain.classList.toggle('hidden', panel !== 'main');
   lobbyLogin.classList.toggle('hidden', panel !== 'login');
   lobbyRoomListPanel.classList.toggle('hidden', panel !== 'rooms');
   lobbyWaiting.classList.toggle('hidden', panel !== 'waiting');
+  lobbySetup.classList.toggle('hidden', panel !== 'setup');
   if (panel === 'main') updateContinueButton(); // reflect any saved local game
+  if (panel === 'setup') renderSetupSlots();
 }
 
 // ── sendOrCall: in multiplayer mode send action to server; locally call fn ──
@@ -219,7 +233,15 @@ function handleMultiplayerEvent(event: ServerMessage): void {
     }
     case 'room_created': {
       lobbyRoomCode.textContent = event.roomId;
-      lobbyWaitingStatus.textContent = 'Waiting for opponent to join…';
+      lobbyWaitingStatus.textContent = event.expectedPlayers > 2
+        ? `Waiting for players… 1/${event.expectedPlayers} joined`
+        : 'Waiting for opponent to join…';
+      showLobbyPanel('waiting');
+      break;
+    }
+    case 'room_waiting': {
+      lobbyRoomCode.textContent = event.roomId;
+      lobbyWaitingStatus.textContent = `Waiting for players… ${event.joined}/${event.expected} joined`;
       showLobbyPanel('waiting');
       break;
     }
@@ -232,7 +254,10 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       for (const room of rooms) {
         const item = document.createElement('div');
         item.className = 'lobby-room-item';
-        item.innerHTML = `<span>${room.id} — ${room.player1Name}</span>`;
+        const size = room.expectedPlayers > 2
+          ? ` <span style="color:#89a">[${room.joinedPlayers}/${room.expectedPlayers}]</span>`
+          : '';
+        item.innerHTML = `<span>${room.id} — ${room.player1Name}${size}</span>`;
         const btn = document.createElement('button');
         btn.textContent = 'Join';
         btn.addEventListener('click', () => {
@@ -247,7 +272,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       cancelAITurn();
       myPlayerSlot = event.playerSlot;
       multiplayerMode = true;
-      aiEnabled = false;
+      controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
       renderer.init(state.mapRadius);
       gameStarted = true;
@@ -305,7 +330,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       cancelAITurn();
       spectatorMode = true;
       multiplayerMode = true;
-      aiEnabled = false;
+      controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
       renderer.init(state.mapRadius);
       gameStarted = true;
@@ -370,8 +395,17 @@ lobbyUsernameInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') lobbyLoginBtn.click();
 });
 
+// Online room-size selector (2..MAX_PLAYERS).
+const lobbyPlayersCountEl = document.getElementById('lobbyPlayersCount')!;
+const lobbyPlayersDec = document.getElementById('lobbyPlayersDec')!;
+const lobbyPlayersInc = document.getElementById('lobbyPlayersInc')!;
+let lobbyRoomSize = 2;
+function updateLobbyRoomSize(): void { lobbyPlayersCountEl.textContent = String(lobbyRoomSize); }
+lobbyPlayersDec.addEventListener('click', () => { if (lobbyRoomSize > 2) { lobbyRoomSize--; updateLobbyRoomSize(); } });
+lobbyPlayersInc.addEventListener('click', () => { if (lobbyRoomSize < MAX_PLAYERS) { lobbyRoomSize++; updateLobbyRoomSize(); } });
+
 lobbyCreateRoomBtn.addEventListener('click', () => {
-  mpClient!.createRoom();
+  mpClient!.createRoom(lobbyRoomSize);
 });
 
 lobbyRefreshBtn.addEventListener('click', () => {
@@ -442,18 +476,22 @@ function hideMenu(): void {
 // menu (or reload) and resume vs AI / vs Hard AI / 2P exactly where they left
 // off. Online play is server-authoritative and is never saved here.
 const SAVE_KEY = 'bs:savedGame:v1';
-type LocalMode = 'vsAI' | 'vsHardAI' | '2P';
 interface SavedGame {
   v: 1;
-  mode: LocalMode;
-  aiEnabled: boolean;
-  aiDifficulty: 'normal' | 'hard';
+  // Games now store the full per-slot controller layout. Legacy saves that
+  // predate N-player support stored `aiEnabled`/`aiDifficulty` for a fixed
+  // 2-player game — still honoured via controllersFromSave() below.
+  controllers?: ControllerKind[];
+  aiEnabled?: boolean;
+  aiDifficulty?: 'normal' | 'hard';
   state: SerializedGameState; // full board/units/temples/resources/turn (Sets→arrays)
 }
 
-function currentLocalMode(): LocalMode {
-  if (!aiEnabled) return '2P';
-  return aiDifficulty === 'hard' ? 'vsHardAI' : 'vsAI';
+// Reconstruct the controller layout from a save, mapping legacy 2-player saves.
+function controllersFromSave(save: SavedGame): ControllerKind[] {
+  if (save.controllers && save.controllers.length) return save.controllers;
+  const aiKind: ControllerKind = save.aiDifficulty === 'hard' ? 'hard' : 'normal';
+  return save.aiEnabled ? ['human', aiKind] : ['human', 'human'];
 }
 
 // Best-effort snapshot of the active local game. A finished game clears the
@@ -464,9 +502,7 @@ function saveGame(): void {
     if (state.phase === 'gameOver') { localStorage.removeItem(SAVE_KEY); return; }
     const save: SavedGame = {
       v: 1,
-      mode: currentLocalMode(),
-      aiEnabled,
-      aiDifficulty,
+      controllers: [...controllers],
       state: serialize(state),
     };
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
@@ -479,7 +515,7 @@ function loadSavedGame(): SavedGame | null {
     if (!raw) return null;
     const save = JSON.parse(raw) as SavedGame;
     if (!save || save.v !== 1 || !save.state) return null;
-    if (save.mode !== 'vsAI' && save.mode !== 'vsHardAI' && save.mode !== '2P') return null;
+    if (!save.controllers && save.aiEnabled === undefined) return null;
     if (save.state.phase === 'gameOver') return null; // don't resume a finished game
     return save;
   } catch { return null; }
@@ -498,8 +534,7 @@ function restoreGame(): void {
   cancelAITurn();
   leaveActiveGame();             // resets multiplayer/spectator flags + socket
   spectatorBanner.style.display = 'none';
-  aiEnabled = save.aiEnabled;
-  aiDifficulty = save.aiDifficulty;
+  controllers = controllersFromSave(save);
   buildingTeleport = null;
   state = deserialize(save.state);
   renderer.init(state.mapRadius);
@@ -509,7 +544,7 @@ function restoreGame(): void {
   combatLog.innerHTML = '';
   logCombat('--- Resumed saved game ---');
   // Preselect the human's temple unless it's the AI's move to resume.
-  if (!(aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID)) autoSelectTemple();
+  if (!isAISlot(state.currentPlayerIndex)) autoSelectTemple();
   render();
   maybeRunAITurn();              // if it was the AI's turn, let it continue
 }
@@ -519,30 +554,45 @@ function updateContinueButton(): void {
   menuContinueBtn.style.display = hasValidLocalSave() ? 'block' : 'none';
 }
 
-function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
+// Build a human-readable name for a local seat.
+function seatName(kind: ControllerKind, idx: number): string {
+  if (kind === 'human') return `Player ${idx + 1}`;
+  return kind === 'hard' ? `Hard AI ${idx + 1}` : `AI ${idx + 1}`;
+}
+
+// Start a LOCAL game with an arbitrary per-slot controller layout (N players,
+// any mix of humans and AIs). This is the single entry point behind the classic
+// quick-start buttons AND the custom-setup screen.
+function startLocalGame(kinds: ControllerKind[]): void {
   // Cancel any pending AI turn from a prior game before swapping in new state,
   // and disconnect any live multiplayer socket so it can't clobber this game.
   cancelAITurn();
   leaveActiveGame();
   spectatorBanner.style.display = 'none';
-  aiEnabled = vsAI;
-  aiDifficulty = difficulty;
+  controllers = [...kinds];
   buildingTeleport = null;
-  const aiLabel = difficulty === 'hard' ? 'Hard AI' : 'AI';
-  const players = aiEnabled
-    ? [{ name: 'Player 1', color: '#ff4444' }, { name: aiLabel, color: '#4488ff' }]
-    : [{ name: 'Player 1', color: '#ff4444' }, { name: 'Player 2', color: '#4488ff' }];
+  const players = kinds.map((kind, i) => ({
+    name: seatName(kind, i),
+    color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
+  }));
   state = createGameState(players);
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
   closeTechTree();
   combatLog.innerHTML = '';
-  logCombat(`--- New Game (${aiEnabled ? `vs ${aiLabel}` : '2 Players'}) ---`);
+  const humans = kinds.filter(k => k === 'human').length;
+  const ais = kinds.length - humans;
+  logCombat(`--- New Game (${kinds.length} players: ${humans} human, ${ais} AI) ---`);
   logCombat(`${getCurrentPlayer(state).name} goes first.`);
-  autoSelectTemple();   // pre-select the human's temple (no-op if the AI moves first)
+  autoSelectTemple();   // pre-select the human's temple (no-op if an AI moves first)
   render();
-  maybeRunAITurn();     // if the AI won the coin flip, let it take its first turn
+  maybeRunAITurn();     // if an AI won the coin flip, let it take its first turn
+}
+
+// Back-compat wrapper for the classic 2-player quick-start buttons.
+function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
+  startLocalGame(vsAI ? ['human', difficulty] : ['human', 'human']);
 }
 
 menuContinueBtn.addEventListener('click', () => restoreGame());
@@ -550,6 +600,67 @@ menuVsAI.addEventListener('click', () => startGame(true, 'normal'));
 menu2P.addEventListener('click', () => startGame(false));
 (document.getElementById('menuVsHardAI') as HTMLButtonElement).addEventListener('click', () => startGame(true, 'hard'));
 menuBtn.addEventListener('click', () => showMenu());
+
+// ── Custom game setup (N players, human/AI mix) ──
+const menuCustom = document.getElementById('menuCustom')!;
+const setupPlayersCountEl = document.getElementById('setupPlayersCount')!;
+const setupPlayersDec = document.getElementById('setupPlayersDec')!;
+const setupPlayersInc = document.getElementById('setupPlayersInc')!;
+const setupSlotsEl = document.getElementById('setupSlots')!;
+const setupInfoEl = document.getElementById('setupInfo')!;
+const setupStartBtn = document.getElementById('setupStartBtn')!;
+const setupBack = document.getElementById('setupBack')!;
+
+// Working controller layout for the setup screen. Slot 0 defaults to human, the
+// rest to normal AI — the classic "1 human vs N AIs" default.
+let setupKinds: ControllerKind[] = ['human', 'normal'];
+
+function renderSetupSlots(): void {
+  setupPlayersCountEl.textContent = String(setupKinds.length);
+  setupSlotsEl.innerHTML = '';
+  const KIND_LABELS: [ControllerKind, string][] = [
+    ['human', 'Human'], ['normal', 'AI — Normal'], ['hard', 'AI — Hard'],
+  ];
+  setupKinds.forEach((kind, i) => {
+    const row = document.createElement('div');
+    row.className = 'setup-slot';
+    const swatch = document.createElement('div');
+    swatch.className = 'slot-swatch';
+    swatch.style.background = PLAYER_COLORS[i % PLAYER_COLORS.length]!;
+    const label = document.createElement('div');
+    label.className = 'slot-label';
+    label.textContent = `Seat ${i + 1}`;
+    const sel = document.createElement('select');
+    for (const [val, text] of KIND_LABELS) {
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = text;
+      if (val === kind) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', () => { setupKinds[i] = sel.value as ControllerKind; updateSetupInfo(); });
+    row.append(swatch, label, sel);
+    setupSlotsEl.appendChild(row);
+  });
+  updateSetupInfo();
+}
+
+function updateSetupInfo(): void {
+  const humans = setupKinds.filter(k => k === 'human').length;
+  const ais = setupKinds.length - humans;
+  const radius = 6 + Math.max(0, setupKinds.length - 2);
+  setupInfoEl.textContent =
+    `${humans} human · ${ais} AI — map radius ${radius}, ${setupKinds.length * 2} temples`;
+}
+
+menuCustom.addEventListener('click', () => showLobbyPanel('setup'));
+setupBack.addEventListener('click', () => showLobbyPanel('main'));
+setupPlayersDec.addEventListener('click', () => {
+  if (setupKinds.length > 2) { setupKinds = setupKinds.slice(0, -1); renderSetupSlots(); }
+});
+setupPlayersInc.addEventListener('click', () => {
+  if (setupKinds.length < MAX_PLAYERS) { setupKinds = [...setupKinds, 'normal']; renderSetupSlots(); }
+});
+setupStartBtn.addEventListener('click', () => startLocalGame(setupKinds));
 
 // ── Render & UI ──
 
@@ -581,8 +692,37 @@ function setTurnTitle(text: string, color: string): void {
     `linear-gradient(180deg, #ffe0bd 0%, ${color} 55%, ${color} 100%)`;
 }
 
+// True while a player still has at least one unit or temple.
+function isPlayerAlive(p: Player): boolean {
+  return state.units.some(u => u.playerId === p.id && u.hp > 0)
+    || state.temples.some(t => t.ownerId === p.id);
+}
+
+// Per-player status chips: colour dot + aura + population, current player
+// highlighted, eliminated players dimmed/struck. Works for local, hotseat,
+// online and spectator — the whole roster is always shown.
+function updatePlayerList(): void {
+  if (!gameStarted) { playerListEl.innerHTML = ''; return; }
+  playerListEl.innerHTML = '';
+  for (const p of state.players) {
+    const chip = document.createElement('div');
+    chip.className = 'player-chip';
+    if (p.id === state.currentPlayerIndex && state.phase !== 'gameOver') chip.classList.add('current');
+    if (!isPlayerAlive(p)) chip.classList.add('dead');
+    const you = (multiplayerMode && !spectatorMode && p.id === myPlayerSlot) ? ' (you)' : '';
+    const pop = getPopulationCount(state, p.id);
+    const cap = getPopulationCap(state, p.id);
+    chip.innerHTML =
+      `<span class="chip-dot" style="background:${p.color}"></span>` +
+      `<span>${p.name}${you}</span>` +
+      `<span class="chip-stat">⚡${p.aura} · ${pop}/${cap}</span>`;
+    playerListEl.appendChild(chip);
+  }
+}
+
 function updateUI(): void {
   const player = getCurrentPlayer(state);
+  updatePlayerList();
   // The persistent "Player X's Turn" label was removed from the top bar; the
   // turn banner now shows only the game-over result (set below). Turn logic is
   // unaffected — `player` is still used for the stat pills + HUD state.
@@ -592,7 +732,7 @@ function updateUI(): void {
   // End Turn is enabled only on the local player's turn.
   const myTurn = !spectatorMode && state.phase !== 'gameOver'
     && (multiplayerMode ? state.currentPlayerIndex === myPlayerSlot
-        : (aiEnabled ? state.currentPlayerIndex !== AI_PLAYER_ID : true));
+        : !isAISlot(state.currentPlayerIndex));
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
@@ -741,7 +881,7 @@ function updateUI(): void {
 function isOpponentActive(): boolean {
   if (spectatorMode || state.phase === 'gameOver') return false;
   if (multiplayerMode) return state.currentPlayerIndex !== myPlayerSlot;
-  return aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID;
+  return isAISlot(state.currentPlayerIndex);
 }
 
 function updateOpponentTurnOverlay(): void {
@@ -1207,7 +1347,7 @@ function appendSection(
 function openTechTree(): void {
   if (!gameStarted) return;
   if (spectatorMode) return;
-  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
+  if (isAISlot(state.currentPlayerIndex)) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   renderTechTree();
   techOverlay.classList.remove('hidden');
@@ -1250,7 +1390,7 @@ function handleHexClick(clientX: number, clientY: number): void {
   if (spectatorMode) return;
   if (state.phase === 'gameOver') return;
   if (aiRunning) return;
-  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
+  if (isAISlot(state.currentPlayerIndex)) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   const hex = canvasEventToHex(clientX, clientY);
   if (!hex) return; // clicked off the board
@@ -1519,7 +1659,7 @@ function cancelAITurn(): void {
 function autoSelectTemple(): void {
   if (spectatorMode || multiplayerMode) return;
   if (state.phase === 'gameOver') return;
-  if (aiEnabled && getCurrentPlayer(state).id === AI_PLAYER_ID) return;
+  if (isAISlot(state.currentPlayerIndex)) return;
   const me = getCurrentPlayer(state);
   const owned = state.temples.filter(t => t.ownerId === me.id);
   const target = owned.find(t => !getUnitAt(state, t.pos)) ?? owned[0];
@@ -1529,7 +1669,7 @@ function autoSelectTemple(): void {
 // Schedule the AI's turn when it's the AI's move (also handles AI winning the
 // random first-move coin flip at game start).
 function maybeRunAITurn(): void {
-  if (aiEnabled && !aiRunning && state.phase !== 'gameOver' && getCurrentPlayer(state).id === AI_PLAYER_ID) {
+  if (!aiRunning && state.phase !== 'gameOver' && isAISlot(state.currentPlayerIndex)) {
     aiRunning = true;
     aiTimer = setTimeout(() => { aiTimer = null; runAI(); aiRunning = false; }, AI_DELAY_MS);
   }
@@ -1548,17 +1688,19 @@ function doEndTurn(): void {
   endTurn(state);
   const newPlayer = getCurrentPlayer(state);
   logCombat(`${prevPlayer} ended turn → ${newPlayer.name} (Aura: ${newPlayer.aura})`);
-  if (!(aiEnabled && newPlayer.id === AI_PLAYER_ID)) autoSelectTemple(); // human turn → preselect temple
+  if (!isAISlot(state.currentPlayerIndex)) autoSelectTemple(); // human turn → preselect temple
   render();
   maybeRunAITurn();
 }
 
 function runAI(): void {
-  if (!aiEnabled || state.phase === 'gameOver') return;
+  if (state.phase === 'gameOver' || !isAISlot(state.currentPlayerIndex)) return;
 
   const playerVisible = getCurrentPlayerVisible(state);
 
-  const actions = aiDifficulty === 'hard' ? runHardAITurn(state) : runAITurn(state);
+  // Each AI seat runs at its own difficulty; runAITurn/runHardAITurn default the
+  // acting player to the current slot, so this drives any AI in an N-player game.
+  const actions = controllers[state.currentPlayerIndex] === 'hard' ? runHardAITurn(state) : runAITurn(state);
   for (const action of actions) {
     if (playerVisible.has(hexKey(action.pos))) {
       logCombat(action.description);

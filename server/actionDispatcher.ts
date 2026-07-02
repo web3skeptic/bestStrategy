@@ -281,7 +281,7 @@ export function buildRulesPayload(): Record<string, unknown> {
 
 // ── Main dispatcher ──
 
-function fail(state: GameState, playerSlot: 0 | 1, actionName: UnifiedActionName | string, error: string): ExecuteFailure {
+function fail(state: GameState, playerSlot: number, actionName: UnifiedActionName | string, error: string): ExecuteFailure {
   return {
     ok: false,
     action: actionName,
@@ -304,7 +304,7 @@ function fail(state: GameState, playerSlot: 0 | 1, actionName: UnifiedActionName
  */
 export function executeAction(
   state: GameState,
-  playerSlot: 0 | 1,
+  playerSlot: number,
   action: UnifiedActionName,
   params: Record<string, unknown>,
 ): ExecuteResult {

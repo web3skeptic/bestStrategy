@@ -1191,8 +1191,10 @@ export class Renderer3D {
   private applyForestFade(state: GameState, unit: Unit, mesh: THREE.Object3D, viewerId: number, omniscient: boolean): void {
     let faded = false;
     if (!omniscient && unit.playerId === viewerId && state.forests.has(hexKey(unit.pos))) {
-      const enemy = state.players.find(p => p.id !== unit.playerId);
-      if (enemy) faded = !isForestUnitRevealed(state, unit.pos, enemy.id);
+      // Hidden (faded) only while NO enemy can see it. In an N-player game we
+      // check every opponent, not just "the other player".
+      const enemies = state.players.filter(p => p.id !== unit.playerId);
+      faded = enemies.length > 0 && enemies.every(e => !isForestUnitRevealed(state, unit.pos, e.id));
     }
     if (this.unitFaded.get(unit.id) === faded) return;
     this.unitFaded.set(unit.id, faded);

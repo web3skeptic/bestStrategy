@@ -3,8 +3,6 @@ import { hexDistance, getReachableHexes } from './hex';
 import { getCurrentPlayer, getUnitAt, spawnUnit, calculateEncirclement, getEffectiveDefense, getEffectiveAttack, getEffectiveRange, isForestUnitRevealed, getPopulationCap, getPopulationCount, getUnlockedUnits, canResearch, researchTech, upgradeTemple, captureTemple, canCaptureTemple } from './game';
 import { hexKey, hexEqual } from './hex';
 
-const AI_PLAYER_ID = 1;
-
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
   pos: HexCoord;
@@ -119,22 +117,25 @@ function doAIAttack(state: GameState, attacker: Unit, target: Unit): void {
   attacker.hasMoved = true;
 }
 
-// Run one full AI turn
-export function runAITurn(state: GameState): AIAction[] {
+// Run one full AI turn. `aiPlayerId` defaults to the current player, so the same
+// routine drives any AI slot in an N-player game — the AI reasons entirely
+// relative to its own id (its own temples, its own units, enemies = everyone
+// else).
+export function runAITurn(state: GameState, aiPlayerId: number = getCurrentPlayer(state).id): AIAction[] {
   const actions: AIAction[] = [];
-  const player = getCurrentPlayer(state);
-  if (player.id !== AI_PLAYER_ID) return actions;
+  const player = state.players.find(p => p.id === aiPlayerId);
+  if (!player || getCurrentPlayer(state).id !== aiPlayerId) return actions;
 
   // 1. Spawn — pick best affordable unit within population cap
-  const aiTemples = state.temples.filter(t => t.ownerId === AI_PLAYER_ID);
-  const cap = getPopulationCap(state, AI_PLAYER_ID);
-  const count = getPopulationCount(state, AI_PLAYER_ID);
+  const aiTemples = state.temples.filter(t => t.ownerId === aiPlayerId);
+  const cap = getPopulationCap(state, aiPlayerId);
+  const count = getPopulationCount(state, aiPlayerId);
 
-  const aiUnlocked = getUnlockedUnits(state.playerTech[AI_PLAYER_ID]!);
+  const aiUnlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!);
 
   for (const temple of aiTemples) {
     if (getUnitAt(state, temple.pos)) continue;
-    if (getPopulationCount(state, AI_PLAYER_ID) >= getPopulationCap(state, AI_PLAYER_ID)) break;
+    if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
 
     let spawnType: UnitType | null = null;
     if (aiUnlocked.has('heavyknight') && player.aura >= UNIT_COSTS.heavyknight && Math.random() < 0.2) {
@@ -168,7 +169,7 @@ export function runAITurn(state: GameState): AIAction[] {
   }
 
   // 2. Move + attack each unit
-  const aiUnits = state.units.filter(u => u.hp > 0 && u.playerId === AI_PLAYER_ID);
+  const aiUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId);
 
   for (const unit of aiUnits) {
     if (unit.hasAttacked) continue;
@@ -197,7 +198,7 @@ export function runAITurn(state: GameState): AIAction[] {
     }
 
     if (unit.hasMoved) continue;
-    const nearestEnemy = findNearestEnemy(state, unit.pos, AI_PLAYER_ID);
+    const nearestEnemy = findNearestEnemy(state, unit.pos, aiPlayerId);
     if (!nearestEnemy) continue;
 
     const moveHex = bestMoveToward(state, unit, nearestEnemy.pos);
@@ -242,21 +243,17 @@ export function runAITurn(state: GameState): AIAction[] {
 // Phase 2 (home temple ≥ 3): Research unlock_spearsman; spawn spearsmen+archers 2:1.
 // Always: upgrade captured neutral temples to level 2; capture temples explicitly.
 
-export function runHardAITurn(state: GameState): AIAction[] {
+export function runHardAITurn(state: GameState, aiPlayerId: number = getCurrentPlayer(state).id): AIAction[] {
   const actions: AIAction[] = [];
-  const player = getCurrentPlayer(state);
-  if (player.id !== AI_PLAYER_ID) return actions;
+  const player = state.players.find(p => p.id === aiPlayerId);
+  if (!player || getCurrentPlayer(state).id !== aiPlayerId) return actions;
 
-  const aiTemples = state.temples.filter(t => t.ownerId === AI_PLAYER_ID);
-  // Identify the AI's home (starting) temple. createGameState seeds player 1's
-  // start temple at {q:4, r:-2} — see createTemple({ q: 4, r: -2 }, 1) in
-  // game.ts. There's currently no ownedAtStart flag / stable temple id to key
-  // off, so we match the known home coordinate and fall back to the first owned
-  // temple if the map layout ever changes. (If a durable signal is added, prefer
-  // it here.)
-  const HOME_TEMPLE_POS: HexCoord = { q: 4, r: -2 };
+  const aiTemples = state.temples.filter(t => t.ownerId === aiPlayerId);
+  // Identify the AI's home (starting) temple via the durable `startTempleId`
+  // signal set by createGameState (survives randomized temple placement). Fall
+  // back to the first still-owned temple if the home temple was lost/captured.
   const homeTemple =
-    aiTemples.find(t => t.pos.q === HOME_TEMPLE_POS.q && t.pos.r === HOME_TEMPLE_POS.r) ?? aiTemples[0];
+    (player.startTempleId ? aiTemples.find(t => t.id === player.startTempleId) : undefined) ?? aiTemples[0];
   const homeLevel = homeTemple?.level ?? 0;
   const phase2 = homeLevel >= 3;
 
@@ -285,23 +282,23 @@ export function runHardAITurn(state: GameState): AIAction[] {
   }
 
   // 4. Spawn units
-  const aiUnlocked = getUnlockedUnits(state.playerTech[AI_PLAYER_ID]!);
+  const aiUnlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!);
   for (const temple of aiTemples) {
     if (getUnitAt(state, temple.pos)) continue;
-    if (getPopulationCount(state, AI_PLAYER_ID) >= getPopulationCap(state, AI_PLAYER_ID)) break;
+    if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
 
     let spawnType: UnitType | null = null;
 
     if (!phase2) {
       // Phase 1: keep at least 1 warrior alive as a guard
-      const myCount = state.units.filter(u => u.hp > 0 && u.playerId === AI_PLAYER_ID).length;
+      const myCount = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId).length;
       if (myCount === 0 && player.aura >= UNIT_COSTS.warrior) {
         spawnType = 'warrior';
       }
     } else {
       // Phase 2: spearsmen + archers in 2:1 ratio
-      const spears = state.units.filter(u => u.hp > 0 && u.playerId === AI_PLAYER_ID && u.type === 'spearsman').length;
-      const archers = state.units.filter(u => u.hp > 0 && u.playerId === AI_PLAYER_ID && u.type === 'archer').length;
+      const spears = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && u.type === 'spearsman').length;
+      const archers = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && u.type === 'archer').length;
       if (aiUnlocked.has('spearsman') && spears <= archers * 2 && player.aura >= UNIT_COSTS.spearsman) {
         spawnType = 'spearsman';
       } else if (player.aura >= UNIT_COSTS.archer) {
@@ -322,7 +319,7 @@ export function runHardAITurn(state: GameState): AIAction[] {
   }
 
   // 5. Move + attack each unit (same logic as normal AI, plus explicit temple capture)
-  const aiUnits = state.units.filter(u => u.hp > 0 && u.playerId === AI_PLAYER_ID);
+  const aiUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId);
 
   for (const unit of aiUnits) {
     if (unit.hasAttacked) continue;
@@ -357,9 +354,9 @@ export function runHardAITurn(state: GameState): AIAction[] {
 
     // Move priority: uncaptured temple > nearest enemy
     const unownedTemple = state.temples
-      .filter(t => t.ownerId !== AI_PLAYER_ID)
+      .filter(t => t.ownerId !== aiPlayerId)
       .sort((a, b) => hexDistance(unit.pos, a.pos) - hexDistance(unit.pos, b.pos))[0];
-    const nearestEnemy = findNearestEnemy(state, unit.pos, AI_PLAYER_ID);
+    const nearestEnemy = findNearestEnemy(state, unit.pos, aiPlayerId);
 
     // Pick closer of uncaptured temple vs nearest enemy
     let moveTarget: HexCoord | null = null;
