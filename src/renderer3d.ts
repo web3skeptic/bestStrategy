@@ -313,26 +313,65 @@ export class Renderer3D {
     // right=pan, wheel=zoom) so desktop behaviour is unchanged.
     this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
     // Snappier pan (default is 1.0). panSpeed affects mouse + touch; kept high so
-    // one-finger pan feels fast. rotateSpeed is kept moderate so the two-finger
-    // orbit (midpoint-driven in OrbitControls) isn't over-sensitive/twitchy.
+    // one-finger pan feels fast. rotateSpeed only affects desktop mouse-drag orbit
+    // now (two-finger touch rotate is handled manually below via twist).
     this.controls.rotateSpeed = 1.1;
     this.controls.panSpeed = 2.0;
-    // Touch: while two or more fingers are down, freeze the pitch (polar) so the
-    // two-finger gesture is only azimuth-rotate + pinch-zoom — no accidental tilt
-    // and no getting stuck at the maxPolarAngle clamp. The full tilt range is
-    // restored on release, so desktop mouse-drag tilt is unaffected.
+
+    // ── Touch two-finger camera: map-style TWIST-to-rotate + pinch-zoom ──
+    // OrbitControls' built-in DOLLY_ROTATE rotates from the two-finger MIDPOINT
+    // ("hold one, drag the other"), which felt confusing and coupled zoom↔rotate.
+    // Instead, while ≥2 fingers are down we turn OrbitControls' rotate OFF (so its
+    // two-finger path is pure pinch-zoom) and rotate the azimuth ourselves from the
+    // TWIST — the change in angle of the finger-to-finger vector, like Google/Apple
+    // Maps. Pitch is kept locked during the gesture (no accidental tilt). Desktop
+    // fires no touch events, so its left-drag orbit / wheel-zoom are untouched.
+    const TWIST_DEADZONE = 0.006; // rad per move: ignore micro-jitter
+    const TWIST_MULT = 1.0;       // 1:1 twist, like a paper map under your fingers
+    const _twOff = new THREE.Vector3();
+    const _twSph = new THREE.Spherical();
+    let twistPrev: number | null = null;
+    const twoFingerAngle = (t: TouchList) =>
+      Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX);
+
     canvas.addEventListener('touchstart', (e) => {
       if (e.touches.length >= 2) {
+        this.controls.enableRotate = false;              // pinch-zoom only from OrbitControls
         const pol = this.controls.getPolarAngle();
-        this.controls.minPolarAngle = this.controls.maxPolarAngle = pol;
+        this.controls.minPolarAngle = this.controls.maxPolarAngle = pol; // freeze tilt
+        twistPrev = twoFingerAngle(e.touches);
       }
     }, { passive: true });
-    const restoreTilt = () => {
-      this.controls.minPolarAngle = 0;
-      this.controls.maxPolarAngle = Math.PI * 0.49;
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length < 2 || twistPrev === null) return;
+      const cur = twoFingerAngle(e.touches);
+      let d = cur - twistPrev;
+      if (d > Math.PI) d -= 2 * Math.PI;               // unwrap the ±π seam
+      else if (d < -Math.PI) d += 2 * Math.PI;
+      twistPrev = cur;
+      if (Math.abs(d) < TWIST_DEADZONE) return;
+      // Twisting the fingers turns the map with them (verified empirically:
+      // clockwise twist → world rotates clockwise under the fingers). Orbit
+      // azimuth about controls.target; the render-loop controls.update() reads
+      // camera.position back each frame, so damping isn't fought.
+      _twOff.copy(this.camera.position).sub(this.controls.target);
+      _twSph.setFromVector3(_twOff);
+      _twSph.theta += d * TWIST_MULT;
+      _twOff.setFromSpherical(_twSph);
+      this.camera.position.copy(this.controls.target).add(_twOff);
+    }, { passive: true });
+
+    const endTwoFinger = (e: TouchEvent) => {
+      if (e.touches.length < 2) {                        // dropped below two fingers
+        this.controls.enableRotate = true;               // restore desktop/other orbit
+        this.controls.minPolarAngle = 0;
+        this.controls.maxPolarAngle = Math.PI * 0.49;    // restore full tilt range
+        twistPrev = null;                                // no jump when a finger lingers
+      }
     };
-    canvas.addEventListener('touchend', restoreTilt);
-    canvas.addEventListener('touchcancel', restoreTilt);
+    canvas.addEventListener('touchend', endTwoFinger);
+    canvas.addEventListener('touchcancel', endTwoFinger);
 
     // Main lighting — dimmed so the map / terrain / structures read less bright.
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.48));
