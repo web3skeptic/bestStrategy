@@ -3,7 +3,7 @@ import {
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, templeUpgradeCost,
   templeEconomyLevel,
-  SUPPORT_RANGE,
+  SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
   TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
 } from './types';
@@ -378,15 +378,29 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
 
 // ── Support boosts ──
 
+// Support falloff for the damage booster and healer: full strength within
+// radius 1 (dist ≤ 1), half strength at radius 2 (dist === 2), nothing beyond.
+// The half value is rounded to the nearest integer (Math.round), so a base of 5
+// yields 3 at radius 2.
+export function supportFalloffAmount(base: number, dist: number): number {
+  if (dist <= 1) return base;
+  if (dist === 2) return Math.round(base / 2);
+  return 0;
+}
+
 export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageBonus: number; rangeBonus: number } {
   let damageBonus = 0;
   let rangeBonus = 0;
   for (const ally of state.units) {
     if (ally.hp <= 0 || ally.playerId !== unit.playerId || ally.id === unit.id) continue;
     const dist = hexDistance(ally.pos, unit.pos);
-    if (dist > SUPPORT_RANGE) continue;
-    if (ally.type === 'damageBooster') damageBonus += DAMAGE_BOOST_AMOUNT;
-    if (ally.type === 'rangeBooster') rangeBonus += RANGE_BOOST_AMOUNT;
+    if (ally.type === 'damageBooster') {
+      damageBonus += supportFalloffAmount(DAMAGE_BOOST_AMOUNT, dist);
+    } else if (ally.type === 'rangeBooster') {
+      // Range boost is binary within a tight radius — a fractional range bonus
+      // makes no sense, so no falloff: full +RANGE within RANGE_BOOST_RADIUS.
+      if (dist <= RANGE_BOOST_RADIUS) rangeBonus += RANGE_BOOST_AMOUNT;
+    }
   }
   return { damageBonus, rangeBonus };
 }
@@ -612,10 +626,10 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return false;
 
-  // One spawn per temple per turn (rule documented in headless /rules)
-  if (state.spawnedTempleIds.has(templeId)) {
-    throw new Error('Temple has already spawned a unit this turn');
-  }
+  // A temple may spawn MORE THAN ONE unit per turn — there is no per-turn spawn
+  // gate. Successive spawns are naturally throttled by the tile-occupancy check
+  // below: the freshly spawned unit stands on the temple, so the player must
+  // move it off before the temple can spawn the next unit.
 
   const player = getCurrentPlayer(state);
   const cost = UNIT_COSTS[unitType];
@@ -760,10 +774,12 @@ function updateHighlights(state: GameState): void {
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit) return;
 
-  // Support area: always show for support units when selected
+  // Support area: always show for support units when selected. The range booster
+  // only reaches RANGE_BOOST_RADIUS; the damage booster and healer reach SUPPORT_RANGE.
   if (SUPPORT_UNIT_TYPES.has(unit.type)) {
-    for (let dq = -SUPPORT_RANGE; dq <= SUPPORT_RANGE; dq++) {
-      for (let dr = Math.max(-SUPPORT_RANGE, -dq - SUPPORT_RANGE); dr <= Math.min(SUPPORT_RANGE, -dq + SUPPORT_RANGE); dr++) {
+    const r = unit.type === 'rangeBooster' ? RANGE_BOOST_RADIUS : SUPPORT_RANGE;
+    for (let dq = -r; dq <= r; dq++) {
+      for (let dr = Math.max(-r, -dq - r); dr <= Math.min(r, -dq + r); dr++) {
         const hex: HexCoord = { q: unit.pos.q + dq, r: unit.pos.r + dr };
         if (hexDistance({ q: 0, r: 0 }, hex) <= state.mapRadius) {
           state.supportHexes.push(hex);
@@ -1054,15 +1070,15 @@ export function endTurn(state: GameState): void {
     newPlayer.aura += templeEconomyLevel(temple.level) * TEMPLE_AURA_PER_LEVEL;
   }
 
-  // Healer: restore HP to allies within SUPPORT_RANGE at start of their turn
+  // Healer: restore HP to allies at start of their turn, with distance falloff —
+  // full heal within radius 1, half at radius 2, nothing beyond (SUPPORT_RANGE).
   const healers = state.units.filter(u => u.hp > 0 && u.playerId === newPlayer.id && u.type === 'healer');
   for (const healer of healers) {
-    const nearby = state.units.filter(u =>
-      u.hp > 0 && u.playerId === newPlayer.id && u.id !== healer.id &&
-      hexDistance(healer.pos, u.pos) <= SUPPORT_RANGE
-    );
-    for (const ally of nearby) {
-      ally.hp = Math.min(ally.stats.maxHp, ally.hp + HEALER_HEAL_AMOUNT);
+    for (const ally of state.units) {
+      if (ally.hp <= 0 || ally.playerId !== newPlayer.id || ally.id === healer.id) continue;
+      const dist = hexDistance(healer.pos, ally.pos);
+      const heal = supportFalloffAmount(HEALER_HEAL_AMOUNT, dist);
+      if (heal > 0) ally.hp = Math.min(ally.stats.maxHp, ally.hp + heal);
     }
   }
 

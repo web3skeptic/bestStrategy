@@ -1005,29 +1005,43 @@ export class Renderer3D {
     const wrap = buildUnitModel(unit.type, colorNum);
     // Support units get pulsating range "circles" (rings only — tiles inside are
     // NOT highlighted). Green = healer, orange = damage, cyan = range.
-    const auraRadius = SUPPORT_RANGE * Math.sqrt(3) * HEX_R * 0.95;
-    if (unit.type === 'healer') this.addAuraField(wrap, unit.id, 0x7be54a, auraRadius);
-    else if (unit.type === 'damageBooster') this.addAuraField(wrap, unit.id, 0xff6a2a, auraRadius);
-    else if (unit.type === 'rangeBooster') this.addAuraField(wrap, unit.id, 0x4fe3ff, auraRadius);
+    // Radius of the N-tile ring in world units (linear in tile count).
+    const ringR = (n: number) => n * Math.sqrt(3) * HEX_R * 0.95;
+    if (unit.type === 'healer' || unit.type === 'damageBooster') {
+      // Two-tile falloff: a bright inner ring (full strength, r1) plus a fainter
+      // outer ring (half strength, r2).
+      const color = unit.type === 'healer' ? 0x7be54a : 0xff6a2a;
+      this.addAuraField(wrap, unit.id, color, [
+        { r: ringR(1), op: 0.5 },
+        { r: ringR(2), op: 0.22 },
+      ]);
+    } else if (unit.type === 'rangeBooster') {
+      // Tight one-tile reach: radiating pulsating rings sized to r1.
+      this.addAuraField(wrap, unit.id, 0x4fe3ff, [
+        { r: ringR(1), op: 0.5 },
+        { r: ringR(1), op: 0.5 },
+      ]);
+    }
     return wrap;
   }
 
   // Concentric pulsating ring "circles" marking a support unit's range. No
-  // filled disc, so the tiles inside are never highlighted/tinted.
-  private addAuraField(wrap: THREE.Group, unitId: string, color: number, radius: number): void {
+  // filled disc, so the tiles inside are never highlighted/tinted. Each entry in
+  // `rings` becomes a thin ripple that expands from the unit out to its radius;
+  // its base opacity encodes strength (brighter inner = full, fainter outer = half).
+  private addAuraField(wrap: THREE.Group, unitId: string, color: number, rings: { r: number; op: number }[]): void {
     const meshes: THREE.Mesh[] = [];
-    // Two thin "ripple" rings at the range edge. The pulse loop scales each from
-    // the centre outward (0 → 1) and fades it, so circles emanate from the unit.
-    for (let i = 0; i < 2; i++) {
+    for (const ring of rings) {
       const mesh = new THREE.Mesh(
-        new THREE.RingGeometry(radius * 0.95, radius, 64), // thin circle, not a thick tile-tinting band
+        new THREE.RingGeometry(ring.r * 0.95, ring.r, 64), // thin circle, not a thick tile-tinting band
         new THREE.MeshBasicMaterial({
-          color, transparent: true, opacity: 0.4,
+          color, transparent: true, opacity: ring.op,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
         }),
       );
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.y = 0.07;
+      mesh.userData.baseOpacity = ring.op;
       wrap.add(mesh);
       meshes.push(mesh);
     }
@@ -1445,7 +1459,8 @@ export class Renderer3D {
           const ph = ((t * 0.7) + i / n) % 1; // 0→1 loop, offset per ring
           const s = 0.06 + ph * 0.94;          // expand from the unit outward
           meshes[i].scale.setScalar(s);
-          (meshes[i].material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - ph);
+          const base = (meshes[i].userData.baseOpacity as number | undefined) ?? 0.5;
+          (meshes[i].material as THREE.MeshBasicMaterial).opacity = base * (1 - ph);
         }
       }
     }

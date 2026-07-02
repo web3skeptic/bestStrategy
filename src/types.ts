@@ -6,7 +6,12 @@ export interface HexCoord {
 
 export type UnitType = 'warrior' | 'archer' | 'catapult' | 'horserider' | 'heavyknight' | 'spearsman' | 'healer' | 'damageBooster' | 'rangeBooster';
 
+// Maximum support reach. Damage-booster and healer effects reach this far, with
+// distance falloff (full strength within radius 1, half at radius 2 — see
+// supportFalloffAmount in game.ts). The range booster is tighter: it only
+// affects allies within RANGE_BOOST_RADIUS.
 export const SUPPORT_RANGE = 2;
+export const RANGE_BOOST_RADIUS = 1;
 
 export interface UnitStats {
   maxHp: number;

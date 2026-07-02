@@ -665,9 +665,9 @@ function updateUI(): void {
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
       const bonusNote = unit.stats.attackBonusAgainst || unit.stats.defenseBonusAgainst ? ' [spear bonus]' : '';
       let supportNote = '';
-      if (unit.type === 'healer') supportNote = ` | ✚${HEALER_HEAL_AMOUNT}HP/t (r${SUPPORT_RANGE})`;
-      if (unit.type === 'damageBooster') supportNote = ` | +${DAMAGE_BOOST_AMOUNT}ATK (r${SUPPORT_RANGE})`;
-      if (unit.type === 'rangeBooster') supportNote = ` | +${RANGE_BOOST_AMOUNT}RNG (r${SUPPORT_RANGE})`;
+      if (unit.type === 'healer') supportNote = ` | ✚${HEALER_HEAL_AMOUNT}HP/t (r1 full·r2 half)`;
+      if (unit.type === 'damageBooster') supportNote = ` | +${DAMAGE_BOOST_AMOUNT}ATK (r1 full·r2 half)`;
+      if (unit.type === 'rangeBooster') supportNote = ` | +${RANGE_BOOST_AMOUNT}RNG (r1)`;
       unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${bonusNote}${supportNote}`;
 
       const capturable = canCaptureTemple(state, unit);
@@ -695,7 +695,7 @@ function updateUI(): void {
         ? ` | ⛩ Max level`
         : ` | ⛩ Level up: ⚡${upgradeCost}`;
       if (unitOnTemple) {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied) — ⚡${income}/turn${portalNote}${upgradeNote}`;
+        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied — clear tile to spawn) — ⚡${income}/turn${portalNote}${upgradeNote}`;
       } else {
         unitInfoEl.textContent = `Temple Lv.${temple.level} — ⚡${income}/turn — Spawn unit${portalNote}${upgradeNote}`;
       }
@@ -720,16 +720,12 @@ function updateUI(): void {
     if (buildingTeleport) clearBuildTeleport();
   }
 
-  // Spawn bar
+  // Spawn bar — shown whenever an owned temple is selected. When a unit occupies
+  // the temple tile the cards are greyed/disabled (spawn is blocked until the
+  // tile is cleared) rather than hidden, so the player sees why they can't spawn.
   if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    const temple = selectedTemple;
-    const unitOnTemple = temple ? getUnitAt(state, temple.pos) : true;
-    if (!unitOnTemple) {
-      setSpawnBarVisible(true);
-      updateUnitCards();
-    } else {
-      setSpawnBarVisible(false);
-    }
+    setSpawnBarVisible(true);
+    updateUnitCards();
   } else {
     setSpawnBarVisible(false);
   }
@@ -880,6 +876,12 @@ window.addEventListener('resize', () => {
 function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
+  // A unit standing on the selected temple's tile blocks spawning (can't stack
+  // onto an occupied spawn tile) — grey every card while occupied.
+  const selTemple = state.selectionMode === 'temple' && state.selectedTempleId
+    ? state.temples.find(t => t.id === state.selectedTempleId)
+    : undefined;
+  const templeOccupied = selTemple ? !!getUnitAt(state, selTemple.pos) : false;
   for (const type of UNIT_CARD_ORDER) {
     const card = unitCards.get(type)!;
     // Match the old build menu: locked units are hidden entirely.
@@ -888,7 +890,7 @@ function updateUnitCards(): void {
       continue;
     }
     card.style.display = '';
-    const affordable = canAfford(state, type);
+    const affordable = canAfford(state, type) && !templeOccupied;
     card.classList.toggle('disabled', !affordable);
 
     // Card art = a 3D render of the unit model, team-tinted to the current
@@ -1327,14 +1329,30 @@ function handleHexClick(clientX: number, clientY: number): void {
 
   // ── Select unit or temple ──
   const unit = getUnitAt(state, hex);
-  if (unit && unit.playerId === currentPlayer.id) {
-    sendOrCall({ type: 'action_select_unit', unitId: unit.id }, () => selectUnit(state, unit.id));
+  const temple = getTempleAt(state, hex);
+  const myUnitHere = unit && unit.playerId === currentPlayer.id;
+  const myTempleHere = temple && temple.ownerId === currentPlayer.id;
+
+  // Own temple with a friendly unit standing on it: tapping toggles temple ⇄ unit
+  // so the temple's Level-Up stays reachable even while occupied. First tap
+  // surfaces the temple (Level-Up / status); tap again to control the unit.
+  if (myTempleHere && myUnitHere) {
+    const templeSelected = state.selectionMode === 'temple' && state.selectedTempleId === temple!.id;
+    if (templeSelected) {
+      sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
+    } else {
+      sendOrCall({ type: 'action_select_temple', templeId: temple!.id }, () => selectTemple(state, temple!.id));
+    }
     return;
   }
 
-  const temple = getTempleAt(state, hex);
-  if (temple && temple.ownerId === currentPlayer.id && !getUnitAt(state, hex)) {
-    sendOrCall({ type: 'action_select_temple', templeId: temple.id }, () => selectTemple(state, temple.id));
+  if (myUnitHere) {
+    sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
+    return;
+  }
+
+  if (myTempleHere) {
+    sendOrCall({ type: 'action_select_temple', templeId: temple!.id }, () => selectTemple(state, temple!.id));
     return;
   }
 
@@ -1348,6 +1366,12 @@ function handleSpawnBtn(type: UnitType): void {
   if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
   if (!canAfford(state, type)) return;
   const templeId = state.selectedTempleId;
+  // Block spawning onto an occupied temple tile, with feedback.
+  const selTemple = state.temples.find(t => t.id === templeId);
+  if (selTemple && getUnitAt(state, selTemple.pos)) {
+    logCombat('Cannot spawn: a unit is standing on the temple');
+    return;
+  }
   sendOrCall({ type: 'action_spawn', templeId, unitType: type }, () => {
     try {
       if (spawnUnit(state, templeId, type)) {
