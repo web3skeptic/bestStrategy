@@ -14,3 +14,11 @@ game.db-wal
 # local / editor
 .claude/
 *.kra
+
+# RL training: ignore big intermediate checkpoints + datasets, keep final small weights
+ml/weights/ckpt-*.json
+ml/data/
+
+# stray tsx temp dirs from TEMP env collision
+0.0*/
+0.1*/
