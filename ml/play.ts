@@ -156,11 +156,16 @@ export function makeValueBot(net: MLP, opts: { temp?: number; rng?: () => number
 // makes the bot anticipate the opponent instead of playing 0-ply greedy — the
 // classic way a value net + shallow lookahead tops a hand-crafted greedy AI. Uses
 // the SAME engine/dispatcher throughout (no forked rules).
-export function makeSearchBot(net: MLP, opp: TurnFn, opts: { K?: number; temp?: number; rng?: () => number } = {}): TurnFn {
+export function makeSearchBot(net: MLP, opp: TurnFn, opts: { K?: number; temp?: number; rng?: () => number; margin?: number; leaf?: (s: GameState, botId: number) => number } = {}): TurnFn {
   const K = opts.K ?? 6;
   const rng = opts.rng ?? Math.random;
-  const greedy = makeValueBot(net, { temp: 0 });
-  const explore = makeValueBot(net, { temp: opts.temp ?? 0.12, rng });
+  const margin = opts.margin ?? 0;
+  // Search-leaf evaluator (post-opponent-reply position scorer). Defaults to the
+  // value net; M0.2 swaps in the material heuristic / a V+H blend to quantify V's
+  // marginal contribution. The bot's WITHIN-turn candidate generation stays V-based.
+  const leaf = opts.leaf ?? ((s: GameState, botId: number) => net.value(featurize(s, botId)));
+  const greedy = makeValueBot(net, { temp: 0, margin });
+  const explore = makeValueBot(net, { temp: opts.temp ?? 0.12, rng, margin });
   const terminalVal = (s: GameState, botId: number): number | null =>
     s.phase !== 'playing' ? (s.winner ? (s.winner.id === botId ? 1e6 : -1e6) : 0) : null;
   return (s) => {
@@ -175,7 +180,7 @@ export function makeSearchBot(net: MLP, opp: TurnFn, opts: { K?: number; temp?: 
         const r = cloneState(c);
         opp(r); // opponent (hard AI) replies
         const tv = terminalVal(r, botId);
-        v = tv !== null ? tv : net.value(featurize(r, botId));
+        v = tv !== null ? tv : leaf(r, botId);
       }
       if (v > bestV) { bestV = v; best = c; }
     }
