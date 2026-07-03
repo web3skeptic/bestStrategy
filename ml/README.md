@@ -5,9 +5,10 @@ and challenges the hand-crafted **hard AI** (`src/ai.ts`). Pure TypeScript/Node
 driving the *real* game — no forked rules, no Python.
 
 > **Results (2026-07-03): the goal was not met — the net does not beat the hard AI.**
-> Best config (value net + K=4 turn-level search) reached **24%** vs the hard AI;
-> plain 1-ply greedy stays ≤7.5%. See the "Results" section below and
-> `docs/best-strategy-rl/final-eval.txt` for the full breakdown and next levers.
+> Best config (value net + turn-level search) reached **40%** (120 games,
+> CI[31.7, 48.9]) vs the hard AI; plain 1-ply greedy is **6%** (200 games). See the
+> "Results" section below and `docs/best-strategy-rl/final-eval.txt` for the full
+> breakdown and next levers.
 
 ## Method (why this design)
 
@@ -97,18 +98,22 @@ decided by material (temples, then HP) so training/eval never hang.
 **Goal:** NN beats the hard AI ≥55% over 200+ games (Wilson CI-low >50%).
 **Outcome: not met.** No configuration beat the hard AI.
 
-All win-rates are NN-vs-hard, 2p, Wilson 95% CI:
+All win-rates are NN-vs-hard, 2p, Wilson 95% CI. **Authoritative** rows are the
+final large-N evals on the best checkpoint (`value-net-main.json`):
 
 | Config | Win-rate | Games | CI |
 |--------|----------|-------|-----|
-| Value net + 1-ply greedy — warm-start (imitation) | 2.5% | 1/40 | [0.4, 12.9] |
-| … DAgger iter 1 | 0.0% | 0/40 | [0.0, 8.8] |
-| … DAgger iter 2 (best greedy checkpoint) | 5.0% | 2/40 | [1.4, 16.5] |
-| … linear-output variant, warm-start | 7.5% | 6/80 | [3.5, 15.4] |
-| **Value net + K=4 turn-level search (best overall)** | **24.0%** | **12/50** | **[14.3, 37.4]** |
+| Value net + 1-ply greedy (authoritative) | 6.0% | 12/200 | [3.5, 10.2] |
+| **Value net + turn-level search (best overall, authoritative)** | **40.0%** | **48/120** | **[31.7, 48.9]** |
+| — wider K=4 candidate search | 24.0% | 12/50 | [14.3, 37.4] |
+| greedy warm-start (imitation) | 2.5% | 1/40 | [0.4, 12.9] |
+| greedy DAgger iter 1 | 0.0% | 0/40 | [0.0, 8.8] |
+| greedy DAgger iter 2 (best ckpt) | 5.0% | 2/40 | [1.4, 16.5] |
+| greedy linear-output, warm-start | 7.5% | 6/80 | [3.5, 15.4] |
 
-Pooled greedy ≈ 9/230 = **3.9%**; all greedy configs ≤7.5%. Search roughly
-quadruples that (→24%) but is still far below parity.
+Greedy stays ≤7.5% (6% over 200 games). Turn-level search lifts that to **40%** —
+a big jump that confirms `V` is a useful leaf evaluator — but the CI upper bound
+(48.9%) is still below 50%, so it does not reach parity.
 
 **Why:** the bottleneck is *policy extraction*, not value learning — training loss
 fell steadily (0.48→0.42 MSE, i.e. `V` predicts outcomes fine) but a 1-ply greedy
