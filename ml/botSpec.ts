@@ -4,6 +4,7 @@
 import { MLP } from './mlp';
 import { hardTurn, normalTurn, makeValueBot, makeSearchBot, TurnFn } from './play';
 import { makePolicyBot } from './policy';
+import { makePolicySearchBot } from './searchPolicy';
 import { heuristicLeaf } from './heuristicLeaf';
 import { featurize } from './features';
 import { GameState } from '../src/types';
@@ -15,7 +16,8 @@ export type BotSpec =
   | { kind: 'normal' }
   | { kind: 'greedy'; weights: string; margin?: number; temp?: number }
   | { kind: 'search'; weights: string; K?: number; margin?: number; temp?: number; leaf?: LeafKind; opp?: BotSpec }
-  | { kind: 'policy'; weights: string; temp?: number; maxMicros?: number };
+  | { kind: 'policy'; weights: string; temp?: number; maxMicros?: number }
+  | { kind: 'policy-search'; weights: string; valueWeights?: string; K?: number; temp?: number; leaf?: LeafKind; depth?: number; opp?: BotSpec };
 
 const netCache = new Map<string, MLP>();
 function loadNet(path: string): MLP {
@@ -47,6 +49,15 @@ export function buildTurnFn(spec: BotSpec): TurnFn {
       const net = loadNet(spec.weights);
       return makePolicyBot(net, { temp: spec.temp ?? 0, maxMicros: spec.maxMicros });
     }
+    case 'policy-search': {
+      const pnet = loadNet(spec.weights);
+      const vnet = spec.valueWeights ? loadNet(spec.valueWeights) : null;
+      const opp = buildTurnFn(spec.opp ?? { kind: 'hard' });
+      let leaf: ((s: GameState, b: number) => number) | undefined;
+      if (spec.leaf === 'H') leaf = (s, b) => heuristicLeaf(s, b);
+      else if (spec.leaf === 'blend' && vnet) leaf = (s, b) => 0.5 * vnet.value(featurize(s, b)) + 0.5 * heuristicLeaf(s, b);
+      return makePolicySearchBot(pnet, vnet, opp, { K: spec.K, temp: spec.temp, leaf, depth: spec.depth });
+    }
   }
 }
 
@@ -57,5 +68,6 @@ export function describeBot(spec: BotSpec): string {
     case 'greedy': return `greedy(m=${spec.margin ?? 0})`;
     case 'search': return `search(K=${spec.K ?? 6},m=${spec.margin ?? 0},t=${spec.temp ?? 0.12},leaf=${spec.leaf ?? 'V'})`;
     case 'policy': return `policy(t=${spec.temp ?? 0})`;
+    case 'policy-search': return `psearch(K=${spec.K ?? 8},t=${spec.temp ?? 1},leaf=${spec.leaf ?? 'V'},d=${spec.depth ?? 1})`;
   }
 }
