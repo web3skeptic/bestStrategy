@@ -128,6 +128,7 @@ policy head (behavioural cloning of the hard AI + policy-gradient self-play) ins
 of reading `V` greedily, plus richer features / bigger net / far more self-play
 compute (this run was minutes: DAgger stopped at iter 2 of 12); (2) **then**
 principled search on top (expectimax/alpha-beta over turns, or MCTS with the
-improved net as leaf) — tuning width/depth empirically, since naive widening (K=4,
-24%) scored *below* 1-ply (40%): over-searching a weak net amplifies its errors.
-Full write-up: `docs/best-strategy-rl/final-eval.txt`.
+improved net as leaf) — re-tuning width/depth empirically: wider K=4 (24%, 50g)
+gave no gain over 1-ply (40%, 120g) in this run, but that's a weak, confounded
+signal (overlapping-ish CIs), so don't assume "more search = better". Full
+write-up: `docs/best-strategy-rl/final-eval.txt`.
