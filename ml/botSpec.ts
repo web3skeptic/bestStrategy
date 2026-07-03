@@ -3,6 +3,7 @@
 // bot config can cross a process boundary as plain JSON. Nets are cached by path.
 import { MLP } from './mlp';
 import { hardTurn, normalTurn, makeValueBot, makeSearchBot, TurnFn } from './play';
+import { makePolicyBot } from './policy';
 import { heuristicLeaf } from './heuristicLeaf';
 import { featurize } from './features';
 import { GameState } from '../src/types';
@@ -13,7 +14,8 @@ export type BotSpec =
   | { kind: 'hard' }
   | { kind: 'normal' }
   | { kind: 'greedy'; weights: string; margin?: number; temp?: number }
-  | { kind: 'search'; weights: string; K?: number; margin?: number; temp?: number; leaf?: LeafKind; opp?: BotSpec };
+  | { kind: 'search'; weights: string; K?: number; margin?: number; temp?: number; leaf?: LeafKind; opp?: BotSpec }
+  | { kind: 'policy'; weights: string; temp?: number; maxMicros?: number };
 
 const netCache = new Map<string, MLP>();
 function loadNet(path: string): MLP {
@@ -41,6 +43,10 @@ export function buildTurnFn(spec: BotSpec): TurnFn {
       const opp = buildTurnFn(spec.opp ?? { kind: 'hard' });
       return makeSearchBot(net, opp, { K: spec.K, margin: spec.margin, temp: spec.temp, leaf: leafFn(net, spec.leaf) });
     }
+    case 'policy': {
+      const net = loadNet(spec.weights);
+      return makePolicyBot(net, { temp: spec.temp ?? 0, maxMicros: spec.maxMicros });
+    }
   }
 }
 
@@ -50,5 +56,6 @@ export function describeBot(spec: BotSpec): string {
     case 'normal': return 'normal';
     case 'greedy': return `greedy(m=${spec.margin ?? 0})`;
     case 'search': return `search(K=${spec.K ?? 6},m=${spec.margin ?? 0},t=${spec.temp ?? 0.12},leaf=${spec.leaf ?? 'V'})`;
+    case 'policy': return `policy(t=${spec.temp ?? 0})`;
   }
 }

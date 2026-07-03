@@ -128,6 +128,67 @@ export class MLP {
     return loss / B;
   }
 
+  // ── Generic gradient API (used by the policy head's softmax cross-entropy) ──
+  // The value net uses trainBatch (MSE). The policy net needs to backprop an
+  // arbitrary output gradient per (state⊕action) input and pool grads over a
+  // variable-size candidate set, so expose beginBatch / accumulate / step.
+
+  beginBatch(): void { this.zeroGrads(); }
+
+  // Forward `x`, then backprop from scalar output gradient dOut (= dLoss/dLogit),
+  // accumulating parameter grads (no Adam step). Output head is LINEAR, so the
+  // output delta is exactly dOut. Returns the forward logit. Re-forwards its own
+  // input, so it is safe to call per-candidate after a separate scoring pass.
+  accumulate(x: ArrayLike<number>, dOut: number): number {
+    this.forward(x);
+    const last = this.layers.length - 1;
+    const logit = this.layers[last]!.z[0]!;
+    this.layers[last]!.d[0] = dOut;
+    for (let l = last; l >= 0; l--) {
+      const L = this.layers[l]!;
+      const aIn: ArrayLike<number> = l === 0 ? x : this.layers[l - 1]!.z;
+      const d = L.d, gW = L.gW, gb = L.gb, inN = L.inN, outN = L.outN;
+      for (let o = 0; o < outN; o++) {
+        const dv = d[o]!;
+        gb[o]! += dv;
+        const base = o * inN;
+        for (let i = 0; i < inN; i++) gW[base + i]! += dv * (aIn[i] as number);
+      }
+      if (l > 0) {
+        const prev = this.layers[l - 1]!;
+        const pd = prev.d, pz = prev.z, W = L.W;
+        for (let i = 0; i < inN; i++) {
+          let s = 0;
+          for (let o = 0; o < outN; o++) s += d[o]! * W[o * inN + i]!;
+          pd[i] = s * (1 - pz[i]! * pz[i]!);
+        }
+      }
+    }
+    return logit;
+  }
+
+  // Adam update from accumulated grads, averaged over B (e.g. #decisions/batch).
+  step(lr = this.lr, B = 1): void {
+    this.t++;
+    const b1 = 0.9, b2 = 0.999, eps = 1e-8;
+    const bc1 = 1 - Math.pow(b1, this.t), bc2 = 1 - Math.pow(b2, this.t);
+    const scale = 1 / B;
+    for (const L of this.layers) {
+      for (let k = 0; k < L.W.length; k++) {
+        const g = L.gW[k]! * scale;
+        L.mW[k] = b1 * L.mW[k]! + (1 - b1) * g;
+        L.vW[k] = b2 * L.vW[k]! + (1 - b2) * g * g;
+        L.W[k]! -= lr * (L.mW[k]! / bc1) / (Math.sqrt(L.vW[k]! / bc2) + eps);
+      }
+      for (let o = 0; o < L.b.length; o++) {
+        const g = L.gb[o]! * scale;
+        L.mb[o] = b1 * L.mb[o]! + (1 - b1) * g;
+        L.vb[o] = b2 * L.vb[o]! + (1 - b2) * g * g;
+        L.b[o]! -= lr * (L.mb[o]! / bc1) / (Math.sqrt(L.vb[o]! / bc2) + eps);
+      }
+    }
+  }
+
   save(path: string): void {
     writeFileSync(path, JSON.stringify({
       sizes: this.sizes, t: this.t, lr: this.lr,

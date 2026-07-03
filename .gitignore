@@ -26,3 +26,4 @@ ml/data/
 # RL rebuild run artifacts
 ml/runs/
 runs/
+ml/weights/policy-*.json

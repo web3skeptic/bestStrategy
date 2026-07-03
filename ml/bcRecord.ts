@@ -72,7 +72,10 @@ export function streamHardDecisions(
     setAIObserver((st, m) => { if (st.phase === 'playing') onMicro(st, copyMicro(m), pid); });
     runHardAITurn(s);
     setAIObserver(null);
-    if (s.phase === 'playing') endTurn(s);
+    // Synthetic terminal decision: at the AI's final state, the expert action is
+    // end-turn (chosen over every still-legal action). Without this, BC never
+    // teaches the policy WHEN to stop.
+    if (s.phase === 'playing') { onMicro(s, { action: 'end-turn', params: {} }, pid); endTurn(s); }
     half++;
   }
   return s.winner ? s.winner.id : (s.phase === 'playing' ? materialWinner(s) : null);
