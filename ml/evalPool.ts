@@ -60,6 +60,9 @@ function buildSpec(): BotSpec {
   const mode = arg('mode', 'search')!;
   const weights = arg('weights', 'ml/weights/value-net-main.json')!;
   if (mode === 'greedy') return { kind: 'greedy', weights, margin: Number(arg('margin', '0')) };
+  if (mode === 'policy') return { kind: 'policy', weights, temp: Number(arg('temp', '0')) };
+  if (mode === 'policy-search') return { kind: 'policy-search', weights, valueWeights: arg('vweights', 'ml/weights/value-net-main.json'),
+    K: Number(arg('K', '8')), temp: Number(arg('temp', '1.0')), leaf: (arg('leaf', 'V') as 'V' | 'H' | 'blend'), depth: Number(arg('depth', '1')) };
   return { kind: 'search', weights, K: Number(arg('K', '6')), margin: Number(arg('margin', '0')),
     temp: Number(arg('temp', '0.12')), leaf: (arg('leaf', 'V') as 'V' | 'H' | 'blend') };
 }
