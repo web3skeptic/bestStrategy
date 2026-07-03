@@ -440,14 +440,29 @@ export function getPopulationCount(state: GameState, playerId: number): number {
   return state.units.filter(u => u.hp > 0 && u.playerId === playerId).length;
 }
 
-// ── Temple placement (change #5) ──
+// ── Temple placement (change #5 + spread hardening) ──
 
-// Minimum hex distance allowed between ANY two temples. 2 == never adjacent
-// (always at least one tile between two temples). Single tunable knob for temple
-// spacing. NOTE: Max phrased it as "at least 2 tiles between temples", which
-// could instead mean hexDistance 3 (two empty tiles between). Bump this to 3 for
-// that reading — placement will still spread temples out and back off gracefully.
-export const MIN_TEMPLE_SEPARATION = 2;
+// Minimum hex distance allowed between ANY two temples. hexDistance 3 means at
+// least TWO empty tiles separate any two temples (dist 1 = adjacent, dist 2 =
+// exactly one empty tile between). This is the single tunable knob for temple
+// spacing — Max asked for "at least 2 tiles between temples", read as two empty
+// tiles = hexDistance 3. Beyond this hard floor the placer actively MAXIMIZES
+// spread (Mitchell's best-candidate per temple + keep the most spread-out of
+// several full layouts), so temples fan out across the map instead of hugging
+// the floor. Placement always backs off / falls back gracefully — it never hangs
+// or crashes, even if the map is too small to honour the floor.
+export const MIN_TEMPLE_SEPARATION = 3;
+
+// Mitchell's best-candidate: how many random eligible tiles to sample when
+// placing each temple. The candidate that maximizes the minimum distance to the
+// already-placed temples wins, so temples push apart. Higher = tighter/more even
+// spread; lower = more layout variety between games.
+const TEMPLE_SPREAD_CANDIDATES = 18;
+
+// Build this many complete layouts and keep the one with the largest minimum
+// pairwise temple distance — a second maximize-min-distance pass on top of the
+// per-temple best-candidate sampling.
+const TEMPLE_LAYOUT_ATTEMPTS = 16;
 
 const STARTING_UNITS_PER_PLAYER = 2;
 
@@ -475,51 +490,101 @@ interface TempleLayout {
 // and a guaranteed best-effort fallback runs if the constraints can't be met.
 function placeTemples(mapRadius: number, numPlayers: number, numNeutral: number): TempleLayout {
   const all = generateHexMap(mapRadius);
-  const idealStartSep = Math.max(MIN_TEMPLE_SEPARATION + 1, Math.floor(mapRadius * 1.2));
+  // Prefer starts spread even wider than the global floor, backing off toward it
+  // if the map is too tight to honour the wider gap.
+  const idealStartSep = Math.max(MIN_TEMPLE_SEPARATION + 1, Math.floor(mapRadius * 1.15));
 
   const freeNeighbors = (pos: HexCoord, taken: HexCoord[]): HexCoord[] =>
     hexNeighbors(pos).filter(n =>
       hexDistance({ q: 0, r: 0 }, n) <= mapRadius && !taken.some(t => hexEqual(t, n)));
 
-  for (let startSep = idealStartSep; startSep >= MIN_TEMPLE_SEPARATION; startSep--) {
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const starts: HexCoord[] = [];
-      for (const hex of shuffle([...all])) {
-        if (starts.length >= numPlayers) break;
-        if (starts.some(s => hexDistance(s, hex) < startSep)) continue;
-        if (freeNeighbors(hex, starts).length < STARTING_UNITS_PER_PLAYER) continue;
-        starts.push(hex);
-      }
-      if (starts.length < numPlayers) continue;
+  const minDistTo = (hex: HexCoord, refs: HexCoord[]): number =>
+    refs.length ? Math.min(...refs.map(t => hexDistance(t, hex))) : Infinity;
 
-      const placed = [...starts];
-      const neutrals: HexCoord[] = [];
-      for (const hex of shuffle([...all])) {
-        if (neutrals.length >= numNeutral) break;
-        if (placed.some(t => hexDistance(t, hex) < MIN_TEMPLE_SEPARATION)) continue;
-        neutrals.push(hex); placed.push(hex);
+  // Place `count` temples one at a time with Mitchell's best-candidate sampling:
+  // for each new temple sample up to TEMPLE_SPREAD_CANDIDATES random ELIGIBLE
+  // tiles (on-map, unoccupied, honouring `minSep`, and — for starts — keeping
+  // enough free neighbour tiles for the opening units) and keep the one sitting
+  // FARTHEST from every already-placed temple. Returns null if it can't place all
+  // `count` while honouring the floor, so the caller can back off / fall back.
+  const spread = (
+    count: number, existing: HexCoord[], minSep: number, requireUnitRoom: boolean,
+  ): HexCoord[] | null => {
+    const placed: HexCoord[] = [];
+    for (let i = 0; i < count; i++) {
+      const refs = [...existing, ...placed];
+      const eligible = all.filter(hex => {
+        if (refs.some(t => hexEqual(t, hex))) return false;
+        if (minDistTo(hex, refs) < minSep) return false;
+        if (requireUnitRoom && freeNeighbors(hex, refs).length < STARTING_UNITS_PER_PLAYER) return false;
+        return true;
+      });
+      if (eligible.length === 0) return null;
+      const pool = shuffle([...eligible]);
+      const sampleN = Math.min(TEMPLE_SPREAD_CANDIDATES, pool.length);
+      let best = pool[0]!;
+      let bestScore = minDistTo(best, refs);
+      for (let k = 1; k < sampleN; k++) {
+        const cand = pool[k]!;
+        const score = minDistTo(cand, refs);
+        if (score > bestScore) { bestScore = score; best = cand; }
       }
-      if (neutrals.length < numNeutral) continue;
+      placed.push(best);
+    }
+    return placed;
+  };
 
-      const allTemples = [...starts, ...neutrals];
-      const usedUnitTiles: HexCoord[] = [];
-      const unitPositions: HexCoord[][] = [];
-      let ok = true;
-      for (const s of starts) {
-        const free = freeNeighbors(s, [...allTemples, ...usedUnitTiles]);
-        if (free.length < STARTING_UNITS_PER_PLAYER) { ok = false; break; }
-        const chosen = free.slice(0, STARTING_UNITS_PER_PLAYER);
-        unitPositions.push(chosen);
-        usedUnitTiles.push(...chosen);
-      }
-      if (!ok) continue;
+  // Give each start temple STARTING_UNITS_PER_PLAYER free neighbour tiles for its
+  // opening units; null if any start can't fit its units.
+  const assignUnits = (starts: HexCoord[], neutrals: HexCoord[]): HexCoord[][] | null => {
+    const allTemples = [...starts, ...neutrals];
+    const used: HexCoord[] = [];
+    const out: HexCoord[][] = [];
+    for (const s of starts) {
+      const free = freeNeighbors(s, [...allTemples, ...used]);
+      if (free.length < STARTING_UNITS_PER_PLAYER) return null;
+      const chosen = free.slice(0, STARTING_UNITS_PER_PLAYER);
+      out.push(chosen);
+      used.push(...chosen);
+    }
+    return out;
+  };
 
-      return { starts, neutrals, unitPositions };
+  const pairwiseMin = (pts: HexCoord[]): number => {
+    let m = Infinity;
+    for (let i = 0; i < pts.length; i++)
+      for (let j = i + 1; j < pts.length; j++)
+        m = Math.min(m, hexDistance(pts[i]!, pts[j]!));
+    return m;
+  };
+
+  // Build several complete layouts and keep the most spread-out one (largest
+  // minimum pairwise temple distance).
+  let bestLayout: TempleLayout | null = null;
+  let bestSpread = -Infinity;
+  for (let attempt = 0; attempt < TEMPLE_LAYOUT_ATTEMPTS; attempt++) {
+    // Starts first, as wide as the map allows (back off toward the floor).
+    let starts: HexCoord[] | null = null;
+    for (let sep = idealStartSep; sep >= MIN_TEMPLE_SEPARATION; sep--) {
+      starts = spread(numPlayers, [], sep, true);
+      if (starts) break;
+    }
+    if (!starts) continue;
+    const neutrals = spread(numNeutral, starts, MIN_TEMPLE_SEPARATION, false);
+    if (!neutrals) continue;
+    const unitPositions = assignUnits(starts, neutrals);
+    if (!unitPositions) continue;
+    const s = pairwiseMin([...starts, ...neutrals]);
+    if (s > bestSpread) {
+      bestSpread = s;
+      bestLayout = { starts, neutrals, unitPositions };
     }
   }
+  if (bestLayout) return bestLayout;
 
   // Guaranteed fallback: place greedily with the loosest separation we can,
-  // returning fewer neutral temples / units rather than ever failing.
+  // returning fewer neutral temples / units rather than ever failing or hanging.
+  console.warn(`[placeTemples] spread placement failed (radius=${mapRadius} players=${numPlayers} neutral=${numNeutral}); using relaxed greedy fallback`);
   const greedy = (count: number, minSep: number, existing: HexCoord[]): HexCoord[] => {
     const out: HexCoord[] = [];
     for (let sep = minSep; sep >= 0 && out.length < count; sep--) {
