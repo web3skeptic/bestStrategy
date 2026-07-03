@@ -7,10 +7,11 @@ import {
   getPlayerVisible, isForestUnitRevealed,
   PlayerConfig,
 } from '../src/game';
+import { runAITurn, runHardAITurn } from '../src/ai';
 import { resyncCounters } from './stateUtils';
 import {
   GameState, UnitType, TechId,
-  HexCoord,
+  HexCoord, PLAYER_COLORS, MAX_PLAYERS,
 } from '../src/types';
 import { serialize } from '../src/serializer';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
@@ -40,8 +41,13 @@ export type HeadlessAction =
 
 export type HeadlessActionType = HeadlessAction['action'];
 
+// Per-seat controller for headless auto-play. 'human' seats are driven by
+// external POST /action calls; 'normal' / 'hard' seats can be auto-played by the
+// built-in AI (POST /ai-turn, POST /auto-play).
+export type HeadlessController = 'human' | 'normal' | 'hard';
+
 interface HeadlessActionRequestBody {
-  playerId: 0 | 1;
+  playerId: number;
   action: HeadlessActionType;
   params?: Record<string, unknown>;
 }
@@ -62,6 +68,9 @@ export interface HeadlessSession {
   log: ActionLogEntry[];
   createdAt: number;
   tick: number;
+  // Per-seat controller (index === player slot). Used by the AI auto-play
+  // endpoints; external clients can still drive any seat via POST /action.
+  controllers: HeadlessController[];
 }
 
 // ── Session storage ──
@@ -99,13 +108,14 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
   // Own units are always visible. Enemy units are visible only if:
   //   1. They currently sit in a hex covered by viewer's vision (getPlayerVisible), AND
   //   2. If standing in a forest, an adjacent friendly unit or owned temple reveals them.
+  const validViewer = viewerId !== undefined && viewerId >= 0 && viewerId < state.players.length;
   let visibleUnits = s.units.filter(u => u.hp > 0);
-  if (viewerId === 0 || viewerId === 1) {
-    const visible = getPlayerVisible(state, viewerId);
+  if (validViewer) {
+    const visible = getPlayerVisible(state, viewerId!);
     visibleUnits = visibleUnits.filter(u => {
       if (u.playerId === viewerId) return true;
       if (!visible.has(hexKey(u.pos))) return false;
-      if (!isForestUnitRevealed(state, u.pos, viewerId)) return false;
+      if (!isForestUnitRevealed(state, u.pos, viewerId!)) return false;
       return true;
     });
   }
@@ -169,9 +179,9 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
     winner: s.winner ? { id: s.winner.id, name: s.winner.name } : null,
   };
 
-  if (viewerId === 0 || viewerId === 1) {
+  if (validViewer) {
     result.viewerId = viewerId;
-    result.explored = Array.from(state.explored[viewerId] ?? new Set<string>());
+    result.explored = Array.from(state.explored[viewerId!] ?? new Set<string>());
   }
 
   return result;
@@ -197,15 +207,40 @@ function addLog(session: HeadlessSession, playerId: number, action: string, para
 export const headlessRouter = Router();
 
 // POST /api/headless/new-game
+// Body (all optional, backward compatible):
+//   { player1Name, player2Name }                        — classic 2-player game
+//   { numPlayers: 2..6 }                                 — N players, generated names
+//   { players: [{ name?, controller? }, ...] }           — full per-seat control
+// `controller` ('human' | 'normal' | 'hard', default 'hard') is only used by the
+// AI auto-play endpoints; any seat can still be driven directly via POST /action.
+function normalizeController(c: unknown): HeadlessController {
+  return c === 'human' || c === 'normal' || c === 'hard' ? c : 'hard';
+}
+
 headlessRouter.post('/new-game', (req: Request, res: Response) => {
   const body = req.body ?? {};
-  const player1Name = body.player1Name ?? 'Player 1';
-  const player2Name = body.player2Name ?? 'Player 2';
 
-  const configs: PlayerConfig[] = [
-    { name: player1Name, color: '#ff4444' },
-    { name: player2Name, color: '#4488ff' },
-  ];
+  let specs: { name: string; controller: HeadlessController }[];
+  if (Array.isArray(body.players) && body.players.length >= 2) {
+    specs = body.players.slice(0, MAX_PLAYERS).map((p: Record<string, unknown>, i: number) => ({
+      name: typeof p?.name === 'string' ? p.name : `Player ${i + 1}`,
+      controller: normalizeController(p?.controller),
+    }));
+  } else {
+    const requested = Number(body.numPlayers);
+    const n = Number.isFinite(requested) ? Math.min(MAX_PLAYERS, Math.max(2, Math.floor(requested))) : 2;
+    specs = Array.from({ length: n }, (_, i) => ({
+      name: i === 0 ? (body.player1Name ?? 'Player 1')
+        : i === 1 ? (body.player2Name ?? 'Player 2')
+          : (body[`player${i + 1}Name`] ?? `Player ${i + 1}`),
+      controller: 'hard' as HeadlessController,
+    }));
+  }
+
+  const configs: PlayerConfig[] = specs.map((s, i) => ({
+    name: s.name,
+    color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
+  }));
 
   const gameState = createGameState(configs);
   resyncCounters(gameState);
@@ -216,13 +251,14 @@ headlessRouter.post('/new-game', (req: Request, res: Response) => {
     log: [],
     createdAt: Date.now(),
     tick: 0,
+    controllers: specs.map(s => s.controller),
   };
   headlessSessions.set(gameId, session);
 
   const apiState = serializeStateForApi(session);
   apiState.gameId = gameId;
 
-  addLog(session, -1, 'new-game', { player1Name, player2Name }, 'Game created');
+  addLog(session, -1, 'new-game', { players: specs }, `Game created (${specs.length} players)`);
 
   // Persistent replay log
   initReplay(gameId, session);
@@ -245,8 +281,9 @@ headlessRouter.get('/:gameId/state', (req: Request, res: Response) => {
   let viewerId: number | undefined = undefined;
   if (viewerRaw !== undefined) {
     const n = Number(viewerRaw);
-    if (n !== 0 && n !== 1) {
-      res.status(400).json({ ok: false, error: 'Invalid viewerId (must be 0 or 1)' });
+    const numPlayers = session.gameState.players.length;
+    if (!Number.isInteger(n) || n < 0 || n >= numPlayers) {
+      res.status(400).json({ ok: false, error: `Invalid viewerId (must be 0..${numPlayers - 1})` });
       return;
     }
     viewerId = n;
@@ -372,8 +409,9 @@ headlessRouter.post('/:gameId/action', (req: Request, res: Response) => {
 
   // Validate playerId (the only check we keep outside the dispatcher — turn /
   // phase / per-action validation all live in executeAction now).
-  if (playerId !== 0 && playerId !== 1) {
-    res.status(400).json({ ok: false, error: 'Invalid playerId (must be 0 or 1)', state: null, log: [], lastAction: null });
+  const numPlayers = state.players.length;
+  if (!Number.isInteger(playerId) || playerId < 0 || playerId >= numPlayers) {
+    res.status(400).json({ ok: false, error: `Invalid playerId (must be 0..${numPlayers - 1})`, state: null, log: [], lastAction: null });
     return;
   }
 
@@ -434,5 +472,84 @@ headlessRouter.post('/:gameId/action', (req: Request, res: Response) => {
     state: apiState,
     log: result.log,
     lastAction: session.log.at(-1) ?? null,
+  });
+});
+
+// ── Server-side AI auto-play ──────────────────────────────────────────────────
+// Wires the SAME src/ai.ts the interactive game uses into the headless transport
+// so headless games actually play well. The AI mutates state through the exact
+// src/game.ts engine mutators the action dispatcher uses (selectUnit → moveUnit/
+// attackUnit, spawnUnit, captureTemple, upgradeTemple, researchTech,
+// buildTeleportPair) — no forked logic — and the turn is advanced via the shared
+// executeAction('end-turn') dispatcher, so rules are identical to real play.
+
+function playAiSeat(session: HeadlessSession): { seat: number; difficulty: HeadlessController; actions: number } {
+  const state = session.gameState;
+  const seat = state.currentPlayerIndex;
+  const difficulty = session.controllers[seat] ?? 'hard';
+  // 'hard' (and any auto-played 'human') seats use the strong AI; 'normal' uses the light one.
+  const actions = difficulty === 'normal' ? runAITurn(state, seat) : runHardAITurn(state, seat);
+  executeAction(state, seat, 'end-turn', {});
+  session.tick++;
+  return { seat, difficulty, actions: actions.length };
+}
+
+// POST /api/headless/:gameId/ai-turn — play the current seat's full turn with the
+// built-in AI, then end the turn. Lets external clients drive some seats manually
+// while the AI handles the rest.
+headlessRouter.post('/:gameId/ai-turn', (req: Request, res: Response) => {
+  const gameId = req.params.gameId as string;
+  const session = getSession(gameId);
+  if (!session) { res.status(404).json({ ok: false, error: 'Game not found' }); return; }
+  if (session.gameState.phase === 'gameOver') {
+    res.status(400).json({ ok: false, error: 'Game is already over' });
+    return;
+  }
+  const played = playAiSeat(session);
+  addLog(session, played.seat, 'ai-turn', { difficulty: played.difficulty },
+    `AI (${played.difficulty}) took ${played.actions} actions and ended turn`);
+  if ((session.gameState.phase as string) === 'gameOver') finalizeReplay(gameId);
+  if (_pushUpdate) _pushUpdate(gameId);
+  const apiState = serializeStateForApi(session);
+  apiState.gameId = gameId;
+  res.json({ ok: true, played, state: apiState });
+});
+
+// POST /api/headless/:gameId/auto-play — play all seats with the built-in AI until
+// the game ends (or maxHalfTurns, default 1000, is hit). Returns the final state,
+// winner and a per-seat summary.
+headlessRouter.post('/:gameId/auto-play', (req: Request, res: Response) => {
+  const gameId = req.params.gameId as string;
+  const session = getSession(gameId);
+  if (!session) { res.status(404).json({ ok: false, error: 'Game not found' }); return; }
+  const state = session.gameState;
+  const cap = Math.min(5000, Math.max(1, Number((req.body ?? {}).maxHalfTurns) || 1000));
+  let half = 0;
+  while (state.phase === 'playing' && half < cap) {
+    playAiSeat(session);
+    half++;
+  }
+  if ((state.phase as string) === 'gameOver') finalizeReplay(gameId);
+  if (_pushUpdate) _pushUpdate(gameId);
+  const apiState = serializeStateForApi(session);
+  apiState.gameId = gameId;
+  const summary = state.players.map(p => ({
+    id: p.id,
+    name: p.name,
+    aura: p.aura,
+    units: state.units.filter(u => u.hp > 0 && u.playerId === p.id).length,
+    temples: state.temples.filter(t => t.ownerId === p.id).length,
+    tech: state.playerTech[p.id]!.researched.size,
+    alive: state.units.some(u => u.hp > 0 && u.playerId === p.id) || state.temples.some(t => t.ownerId === p.id),
+  }));
+  addLog(session, -1, 'auto-play', { maxHalfTurns: cap }, `Auto-played ${half} half-turns; phase=${state.phase}`);
+  res.json({
+    ok: true,
+    finished: (state.phase as string) === 'gameOver',
+    halfTurns: half,
+    rounds: state.turnNumber,
+    winner: state.winner ? { id: state.winner.id, name: state.winner.name } : null,
+    summary,
+    state: apiState,
   });
 });

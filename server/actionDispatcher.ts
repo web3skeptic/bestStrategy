@@ -30,8 +30,9 @@ import {
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
-  TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL,
+  TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, TEMPLE_ECONOMY_CAP_LEVEL,
   templeUpgradeCost,
+  mapRadiusForPlayers, templeCountForPlayers,
   HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE,
   TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
@@ -208,8 +209,9 @@ export function buildRulesPayload(): Record<string, unknown> {
         '3_to_4': templeUpgradeCost(3),
         '4_to_5': templeUpgradeCost(4),
       },
-      incomeFormula: 'level * TEMPLE_AURA_PER_LEVEL per owned temple per turn',
-      popCapFormula: 'level * TEMPLE_POP_CAP_PER_LEVEL per owned temple',
+      economyCapLevel: TEMPLE_ECONOMY_CAP_LEVEL,
+      incomeFormula: 'min(level, economyCapLevel) * TEMPLE_AURA_PER_LEVEL per owned temple per turn (economy plateaus at economyCapLevel; higher levels are cosmetic)',
+      popCapFormula: 'min(level, economyCapLevel) * TEMPLE_POP_CAP_PER_LEVEL per owned temple',
     },
     terrain: {
       hill: {
@@ -262,19 +264,23 @@ export function buildRulesPayload(): Record<string, unknown> {
       constraints: [
         'A unit can move then attack, or just attack, or just move — but not attack then move.',
         'Attacking also sets hasMoved=true.',
-        'Each temple can spawn at most one unit per turn.',
+        'A temple may recruit MULTIPLE units per turn — there is no per-temple spawn gate. Successive spawns are throttled only by aura, the population cap, and tile occupancy (a freshly spawned unit stands on the temple and must move off before that temple can spawn again).',
         'Capture is a separate action — it does NOT consume hasMoved/hasAttacked, but each unit can capture at most once per turn (hasCaptured).',
       ],
     },
     winConditions: [
       'Own ALL temples → win',
-      'Opponent has no units AND no temples → win',
+      'All other players have no units AND no temples → win (N-player: last player standing)',
     ],
     startingConditions: {
       startingAura: 2,
       startingUnits: '2 warriors each',
-      templeLayout: '2 owned temples (one per player), 2 neutral temples',
-      mapRadius: 6,
+      templeLayout: 'N owned temples (one per player) + N neutral temples = 2N total, placed randomly each game with a minimum separation and maximized spread',
+      mapScalesWithPlayers: true,
+      mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2)',
+      mapRadiusExamples: { '2p': mapRadiusForPlayers(2), '3p': mapRadiusForPlayers(3), '4p': mapRadiusForPlayers(4) },
+      templeCountFormula: 'templeCountForPlayers(N) = 2N',
+      note: 'The classic 2-player game is radius 6 with 4 temples (2 owned + 2 neutral).',
     },
   };
 }
@@ -440,7 +446,14 @@ export function executeAction(
       case 'resign': {
         const ok = resignGame(state, playerSlot);
         if (!ok) return fail(state, playerSlot, action, 'Cannot resign (game already over)');
-        log.push(`Player ${playerSlot} resigned. Player ${state.winner?.id} wins.`);
+        // In an N-player game a single resignation may not end the game (only one
+        // of several opponents dropped out), so don't claim a winner unless one
+        // was actually decided.
+        log.push(
+          state.winner
+            ? `Player ${playerSlot} resigned. Player ${state.winner.id} (${state.winner.name}) wins.`
+            : `Player ${playerSlot} resigned (game continues).`,
+        );
         return { ok: true, action, log, broadcastToBoth: true };
       }
 
