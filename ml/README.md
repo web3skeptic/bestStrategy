@@ -123,9 +123,11 @@ flanks, focus-fire). See `docs/best-strategy-rl/sample-nn-vs-hard.log`: the NN i
 eliminated by round 24 (0 units/temples) while the hard AI ends with 19 units and
 3 L5–6 temples.
 
-**Next levers (rough payoff order):** (1) deeper/wider search — full turn
-enumeration + multi-ply opponent replies (expectimax/alpha-beta over turns) or MCTS
-with `V` as leaf eval; (2) a real **policy head** (behavioural cloning of the hard
-AI + policy-gradient self-play) instead of reading `V` greedily; (3) richer
-features / bigger net / far more self-play compute (this run was minutes: DAgger
-stopped at iter 2 of 12). Full write-up: `docs/best-strategy-rl/final-eval.txt`.
+**Next levers (rough payoff order):** (1) a **stronger evaluator first** — a real
+policy head (behavioural cloning of the hard AI + policy-gradient self-play) instead
+of reading `V` greedily, plus richer features / bigger net / far more self-play
+compute (this run was minutes: DAgger stopped at iter 2 of 12); (2) **then**
+principled search on top (expectimax/alpha-beta over turns, or MCTS with the
+improved net as leaf) — tuning width/depth empirically, since naive widening (K=4,
+24%) scored *below* 1-ply (40%): over-searching a weak net amplifies its errors.
+Full write-up: `docs/best-strategy-rl/final-eval.txt`.
