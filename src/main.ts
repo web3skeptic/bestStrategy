@@ -701,24 +701,58 @@ function isPlayerAlive(p: Player): boolean {
     || state.temples.some(t => t.ownerId === p.id);
 }
 
-// Per-player status chips: colour dot + aura + population, current player
-// highlighted, eliminated players dimmed/struck. Works for local, hotseat,
-// online and spectator — the whole roster is always shown.
+// Dev/testing switch: reveal EVERY player's economy in the HUD (aura · pop/cap).
+// OFF by default → fog-of-war: you see only your OWN books; other players keep
+// just their name, colour dot and the whose-turn highlight. Turn it on from the
+// browser console with EITHER of:
+//   localStorage.setItem('bsDevStats', '1')   // persists across reloads
+//   window.__bsDevStats = true                // live, current tab only
+// Re-read every render so it toggles without a reload. Turn it off with
+// localStorage.removeItem('bsDevStats') / window.__bsDevStats = false.
+function devStatsEnabled(): boolean {
+  try {
+    if ((window as any).__bsDevStats === true) return true;
+    return localStorage.getItem('bsDevStats') === '1';
+  } catch {
+    return (window as any).__bsDevStats === true;
+  }
+}
+
+// The one player whose economy this client is allowed to see by default.
+// Multiplayer → the seat we own (spectators own none). Local play → the seat
+// currently taking its turn, but only when it's a human (never an AI's books;
+// AI/remote turns are hidden behind the opaque opponent-turn curtain anyway).
+function localViewerId(): number | null {
+  if (spectatorMode) return null;
+  if (multiplayerMode) return myPlayerSlot;
+  if (isAISlot(state.currentPlayerIndex)) return null;
+  return state.currentPlayerIndex;
+}
+
+// Per-player status chips: colour dot + name, current player highlighted,
+// eliminated players dimmed/struck. Economy numbers (aura · pop/cap) are shown
+// only for the LOCAL player by default — opponents' economy is hidden (fog of
+// war) unless dev-stats mode is on (see devStatsEnabled) or you're spectating.
 function updatePlayerList(): void {
   if (!gameStarted) { playerListEl.innerHTML = ''; return; }
   playerListEl.innerHTML = '';
+  const revealAll = devStatsEnabled() || spectatorMode;
+  const viewer = localViewerId();
   for (const p of state.players) {
     const chip = document.createElement('div');
     chip.className = 'player-chip';
     if (p.id === state.currentPlayerIndex && state.phase !== 'gameOver') chip.classList.add('current');
     if (!isPlayerAlive(p)) chip.classList.add('dead');
     const you = (multiplayerMode && !spectatorMode && p.id === myPlayerSlot) ? ' (you)' : '';
-    const pop = getPopulationCount(state, p.id);
-    const cap = getPopulationCap(state, p.id);
+    // Fog of war: economy shown only for your own chip (or everyone in dev/spectator).
+    const showStats = revealAll || (viewer !== null && p.id === viewer);
+    const statHtml = showStats
+      ? `<span class="chip-stat">⚡${p.aura} · ${getPopulationCount(state, p.id)}/${getPopulationCap(state, p.id)}</span>`
+      : '';
     chip.innerHTML =
       `<span class="chip-dot" style="background:${p.color}"></span>` +
       `<span>${p.name}${you}</span>` +
-      `<span class="chip-stat">⚡${p.aura} · ${pop}/${cap}</span>`;
+      statHtml;
     playerListEl.appendChild(chip);
   }
 }
