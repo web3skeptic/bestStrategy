@@ -25,6 +25,13 @@ const CAP = 64; // max candidates scored per decision during training
 
 interface Decision { inputs: Float64Array[]; expertIdx: number; action: string; }
 
+// Optional class-rebalancing for the CE loss (default OFF → reproducibility).
+// - 'inverse-freq': weight each decision by 1/freq(type), normalised so the mean
+//   weight over the seen type distribution is 1 (keeps the effective LR scale).
+// - 'focal': multiply CE by (1 - p_true)^gamma — down-weights easy decisions the
+//   policy already gets right, concentrating gradient on rare/hard ones (capture).
+interface WeightOpts { mode: 'none' | 'inverse-freq' | 'focal'; focalGamma: number; typeCounts: Map<string, number>; }
+
 function makeDecision(state: GameState, micro: Micro, pid: number): Decision | null {
   const cands = legalMicros(state);
   const eIdx = matchMicro(cands, micro);
@@ -45,7 +52,7 @@ function makeDecision(state: GameState, micro: Micro, pid: number): Decision | n
   return { inputs, expertIdx: idx, action: use[idx]!.action };
 }
 
-function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string, [number, number]>): { loss: number; acc: number } {
+function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string, [number, number]>, wo: WeightOpts): { loss: number; acc: number } {
   net.beginBatch();
   let loss = 0, correct = 0;
   const B = batch.length;
@@ -57,11 +64,21 @@ function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string,
     let sum = 0; const pr = new Float64Array(C);
     for (let k = 0; k < C; k++) { pr[k] = Math.exp(logits[k]! - mx); sum += pr[k]!; }
     for (let k = 0; k < C; k++) pr[k]! /= sum;
-    loss += -Math.log(Math.max(1e-9, pr[d.expertIdx]!));
+    // Per-decision loss/gradient weight (w === 1 for mode 'none' → unchanged).
+    let w = 1;
+    if (wo.mode === 'inverse-freq') {
+      const tc = wo.typeCounts;
+      tc.set(d.action, (tc.get(d.action) ?? 0) + 1);
+      let total = 0; for (const v of tc.values()) total += v;
+      w = total / (tc.size * tc.get(d.action)!);           // mean-1 over the type dist.
+    } else if (wo.mode === 'focal') {
+      w = Math.pow(1 - pr[d.expertIdx]!, wo.focalGamma);
+    }
+    loss += w * -Math.log(Math.max(1e-9, pr[d.expertIdx]!));
     let am = 0; for (let k = 1; k < C; k++) if (logits[k]! > logits[am]!) am = k;
     const hit = am === d.expertIdx ? 1 : 0; correct += hit;
     const pt = perType.get(d.action) ?? [0, 0]; pt[0] += hit; pt[1] += 1; perType.set(d.action, pt);
-    for (let k = 0; k < C; k++) net.accumulate(d.inputs[k]!, pr[k]! - (k === d.expertIdx ? 1 : 0));
+    for (let k = 0; k < C; k++) net.accumulate(d.inputs[k]!, w * (pr[k]! - (k === d.expertIdx ? 1 : 0)));
   }
   net.step(lr, B);
   return { loss: loss / B, acc: correct / B };
@@ -79,6 +96,24 @@ function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string,
   const resume = process.argv.includes('--resume');
   const weightsPath = `ml/weights/policy-${tag}.json`;
 
+  // ── Class-imbalance remedies (all DEFAULT OFF → current runs reproduce) ──
+  // --classWeight <none|inverse-freq|focal>   --focalGamma <g>   (loss reweighting)
+  // --oversample <type,type:factor>           (duplicate rare-type decisions in the
+  //                                            stream, e.g. capture,upgrade-temple:4)
+  const wo: WeightOpts = {
+    mode: (arg('classWeight', 'none') as WeightOpts['mode']),
+    focalGamma: Number(arg('focalGamma', '2.0')),
+    typeCounts: new Map<string, number>(),
+  };
+  const oversampleTypes = new Set<string>();
+  let oversampleFactor = 1;
+  const osArg = arg('oversample', '');
+  if (osArg) {
+    const [typesCsv, facStr] = osArg.split(':');
+    oversampleFactor = Math.max(1, Math.floor(Number(facStr ?? '1')));
+    for (const t of (typesCsv ?? '').split(',')) if (t) oversampleTypes.add(t);
+  }
+
   const h: RunHandle = initRun(tag, { kind: 'bc', steps, batch, lr, hidden, seedBase, weightsPath });
   const net = resume && existsSync(weightsPath) ? MLP.load(weightsPath) : newPolicyNet(hidden, lr);
   const prog = resume ? readProgress(h) : null;
@@ -93,7 +128,10 @@ function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string,
 
   const onMicro = (state: GameState, micro: Micro, pid: number) => {
     const d = makeDecision(state, micro, pid);
-    if (d) buffer.push(d); else unmatched++;
+    if (!d) { unmatched++; return; }
+    // Oversample: push rare-type decisions `factor`× so they recur across batches.
+    const reps = oversampleTypes.has(d.action) ? oversampleFactor : 1;
+    for (let r = 0; r < reps; r++) buffer.push(d);
   };
 
   while (step < steps) {
@@ -101,7 +139,7 @@ function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string,
     decisionsSeen = decisionsSeen; // (buffer holds them)
     while (buffer.length >= batch && step < steps) {
       const b = buffer.splice(0, batch);
-      const m = trainStep(net, b, lr, perType);
+      const m = trainStep(net, b, lr, perType, wo);
       step++; decisionsSeen += batch;
       winLoss += m.loss; winAcc += m.acc; winN++;
       if (step % reportEvery === 0) {
