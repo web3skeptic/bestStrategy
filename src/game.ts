@@ -155,6 +155,13 @@ export function resetCounters(unitMax: number, templeMax: number, tpMax: number)
   teleportIdCounter = tpMax;
 }
 
+// Additive: snapshot the global ID counters. Used only by the ML fidelity test
+// (ml/bcRecord.ts) to replay a turn producing the SAME unit/temple/teleport ids
+// as the original. No behavior change; nothing in the game paths reads this.
+export function getCounters(): [number, number, number] {
+  return [unitIdCounter, templeIdCounter, teleportIdCounter];
+}
+
 function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech): Unit {
   const stats = cloneStats(UNIT_STATS[type]);
   if (tech) applyTechToStats(stats, type, tech);

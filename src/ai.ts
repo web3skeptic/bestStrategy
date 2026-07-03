@@ -48,6 +48,21 @@ export interface AIAction {
 const SUPPORT_TYPES = new Set<UnitType>(['healer', 'damageBooster', 'rangeBooster']);
 const isSupport = (t: UnitType): boolean => SUPPORT_TYPES.has(t);
 
+// ── AI observer hook (additive; ZERO behavior when unset) ────────────────────
+// Used ONLY by the ML behavioural-cloning recorder (ml/bcRecord.ts). When an
+// observer is installed, `observe` is fired with the state *before* each game
+// mutation the AI performs and the dispatcher-equivalent micro ({action, params}
+// exactly as ml/gameEnv.legalMicros / actionDispatcher.executeAction accept), so
+// replaying the emitted micro through executeAction reproduces the AI's move.
+// With no observer set (the default, and always in the game/verify paths), these
+// calls are a single null check — the engine + verify scripts are untouched.
+export interface AIMicro { action: string; params: Record<string, unknown>; }
+let aiObserver: ((state: GameState, micro: AIMicro) => void) | null = null;
+export function setAIObserver(fn: ((state: GameState, micro: AIMicro) => void) | null): void { aiObserver = fn; }
+function observe(state: GameState, action: string, params: Record<string, unknown>): void {
+  if (aiObserver) aiObserver(state, { action, params });
+}
+
 // Rough "kill value" of a target — prioritise removing expensive / support units.
 function unitValue(type: UnitType): number {
   switch (type) {
@@ -197,6 +212,7 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
   // Free capture of the temple we stand on (does not consume move/attack).
   const cap = canCaptureTemple(state, unit);
   if (cap) {
+    observe(state, 'capture', { unitId: unit.id });
     captureTemple(state, unit, cap);
     actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI captures temple at (${unit.pos.q},${unit.pos.r})` });
   }
@@ -207,6 +223,7 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
   const here = currentAttackTargets(state);
   const bestHere = bestBy(here, t => scoreTarget(state, unit, t));
   if (bestHere && estimateDamage(state, unit, bestHere) >= bestHere.hp) {
+    observe(state, 'attack', { unitId: unit.id, targetId: bestHere.id });
     attackUnit(state, bestHere.pos);
     actions.push({ type: 'attack', pos: { ...bestHere.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} kills at (${bestHere.pos.q},${bestHere.pos.r})` });
     return;
@@ -234,12 +251,14 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
 
     if (scored && !hexEqual(effectiveDest(state, scored), unit.pos)) {
       const before = { ...unit.pos };
+      observe(state, 'move', { unitId: unit.id, to: scored });
       const moved = moveUnit(state, scored).moved;
       if (moved) {
         // Attack from the new position if worthwhile (moveUnit refreshed attackHexes).
         const after = currentAttackTargets(state);
         const bestAfter = bestBy(after, t => scoreTarget(state, unit, t));
         if (bestAfter && scoreTarget(state, unit, bestAfter) > 0) {
+          observe(state, 'attack', { unitId: unit.id, targetId: bestAfter.id });
           attackUnit(state, bestAfter.pos);
           actions.push({ type: 'move+attack', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} advances (${before.q},${before.r})→(${unit.pos.q},${unit.pos.r}) and strikes` });
         } else {
@@ -252,6 +271,7 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
 
   // Couldn't (or chose not to) move — take the best available shot.
   if (bestHere && scoreTarget(state, unit, bestHere) > 0) {
+    observe(state, 'attack', { unitId: unit.id, targetId: bestHere.id });
     attackUnit(state, bestHere.pos);
     actions.push({ type: 'attack', pos: { ...bestHere.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} attacks at (${bestHere.pos.q},${bestHere.pos.r})` });
   }
@@ -286,6 +306,7 @@ function actSupportUnit(state: GameState, unit: Unit, aiPlayerId: number, action
   }
   if (bestHex) {
     const before = { ...unit.pos };
+    observe(state, 'move', { unitId: unit.id, to: bestHex });
     if (moveUnit(state, bestHex).moved) {
       actions.push({ type: 'move', pos: { ...unit.pos }, description: `AI ${unit.type} repositions (${before.q},${before.r})→(${unit.pos.q},${unit.pos.r})` });
     }
@@ -314,6 +335,7 @@ function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): 
   const home = state.temples.find(t => t.ownerId === aiPlayerId);
   for (const tech of HARD_RESEARCH_PLAN) {
     if (!canResearch(state, tech)) continue;
+    observe(state, 'research', { techId: tech });
     if (researchTech(state, tech)) {
       actions.push({ type: 'upgrade', pos: home ? { ...home.pos } : { q: 0, r: 0 }, description: `Hard AI researches ${tech}` });
       return; // one tech per turn
@@ -336,6 +358,7 @@ function doUpgrades(state: GameState, aiPlayerId: number, homeTempleId: string |
     if (cost === null || player.aura < cost) continue;
     const priority = t.id === homeTempleId && t.level < 3; // rush home to L3 first
     if (!priority && player.aura < cost + RESERVE) continue;
+    observe(state, 'upgrade-temple', { templeId: t.id });
     if (upgradeTemple(state, t.id)) {
       actions.push({ type: 'upgrade', pos: { ...t.pos }, description: `Hard AI upgrades temple to L${t.level} at (${t.pos.q},${t.pos.r})` });
     }
@@ -353,6 +376,7 @@ function doTeleport(state: GameState, aiPlayerId: number, actions: AIAction[]): 
     if (hexesA.length === 0 || hexesB.length === 0) continue;
     // Connect the two most-distant temples for maximum redeploy value.
     const posB = bestBy(hexesB, h => hexDistance(temple.pos, h))!;
+    observe(state, 'build-teleport', { templeId: temple.id, pos: hexesA[0]!, targetPos: posB });
     if (buildTeleportPair(state, temple.id, hexesA[0]!, posB)) {
       actions.push({ type: 'upgrade', pos: { ...hexesA[0]! }, description: `Hard AI builds teleport at (${hexesA[0]!.q},${hexesA[0]!.r})` });
       return; // one pair per turn
@@ -404,6 +428,7 @@ function spawnPass(state: GameState, aiPlayerId: number, hard: boolean, actions:
     const unlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!);
     const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, hard);
     if (!type) continue;
+    observe(state, 'recruit', { unitType: type, templeId: temple.id });
     if (spawnUnit(state, temple.id, type)) {
       actions.push({ type: 'spawn', pos: { ...temple.pos }, description: `${hard ? 'Hard ' : ''}AI recruits ${type} at (${temple.pos.q},${temple.pos.r})` });
     }
