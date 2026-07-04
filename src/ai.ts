@@ -13,8 +13,9 @@ import {
   getValidTeleportHexesForOtherTemples, getTeleportAt,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
-  calculateEncirclement, isForestUnitRevealed,
+  calculateEncirclement, isForestUnitRevealed, endTurn,
 } from './game';
+import { runRLHardTurn } from '../ml/botClient';
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -490,6 +491,24 @@ export function runAITurn(state: GameState, aiPlayerId: number = getCurrentPlaye
   return runTurn(state, aiPlayerId, false);
 }
 
+// The "Hard AI" is now the trained RL bot: policy-g2 policy net + turn-level
+// search (K=12, temp=1.0, depth=1, blend leaf; value-net-v2mc-best) — ~92% vs the
+// hand-crafted hard AI (see ml/botClient.ts / docs M4-RL-REBUILD-REPORT). The
+// original hand-crafted hard-AI turn is preserved as `hardAILogicTurn` and used as
+// the search's opponent model (the legitimate, plan-blessed opponent model).
+//
+// Contract is unchanged from the old runHardAITurn: mutate `state` with the AI's
+// completed turn, return AIAction[] for the combat log, and do NOT end the turn.
+const hardAILogicTurn = (s: GameState): void => {
+  runTurn(s, getCurrentPlayer(s).id, true);
+  if (s.phase === 'playing') endTurn(s);
+};
+
 export function runHardAITurn(state: GameState, aiPlayerId: number = getCurrentPlayer(state).id): AIAction[] {
-  return runTurn(state, aiPlayerId, true);
+  // The RL bot reasons from the current player's seat. Guard the (not used in
+  // practice) off-turn case by falling back to the hand-crafted hard AI.
+  if (state.phase !== 'playing' || getCurrentPlayer(state).id !== aiPlayerId) {
+    return runTurn(state, aiPlayerId, true);
+  }
+  return runRLHardTurn(state, hardAILogicTurn);
 }

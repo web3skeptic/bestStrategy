@@ -6,6 +6,7 @@
 // checkpoints to ml/weights/. All counts configurable via env vars for tuning.
 import { appendFileSync, writeFileSync, existsSync } from 'fs';
 import { MLP } from './mlp';
+import { saveNet } from './mlpIO';
 import { runGame, hardTurn, makeValueBot, Sample, TurnFn } from './play';
 import { evalVsHard } from './eval';
 import { makeStream } from './rng';
@@ -89,10 +90,10 @@ async function main() {
   }
   log(`Phase A: ${buf.size} samples in ${((Date.now() - tA) / 1000).toFixed(0)}s. Training ${CFG.epochsWarm} epochs...`);
   const l0 = train(net, buf, CFG.epochsWarm, CFG.batch, genRng);
-  net.save(`${CKPT_DIR}/ckpt-${TAG}-warm.json`);
+  saveNet(net, `${CKPT_DIR}/ckpt-${TAG}-warm.json`);
   let r = evalVsHard(net, CFG.evalN, 700000);
   log(`warm-start: loss=${l0.toFixed(4)} | NN-vs-hard ${r.wins}/${r.games} = ${(r.winRate * 100).toFixed(1)}% CI[${(r.ciLow * 100).toFixed(1)},${(r.ciHigh * 100).toFixed(1)}]`);
-  let best = r.winRate; net.save(`${CKPT_DIR}/value-net-${TAG}.json`);
+  let best = r.winRate; saveNet(net, `${CKPT_DIR}/value-net-${TAG}.json`);
 
   // ── Phase B: DAgger / self-play refinement ──
   for (let it = 1; it <= CFG.iters; it++) {
@@ -111,10 +112,10 @@ async function main() {
       buf.add(rr.samples); gen += rr.samples.length;
     }
     const loss = train(net, buf, CFG.epochsIter, CFG.batch, genRng);
-    net.save(`${CKPT_DIR}/ckpt-${TAG}-it${it}.json`);
+    saveNet(net, `${CKPT_DIR}/ckpt-${TAG}-it${it}.json`);
     r = evalVsHard(net, CFG.evalN, 700000);
     log(`iter ${it}: +${gen} samples (buf ${buf.size}), loss=${loss.toFixed(4)} | NN-vs-hard ${r.wins}/${r.games} = ${(r.winRate * 100).toFixed(1)}% CI[${(r.ciLow * 100).toFixed(1)},${(r.ciHigh * 100).toFixed(1)}] (${((Date.now() - tI) / 1000).toFixed(0)}s)`);
-    if (r.winRate > best) { best = r.winRate; net.save(`${CKPT_DIR}/value-net-${TAG}.json`); net.save(`${CKPT_DIR}/value-net.json`); log(`  ↑ new best ${(best * 100).toFixed(1)}% → saved value-net.json`); }
+    if (r.winRate > best) { best = r.winRate; saveNet(net, `${CKPT_DIR}/value-net-${TAG}.json`); saveNet(net, `${CKPT_DIR}/value-net.json`); log(`  ↑ new best ${(best * 100).toFixed(1)}% → saved value-net.json`); }
     if (r.ciLow > 0.5 && r.winRate >= CFG.targetWR) { log(`TARGET reached at iter ${it} (winRate ${(r.winRate * 100).toFixed(1)}%, CI-low ${(r.ciLow * 100).toFixed(1)}%). Continuing to consolidate.`); }
   }
   log(`DONE. best small-eval win-rate = ${(best * 100).toFixed(1)}%. Final weights: ${CKPT_DIR}/value-net-${TAG}.json`);

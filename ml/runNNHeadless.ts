@@ -6,12 +6,12 @@ import { legalMicros, applyMicro, cloneState, reset, isAlive } from './gameEnv';
 import { runHardAITurn } from '../src/ai';
 import { endTurn, getPopulationCap, getPopulationCount } from '../src/game';
 import { featurize } from './features';
-import { MLP } from './mlp';
+import { loadNet } from './mlpIO';
 
 const path = process.argv[2] ?? 'ml/weights/value-net.json';
 const seed = Number(process.argv[3] ?? 424242);
 const nnSlot = Number(process.argv[4] ?? 0);
-const net = MLP.load(path);
+const net = loadNet(path);
 
 function summary(s: GameState, pid: number): string {
   const u = s.units.filter(x => x.hp > 0 && x.playerId === pid);

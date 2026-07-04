@@ -3,7 +3,7 @@
 // precomputes the few O(units) quantities once (effective atk/def, capturable
 // temples, enemy positions), so per-candidate cost is a handful of hex-distance
 // ops. Concatenated with the state features, this is the policy net's input.
-import { GameState, Unit, Temple, HexCoord, UnitType, UNIT_COSTS, templeUpgradeCost, TECH_COST, TECH_NODES } from '../src/types';
+import { GameState, Unit, Temple, HexCoord, UnitType, TechId, UNIT_COSTS, templeUpgradeCost, TECH_COST, TECH_NODES } from '../src/types';
 import { getEffectiveAttack, getEffectiveDefense } from '../src/game';
 import { hexDistance, hexKey } from '../src/hex';
 import { Micro } from './gameEnv';
@@ -101,7 +101,7 @@ export function actionFeatures(state: GameState, ctx: ActionCtx, micro: Micro, o
   // 10: temple level frac (upgrade)
   if (micro.action === 'upgrade-temple' && typeof p.templeId === 'string') { const t = ctx.templeById.get(p.templeId); s[10] = t ? t.level / 5 : 0; }
   // 11: tech index bucket (research)
-  if (micro.action === 'research' && typeof p.techId === 'string') { const ti = techIdx.get(p.techId); s[11] = ti !== undefined ? (ti + 1) / (TECH_NODES.length + 1) : 0; }
+  if (micro.action === 'research' && typeof p.techId === 'string') { const ti = techIdx.get(p.techId as TechId); s[11] = ti !== undefined ? (ti + 1) / (TECH_NODES.length + 1) : 0; }
   // 12: current aura context (shared)
   s[12] = Math.min(1, ctx.aura / 30);
   // 13: end-turn flag

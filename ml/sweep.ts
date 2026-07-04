@@ -7,7 +7,7 @@
 //   npx tsx ml/sweep.ts --weights W --n 40 --seed 700000 \
 //     [--mode search|greedy] [--K 6] [--margin 0] [--temp 0.12] \
 //     [--leaf V|H|blend] [--budget 500|inf] [--out FILE] [--tag NAME]
-import { MLP } from './mlp';
+import { loadNet } from './mlpIO';
 import { hardTurn, makeValueBot, makeSearchBot, runGame, TurnFn } from './play';
 import { wilson } from './eval';
 import { heuristicLeaf } from './heuristicLeaf';
@@ -33,7 +33,7 @@ const maxDecisions = budgetArg === 'inf' ? 1e9 : Number(budgetArg);
 const out = arg('out');
 const tag = arg('tag', `${mode}-K${K}-m${margin}-${leafKind}`)!;
 
-const net = MLP.load(weights);
+const net = loadNet(weights);
 
 // Leaf evaluator for the search bot (M0.2 ablation knob).
 const vLeaf = (s: GameState, botId: number) => net.value(featurize(s, botId));

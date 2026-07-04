@@ -34,6 +34,7 @@
 //     --valGames 60 [--saveEvery 200] [--report 50] [--out ml/weights/value-net-v2mc.json] [--resume]
 //   npx tsx ml/trainValue.ts --tag v2td --head linear --target td --lambda 0.9 --gamma 1.0 ...
 import { MLP } from './mlp';
+import { loadNet, saveNet } from './mlpIO';
 import { featurize, FEATURE_DIM } from './features';
 import { reset } from './gameEnv';
 import { hardTurn, materialWinner } from './play';
@@ -233,7 +234,7 @@ process.on('unhandledRejection', (e) => { console.error(`UNHANDLED: ${(e as Erro
 
   const cfg = { kind: 'value', head, target, lambda, gamma, steps, batch, lr, hidden, seedBase, valGames, weightsPath };
   const h: RunHandle = initRun(tag, cfg, { train: `${seedBase}+`, val: `${VAL_SEED_BASE}+${valGames}` });
-  const net = resume && existsSync(weightsPath) ? MLP.load(weightsPath) : new MLP([FEATURE_DIM, ...hidden, 1], lr);
+  const net = resume && existsSync(weightsPath) ? loadNet(weightsPath) : new MLP([FEATURE_DIM, ...hidden, 1], lr);
   const prog = resume ? readProgress(h) : null;
   let step = prog ? Number(prog.step) : 0;
   let gameCursor = prog ? Number(prog.gameCursor) : seedBase;
@@ -267,12 +268,12 @@ process.on('unhandledRejection', (e) => { console.error(`UNHANDLED: ${(e as Erro
       }
 
       if (step % saveEvery === 0) {
-        net.save(weightsPath);
+        saveNet(net, weightsPath);
         const rr = rankCorr(net, head, val);
         const rline = `  [val step ${step}] rankcorr overall=${fmt(rr.overall)} early=${fmt(rr.early)} mid=${fmt(rr.mid)} late=${fmt(rr.late)} (n=${rr.n})`;
         console.log(rline); logLine(h, rline);
         if (Number.isFinite(rr.overall) && rr.overall > bestRank) {
-          bestRank = rr.overall; net.save(bestPath);
+          bestRank = rr.overall; saveNet(net, bestPath);
           const bl = `  ↑ new best overall rankcorr ${rr.overall.toFixed(4)} → saved ${bestPath}`;
           console.log(bl); logLine(h, bl);
         }
@@ -281,9 +282,9 @@ process.on('unhandledRejection', (e) => { console.error(`UNHANDLED: ${(e as Erro
     }
   }
 
-  net.save(weightsPath);
+  saveNet(net, weightsPath);
   const rr = rankCorr(net, head, val);
-  if (Number.isFinite(rr.overall) && rr.overall > bestRank) { bestRank = rr.overall; net.save(bestPath); }
+  if (Number.isFinite(rr.overall) && rr.overall > bestRank) { bestRank = rr.overall; saveNet(net, bestPath); }
   saveProgress(h, { step, gameCursor, samplesSeen, bestRank });
 
   // ── Final model-selection table (this is how the better head/target combo is

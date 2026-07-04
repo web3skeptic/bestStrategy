@@ -2,7 +2,11 @@
 // Pure JS (Float64Array), no deps — used as the VALUE network V(features)≈±1.
 // Alloc-free hot path: forward/backward reuse preallocated scratch buffers so
 // training and 1-ply-lookahead inference don't churn the GC.
-import { writeFileSync, readFileSync } from 'fs';
+//
+// NOTE: this module is intentionally free of Node-only imports (no 'fs') so it
+// can be bundled into the browser client (the RL "Hard AI" runs its forward pass
+// on the client). Weight file I/O lives in ml/mlpIO.ts (Node scripts only); the
+// browser loads weights via MLP.fromJSON on imported JSON.
 
 function randn(): number {
   let u = 0, v = 0;
@@ -189,18 +193,19 @@ export class MLP {
     }
   }
 
-  save(path: string): void {
-    writeFileSync(path, JSON.stringify({
+  // Plain-object (de)serialization — pure, no fs, browser-safe. File I/O wrappers
+  // (loadNet/saveNet) live in ml/mlpIO.ts so 'fs' stays out of the client bundle.
+  toJSON(): { sizes: number[]; t: number; lr: number; layers: { W: number[]; b: number[] }[] } {
+    return {
       sizes: this.sizes, t: this.t, lr: this.lr,
       layers: this.layers.map(L => ({ W: Array.from(L.W), b: Array.from(L.b) })),
-    }));
+    };
   }
 
-  static load(path: string): MLP {
-    const d = JSON.parse(readFileSync(path, 'utf8'));
+  static fromJSON(d: { sizes: number[]; t?: number; lr?: number; layers: { W: number[]; b: number[] }[] }): MLP {
     const net = new MLP(d.sizes, d.lr ?? 1e-3);
     net.t = d.t ?? 0;
-    d.layers.forEach((L: { W: number[]; b: number[] }, i: number) => {
+    d.layers.forEach((L, i) => {
       net.layers[i]!.W = Float64Array.from(L.W);
       net.layers[i]!.b = Float64Array.from(L.b);
     });

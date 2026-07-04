@@ -2,6 +2,7 @@
 // Shared by the worker pool (ml/pool.ts), the pooled eval driver, and sweeps so a
 // bot config can cross a process boundary as plain JSON. Nets are cached by path.
 import { MLP } from './mlp';
+import { loadNet } from './mlpIO';
 import { hardTurn, normalTurn, makeValueBot, makeSearchBot, TurnFn } from './play';
 import { makePolicyBot } from './policy';
 import { makePolicySearchBot } from './searchPolicy';
@@ -22,7 +23,7 @@ export type BotSpec =
 const netCache = new Map<string, MLP>();
 function loadNet(path: string): MLP {
   let n = netCache.get(path);
-  if (!n) { n = MLP.load(path); netCache.set(path, n); }
+  if (!n) { n = loadNet(path); netCache.set(path, n); }
   return n;
 }
 
