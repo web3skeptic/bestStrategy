@@ -1,6 +1,7 @@
 // Evaluate the NN value-bot vs the hard AI. Cancels first-move + side bias by
 // playing each seed twice with sides swapped and alternating who moves first.
 import { MLP } from './mlp';
+import { loadNet } from './mlpIO';
 import { hardTurn, makeValueBot, makeSearchBot, runGame, TurnFn } from './play';
 
 export interface EvalResult { wins: number; losses: number; draws: number; games: number; winRate: number; ciLow: number; ciHigh: number; }
@@ -49,7 +50,7 @@ if (process.argv[1] && process.argv[1].endsWith('eval.ts')) {
   const seedBase = Number(process.argv[4] ?? 700000);
   const temp = Number(process.argv[5] ?? 0);
   const search = process.argv[6] === 'search';
-  const net = MLP.load(path);
+  const net = loadNet(path);
   const t0 = Date.now();
   const r = evalVsHard(net, n, seedBase, temp, search);
   if (search) console.log('(using turn-level 1-ply search bot vs hard AI)');

@@ -26,7 +26,11 @@ import { executeAction, computeUnitActions, UnifiedActionName } from '../server/
 import { hexDistance } from '../src/hex';
 import { setSeed, installSeededRandom } from './rng';
 
-installSeededRandom();
+// Node-only: swap in the seeded RNG so headless episodes are deterministic. In
+// the browser (the RL "Hard AI" reuses this env for turn search) we must NOT
+// clobber the game's global Math.random — the live game relies on native RNG for
+// map gen and combat rolls — so this is guarded to Node (no `window`).
+if (typeof window === 'undefined') installSeededRandom();
 
 export interface Micro {
   action: UnifiedActionName;

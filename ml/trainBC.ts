@@ -7,6 +7,7 @@
 // Usage: npx tsx ml/trainBC.ts --tag bc1 --steps 4000 --batch 256 --lr 1e-3 \
 //          --hidden 128,128 --seed 10000 [--saveEvery 200] [--resume]
 import { MLP } from './mlp';
+import { loadNet, saveNet } from './mlpIO';
 import { newPolicyNet, POLICY_IN, STATE_DIM } from './policy';
 import { featurize } from './features';
 import { actionFeatures, buildActionCtx, ACTION_DIM } from './actionFeatures';
@@ -115,7 +116,7 @@ function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string,
   }
 
   const h: RunHandle = initRun(tag, { kind: 'bc', steps, batch, lr, hidden, seedBase, weightsPath });
-  const net = resume && existsSync(weightsPath) ? MLP.load(weightsPath) : newPolicyNet(hidden, lr);
+  const net = resume && existsSync(weightsPath) ? loadNet(weightsPath) : newPolicyNet(hidden, lr);
   const prog = resume ? readProgress(h) : null;
   let step = prog ? Number(prog.step) : 0;
   let gameCursor = prog ? Number(prog.gameCursor) : seedBase;
@@ -149,9 +150,9 @@ function trainStep(net: MLP, batch: Decision[], lr: number, perType: Map<string,
         heartbeat(h, { step, steps, loss: +(winLoss / winN).toFixed(3), top1: +(winAcc / winN).toFixed(3), games: gameCursor - seedBase, decisionsSeen });
         winLoss = 0; winAcc = 0; winN = 0; perType.clear();
       }
-      if (step % saveEvery === 0) { net.save(weightsPath); saveProgress(h, { step, gameCursor, decisionsSeen }); }
+      if (step % saveEvery === 0) { saveNet(net, weightsPath); saveProgress(h, { step, gameCursor, decisionsSeen }); }
     }
   }
-  net.save(weightsPath); saveProgress(h, { step, gameCursor, decisionsSeen });
+  saveNet(net, weightsPath); saveProgress(h, { step, gameCursor, decisionsSeen });
   console.log(`DONE bc tag=${tag} steps=${step} games=${gameCursor - seedBase} decisions=${decisionsSeen} weights=${weightsPath}`);
 })().catch(e => { console.error(e); process.exit(1); });

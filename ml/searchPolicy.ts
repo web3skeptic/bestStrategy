@@ -9,7 +9,7 @@ import { cloneState } from './gameEnv';
 import { featurize } from './features';
 import { heuristicLeaf } from './heuristicLeaf';
 import { makePolicyBot } from './policy';
-import { TurnFn } from './play';
+import type { TurnFn } from './play';
 
 export type LeafFn = (s: GameState, botId: number) => number;
 

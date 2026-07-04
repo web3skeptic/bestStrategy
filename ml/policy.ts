@@ -8,7 +8,7 @@ import { actionFeatures, buildActionCtx, ACTION_DIM } from './actionFeatures';
 import { legalMicros, applyMicro, Micro } from './gameEnv';
 import { endTurn } from '../src/game';
 import { GameState } from '../src/types';
-import { TurnFn } from './play';
+import type { TurnFn } from './play';
 
 export const STATE_DIM = FEATURE_DIM;      // 73 (may grow if features.ts is extended)
 export const POLICY_IN = STATE_DIM + ACTION_DIM;

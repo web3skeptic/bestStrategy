@@ -15,7 +15,7 @@
 // Usage: npx tsx ml/diagCapture.ts [--weights ml/weights/policy-bc1.json]
 //                                  [--tag bc1] [--n 5] [--seed 900000]
 // This REPLAYS games (forward passes) — do NOT run it while cores are saturated.
-import { MLP } from './mlp';
+import { loadNet } from './mlpIO';
 import { scoreCandidates } from './policy';
 import { legalMicros, Micro } from './gameEnv';
 import { GameState } from '../src/types';
@@ -38,7 +38,7 @@ function topK(logits: Float64Array, k: number): number[] {
   const weightsPath = arg('weights', `ml/weights/policy-${tag}.json`)!;
   const nGames = Number(arg('n', '5'));
   const seedBase = Number(arg('seed', '900000'));
-  const net = MLP.load(weightsPath);
+  const net = loadNet(weightsPath);
 
   let decisions = 0, unmatched = 0;
   const perType = new Map<string, { top1: number; top3: number; n: number }>();
