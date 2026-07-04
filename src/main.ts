@@ -104,6 +104,10 @@ let researchRollback: SerializedGameState | null = null;
 // state_update (mirrors the local path's spawn→select for instant move range).
 let pendingSpawnSelectTempleId: string | null = null;
 
+// Hot-seat hand-off: true while the opaque privacy curtain is up between two local
+// human seats (see doEndTurn / dismissHandoff). Never set in vs-AI or online games.
+let handoffPending = false;
+
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 
 let state: GameState = createGameState();
@@ -160,7 +164,10 @@ const techCloseBtn = document.getElementById('techCloseBtn')!;
 const techBody = document.getElementById('techBody')!;
 const techAuraInfo = document.getElementById('techAuraInfo')!;
 const opponentTurnOverlay = document.getElementById('opponentTurnOverlay')!;
+const opponentTurnCardEl = document.getElementById('opponentTurnCard')!;
 const opponentTurnNameEl = document.getElementById('opponentTurnName')!;
+const waitingIndicator = document.getElementById('waitingIndicator')!;
+const waitingIndicatorName = document.getElementById('waitingIndicatorName')!;
 const myPlayerBadge = document.getElementById('myPlayerBadge')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
 const settingsOverlay = document.getElementById('settingsOverlay')!;
@@ -303,6 +310,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
+  handoffPending = false;
       hideMenu();
       closeTechTree();
       combatLog.innerHTML = '';
@@ -371,6 +379,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
+  handoffPending = false;
       hideMenu();
       closeTechTree();
       combatLog.innerHTML = '';
@@ -482,6 +491,10 @@ function leaveActiveGame(): void {
 function showMenu(): void {
   saveGame(); // snapshot the local game before leaving to the menu (no-op online)
   menuOverlay.classList.remove('hidden');
+  // Clear any turn indicators so they don't linger over the menu.
+  handoffPending = false;
+  opponentTurnOverlay.classList.add('hidden');
+  waitingIndicator.classList.add('hidden');
   if (spectatorMode) {
     // Disconnect spectator and clean up
     leaveActiveGame();
@@ -572,6 +585,7 @@ function restoreGame(): void {
   spectatorBanner.style.display = 'none';
   controllers = controllersFromSave(save);
   buildingTeleport = null;
+  handoffPending = false;
   state = deserialize(save.state);
   renderer.init(state.mapRadius);
   gameStarted = true;
@@ -607,6 +621,7 @@ function startLocalGame(kinds: ControllerKind[]): void {
   spectatorBanner.style.display = 'none';
   controllers = [...kinds];
   buildingTeleport = null;
+  handoffPending = false;
   const players = kinds.map((kind, i) => ({
     name: seatName(kind, i),
     color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
@@ -707,15 +722,20 @@ function render(): void {
     updateUI();
     return;
   }
-  // While an opponent (remote human OR the AI) is taking their turn, freeze the
-  // board on the local player's last frame so their private movements never get
-  // rendered — the curtain overlay covers it too, but this avoids ever syncing
-  // the enemy's perspective into the scene.
   if (localPlayerEliminated()) {
     // Eliminated online player watches the whole board (omniscient), like a spectator.
     renderer.render(state, undefined, true);
-  } else if (!isOpponentActive()) {
-    renderer.render(state, multiplayerMode ? myPlayerSlot : undefined);
+  } else if (handoffPending) {
+    // Hot-seat privacy: the opaque hand-off curtain covers the board, so don't
+    // render the next human's perspective behind it (would leak through on dismiss
+    // timing). The board is drawn as soon as the curtain is tapped away.
+  } else {
+    // Always render from the LOCAL viewer's own seat — never the acting player's.
+    // During an opponent's turn (AI or remote) this keeps the board on-screen,
+    // fog-limited to what the viewer can legitimately see, instead of an opaque
+    // curtain. renderViewerSlot() returns the viewer's slot (own units + fog),
+    // so an opponent's hidden units/moves stay concealed.
+    renderer.render(state, renderViewerSlot());
   }
   updateUI();
   // Persist after every state change in a local game (render() is the chokepoint
@@ -754,15 +774,37 @@ function devStatsEnabled(): boolean {
   }
 }
 
-// The one player whose economy this client is allowed to see by default.
-// Multiplayer → the seat we own (spectators own none). Local play → the seat
-// currently taking its turn, but only when it's a human (never an AI's books;
-// AI/remote turns are hidden behind the opaque opponent-turn curtain anyway).
-function localViewerId(): number | null {
+// A local hot-seat game = 2+ human seats sharing one device. These are the only
+// games that keep the opaque hand-off curtain (privacy between humans); vs-AI and
+// online games instead show a fog-limited board with a subtle waiting indicator.
+function isHotseat(): boolean {
+  return !multiplayerMode && !spectatorMode
+    && controllers.filter(k => k === 'human').length >= 2;
+}
+
+// The seat this client views the board & economy from — its own perspective,
+// NEVER the acting player's. Online → the seat we own. Local single-human vs AI →
+// the (fixed) human seat, so the board stays on the human's perspective even while
+// an AI is thinking. Local hot-seat → whichever human's turn it is. null = none
+// (spectator / no human seat), meaning "show the current player" for the board.
+function viewerPlayerSlot(): number | null {
   if (spectatorMode) return null;
   if (multiplayerMode) return myPlayerSlot;
-  if (isAISlot(state.currentPlayerIndex)) return null;
-  return state.currentPlayerIndex;
+  if (isHotseat()) return isAISlot(state.currentPlayerIndex) ? null : state.currentPlayerIndex;
+  const human = controllers.indexOf('human');
+  return human >= 0 ? human : null;
+}
+
+// Same as viewerPlayerSlot() but shaped for renderer.render()'s viewerPlayerId arg
+// (undefined = "use current player", used for hot-seat where viewer == current).
+function renderViewerSlot(): number | undefined {
+  const s = viewerPlayerSlot();
+  return s === null ? undefined : s;
+}
+
+// The player whose economy this client is allowed to see by default (fog of war).
+function localViewerId(): number | null {
+  return viewerPlayerSlot();
 }
 
 // Per-player status chips: colour dot + name, current player highlighted,
@@ -835,6 +877,7 @@ function updateUI(): void {
     techTreeBtn.style.display = 'none';
     settingsBtn.style.display = 'none';
     opponentTurnOverlay.classList.add('hidden');
+    waitingIndicator.classList.add('hidden');
 
     updateStatPills(player);
 
@@ -845,7 +888,11 @@ function updateUI(): void {
     return;
   }
 
-  updateStatPills(player);
+  // Stat pills reflect the LOCAL viewer's economy, not the acting player's —
+  // otherwise an opponent's aura/pop would leak while they take their turn now
+  // that the board is no longer hidden behind an opaque curtain.
+  const vSlot = viewerPlayerSlot();
+  updateStatPills(vSlot !== null ? (state.players[vSlot] ?? player) : player);
 
   if (state.phase === 'gameOver') {
     setTurnTitle(state.winner ? `${state.winner.name} Wins!` : 'Draw!', state.winner ? state.winner.color : '#f4863a');
@@ -976,13 +1023,28 @@ function isOpponentActive(): boolean {
 }
 
 function updateOpponentTurnOverlay(): void {
-  // An eliminated online player watches the board (no curtain); the badge shows
-  // their status instead.
-  if (isOpponentActive()) {
-    opponentTurnNameEl.textContent = getCurrentPlayer(state).name;
+  // Two distinct "someone else's turn" states:
+  //  • Hot-seat hand-off (2+ humans, one device) → FULL opaque curtain for privacy,
+  //    tapped away by the next human when they pick up the device.
+  //  • vs-AI / online opponent → NO opaque curtain. The board stays visible,
+  //    fog-limited to the viewer's own perspective, with a small non-blocking
+  //    "Waiting for {name} to move…" pill so play never feels hidden.
+  if (handoffPending) {
+    opponentTurnCardEl.innerHTML =
+      `<div class="spinner">🎮</div>` +
+      `<div class="label">Pass the device to</div>` +
+      `<div class="opp-name">${getCurrentPlayer(state).name}</div>` +
+      `<div class="sublabel">Tap anywhere to start their turn</div>`;
     opponentTurnOverlay.classList.remove('hidden');
+    waitingIndicator.classList.add('hidden');
+    return;
+  }
+  opponentTurnOverlay.classList.add('hidden');
+  if (isOpponentActive()) {
+    waitingIndicatorName.textContent = getCurrentPlayer(state).name;
+    waitingIndicator.classList.remove('hidden');
   } else {
-    opponentTurnOverlay.classList.add('hidden');
+    waitingIndicator.classList.add('hidden');
   }
 }
 
@@ -1499,6 +1561,7 @@ function canvasEventToHex(clientX: number, clientY: number) {
 function handleHexClick(clientX: number, clientY: number): void {
   if (!gameStarted) return;
   if (spectatorMode) return;
+  if (handoffPending) return;   // curtain up — ignore board taps behind it
   if (state.phase === 'gameOver') return;
   if (aiRunning) return;
   if (isAISlot(state.currentPlayerIndex)) return;
@@ -1749,6 +1812,9 @@ endTurnBtn.addEventListener('click', () => {
 
 restartBtn.addEventListener('click', () => showMenu());
 
+// Tap the hot-seat hand-off curtain to reveal the next player's board.
+opponentTurnOverlay.addEventListener('click', () => dismissHandoff());
+
 // ── Combat log toggle ──
 let logOpen = false;
 logToggle.addEventListener('click', () => {
@@ -1796,6 +1862,7 @@ function maybeRunAITurn(): void {
 
 function doEndTurn(): void {
   if (spectatorMode) return;
+  if (handoffPending) return;   // curtain up — next player hasn't started their turn
   if (aiRunning) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   if (buildingTeleport) cancelBuildTeleport();
@@ -1807,9 +1874,27 @@ function doEndTurn(): void {
   endTurn(state);
   const newPlayer = getCurrentPlayer(state);
   logCombat(`${prevPlayer} ended turn → ${newPlayer.name} (Aura: ${newPlayer.aura})`);
+  // Hot-seat privacy: when the device passes from one human seat to another, raise
+  // the opaque hand-off curtain and defer selecting/rendering the next player's
+  // board until they tap to begin (dismissHandoff). Only for human→human here;
+  // AI turns fall through to the fog-limited waiting indicator instead.
+  if (isHotseat() && !isAISlot(state.currentPlayerIndex) && state.phase !== 'gameOver') {
+    handoffPending = true;
+    updateUI();            // raise the curtain (render() would draw the next view behind it)
+    return;
+  }
   if (!isAISlot(state.currentPlayerIndex)) autoSelectTemple(); // human turn → preselect temple
   render();
   maybeRunAITurn();
+}
+
+// Dismiss the hot-seat hand-off curtain: the next human has picked up the device,
+// so reveal their board (pre-selecting their temple) from their own perspective.
+function dismissHandoff(): void {
+  if (!handoffPending) return;
+  handoffPending = false;
+  autoSelectTemple();
+  render();
 }
 
 function runAI(): void {

@@ -877,6 +877,38 @@
     #opponentTurnCard .label { font-weight: bold; font-size: 24px; margin-top: 8px; color: #fff; }
     #opponentTurnCard .opp-name { color: #4a90d9; font-size: 18px; margin-top: 4px; }
     #opponentTurnCard .sublabel { font-size: 14px; color: #556; margin-top: 12px; letter-spacing: 0.05em; }
+    /* ── Subtle non-blocking "waiting for opponent" pill (vs-AI / online) ── */
+    #waitingIndicator {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 120;               /* above the board, below menus/overlays */
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 16px;
+      background: rgba(16, 18, 34, 0.82);
+      border: 1px solid rgba(74, 144, 217, 0.45);
+      border-radius: 999px;
+      color: #cdd6f4;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(4px);
+      pointer-events: none;       /* never blocks the board */
+      user-select: none;
+      white-space: nowrap;
+    }
+    #waitingIndicator.hidden { display: none; }
+    #waitingIndicator .wi-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: #4a90d9;
+      animation: wi-pulse 1.1s ease-in-out infinite;
+    }
+    #waitingIndicator .wi-name { color: #7ec0ff; }
+    @keyframes wi-pulse { 0%,100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }
     .settings-panel {
       background: rgba(16,16,36,0.98);
       border: 1px solid #334;
@@ -1311,7 +1343,7 @@
       </div>
     </div>
   </div>
-  <!-- Opponent turn overlay -->
+  <!-- Hot-seat hand-off curtain (opaque; only between two local human seats) -->
   <div id="opponentTurnOverlay" class="hidden">
     <div id="opponentTurnCard">
       <div class="spinner">⚙</div>
@@ -1319,6 +1351,11 @@
       <div class="opp-name" id="opponentTurnName"></div>
       <div class="sublabel">Please wait — the board is hidden during their turn.</div>
     </div>
+  </div>
+  <!-- Subtle waiting pill (vs-AI / online): board stays visible & fog-limited -->
+  <div id="waitingIndicator" class="hidden">
+    <span class="wi-dot"></span>
+    <span>Waiting for <span class="wi-name" id="waitingIndicatorName"></span> to move…</span>
   </div>
   <script type="module" src="./src/main.ts"></script>
 </body>
