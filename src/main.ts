@@ -20,6 +20,7 @@ import {
   getEffectiveAttack,
   getEffectiveRange,
   getCurrentPlayerVisible,
+  getPlayerVisible,
   canAfford,
   upgradeTemple,
   canUpgradeTemple,
@@ -247,6 +248,34 @@ function maybeAutoSelectSpawned(): void {
   }
 }
 
+// Apply an authoritative server state, tweening any position changes the local
+// player can legitimately see (same eased path local play uses) instead of
+// teleporting units. The server sends per-action updates to the ACTING player, so
+// our own moves animate step-by-step; an opponent's moves are reconciled from the
+// single end-of-turn update (units slide from their last-seen tile to the new one).
+//
+// Fog safety: we only animate a unit when its OLD tile was visible to us (or it's
+// our own unit). A unit emerging from the fog just appears at its new tile — we
+// never draw a slide out of a hidden origin, so no hidden disposition leaks.
+function applyStateWithAnimation(newState: GameState): void {
+  const viewer = renderViewerSlot();
+  if (gameStarted && !spectatorMode && multiplayerMode && viewer !== undefined) {
+    const prev = state;
+    const prevVisible = getPlayerVisible(prev, viewer);
+    const prevById = new Map(prev.units.map(u => [u.id, u]));
+    for (const u of newState.units) {
+      if (u.hp <= 0) continue;
+      const old = prevById.get(u.id);
+      if (!old || old.hp <= 0 || hexEqual(old.pos, u.pos)) continue;
+      const mine = u.playerId === viewer;
+      if (mine || prevVisible.has(hexKey(old.pos))) {
+        renderer.startMoveAnimation(u.id, old.pos);
+      }
+    }
+  }
+  state = newState;
+}
+
 // ── Multiplayer event handler ──
 
 function handleMultiplayerEvent(event: ServerMessage): void {
@@ -322,7 +351,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
     }
     case 'state_update': {
       researchRollback = null;   // authoritative state supersedes any optimistic research
-      state = deserialize(event.state);
+      applyStateWithAnimation(deserialize(event.state)); // tween visible moves, don't teleport
       maybeAutoSelectSpawned();  // auto-select a freshly-spawned unit (task: instant range)
       render();
       logCombat(event.lastAction);
