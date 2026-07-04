@@ -99,6 +99,11 @@ let mpClient: MultiplayerClient | null = null;
 // state_update, or restored if the server rejects the action.
 let researchRollback: SerializedGameState | null = null;
 
+// After spawning in MP we don't know the server-assigned unit id, so remember the
+// temple we spawned from and auto-select whatever unit lands on it in the next
+// state_update (mirrors the local path's spawn→select for instant move range).
+let pendingSpawnSelectTempleId: string | null = null;
+
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 
 let state: GameState = createGameState();
@@ -219,6 +224,22 @@ function sendOrCall(action: object, localFn: () => void): void {
   }
 }
 
+// After a MP spawn, select the unit the server placed on the flagged temple so
+// its movement range shows immediately — matching the local spawn→select flow.
+// Also nudges the server's selection so a follow-up move validates against it.
+function maybeAutoSelectSpawned(): void {
+  if (!pendingSpawnSelectTempleId || !multiplayerMode || spectatorMode) { pendingSpawnSelectTempleId = null; return; }
+  const templeId = pendingSpawnSelectTempleId;
+  pendingSpawnSelectTempleId = null;
+  if (state.currentPlayerIndex !== myPlayerSlot) return;   // not my turn anymore
+  const temple = state.temples.find(t => t.id === templeId);
+  const unit = temple ? getUnitAt(state, temple.pos) : null;
+  if (unit && unit.playerId === myPlayerSlot && state.selectedUnitId !== unit.id) {
+    selectUnit(state, unit.id);                                     // local: instant range
+    mpClient?.sendAction({ type: 'action_select_unit', unitId: unit.id }); // keep server in sync
+  }
+}
+
 // ── Multiplayer event handler ──
 
 function handleMultiplayerEvent(event: ServerMessage): void {
@@ -294,6 +315,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
     case 'state_update': {
       researchRollback = null;   // authoritative state supersedes any optimistic research
       state = deserialize(event.state);
+      maybeAutoSelectSpawned();  // auto-select a freshly-spawned unit (task: instant range)
       render();
       logCombat(event.lastAction);
       break;
@@ -1601,6 +1623,9 @@ function handleSpawnBtn(type: UnitType): void {
     logCombat('Cannot spawn: a unit is standing on the temple');
     return;
   }
+  // MP: no local mutation runs, so flag the temple for auto-select once the
+  // server echoes back the spawned unit (see the state_update handler).
+  if (multiplayerMode) pendingSpawnSelectTempleId = templeId;
   sendOrCall({ type: 'action_spawn', templeId, unitType: type }, () => {
     try {
       if (spawnUnit(state, templeId, type)) {
@@ -1608,7 +1633,7 @@ function handleSpawnBtn(type: UnitType): void {
         const temple = state.temples.find(t => t.id === templeId);
         if (temple) {
           const newUnit = getUnitAt(state, temple.pos);
-          if (newUnit) selectUnit(state, newUnit.id);
+          if (newUnit) selectUnit(state, newUnit.id);   // show its move range at once
         }
       }
     } catch (e: unknown) {
