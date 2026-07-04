@@ -94,6 +94,11 @@ let spectatorMode = false;
 let myPlayerSlot = 0;
 let mpClient: MultiplayerClient | null = null;
 
+// Optimistic-research rollback snapshot (MP only). Set when a research purchase
+// is applied locally before the server confirms; cleared on the next authoritative
+// state_update, or restored if the server rejects the action.
+let researchRollback: SerializedGameState | null = null;
+
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 
 let state: GameState = createGameState();
@@ -287,12 +292,21 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       break;
     }
     case 'state_update': {
+      researchRollback = null;   // authoritative state supersedes any optimistic research
       state = deserialize(event.state);
       render();
       logCombat(event.lastAction);
       break;
     }
     case 'action_error': {
+      // If an optimistic research purchase was rejected, roll it back so the UI
+      // matches the server. (Card gating makes this path rare — a desync only.)
+      if (researchRollback) {
+        state = deserialize(researchRollback);
+        researchRollback = null;
+        if (!techOverlay.classList.contains('hidden')) renderTechTree();
+        render();
+      }
       logCombat(`Error: ${event.message}`);
       break;
     }
@@ -1390,12 +1404,25 @@ function appendSection(
 
     if (!isResearched && prereqsMet && !branchBlocked && canAffordIt) {
       card.addEventListener('click', () => {
-        sendOrCall({ type: 'action_research', techId: node.id }, () => {
+        const applyLocal = (): void => {
           if (researchTech(state, node.id)) {
             logCombat(`Researched: ${node.name} (−${node.cost} ⚡)`);
             renderTechTree();
           }
-        });
+        };
+        if (multiplayerMode && mpClient) {
+          // Optimistic: apply the purchase locally for instant feedback (aura
+          // pill drops, unit unlocks appear) instead of waiting for the server
+          // round-trip. Snapshot first so a (rare) server rejection can roll it
+          // back; the authoritative state_update otherwise reconciles it.
+          researchRollback = serialize(state);
+          applyLocal();
+          render();                       // reflect deducted aura / unlocks now
+          mpClient.sendAction({ type: 'action_research', techId: node.id });
+        } else {
+          applyLocal();
+          render();
+        }
       });
     }
 
