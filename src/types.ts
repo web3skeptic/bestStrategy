@@ -126,10 +126,12 @@ export const PLAYER_COLORS: readonly string[] = [
   '#ff8833', // 5 orange
 ];
 
-// Map radius as a function of player count: 2p keeps the classic radius 6,
-// growing by 1 per extra player so every player still gets a fair start.
+// Map radius as a function of player count: 2-player games (incl. vs-AI) use a
+// tighter radius-5 board for faster, more contested matches; 3+ players keep the
+// classic radius 6 at 2p baseline, growing by 1 per extra player so every player
+// still gets a fair start.
 export function mapRadiusForPlayers(numPlayers: number): number {
-  return 6 + Math.max(0, numPlayers - 2);
+  return numPlayers <= 2 ? 5 : 6 + Math.max(0, numPlayers - 2);
 }
 
 // Total temple count: one starting temple per player plus one neutral temple

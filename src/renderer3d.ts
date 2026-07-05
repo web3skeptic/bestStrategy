@@ -499,6 +499,18 @@ export class Renderer3D {
   getHexSize(): number { return HEX_R; }
   getCenter(): { x: number; y: number } { return { x: 0, y: 0 }; }
 
+  // Re-center the camera on a specific hex (e.g. the local player's home temple
+  // at game start), preserving the current view angle/distance, then apply a
+  // slight zoom-in. Call after init() so it overrides the default (0,0,0) target.
+  focusOnHex(hex: HexCoord, zoom = 0.82): void {
+    const { x, z } = hexToWorld(hex);
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    this.controls.target.set(x, 0, z);
+    this.camera.position.set(x + offset.x, offset.y, z + offset.z);
+    this.dolly(zoom);
+    this.controls.update();
+  }
+
   private dolly(factor: number): void {
     const offset = this.camera.position.clone().sub(this.controls.target);
     const len = THREE.MathUtils.clamp(offset.length() * factor, this.controls.minDistance, this.controls.maxDistance);

@@ -666,6 +666,13 @@ function startLocalGame(kinds: ControllerKind[]): void {
   logCombat(`--- New Game (${kinds.length} players: ${humans} human, ${ais} AI) ---`);
   logCombat(`${getCurrentPlayer(state).name} goes first.`);
   autoSelectTemple();   // pre-select the human's temple (no-op if an AI moves first)
+  // Open the camera centered on the local human's home temple with a slight
+  // zoom-in, instead of the default board-center framing.
+  const humanSeat = controllers.findIndex(k => k === 'human');
+  if (humanSeat >= 0) {
+    const homeTemple = state.temples.find(t => t.id === state.players[humanSeat]?.startTempleId);
+    if (homeTemple) renderer.focusOnHex(homeTemple.pos);
+  }
   render();
   maybeRunAITurn();     // if an AI won the coin flip, let it take its first turn
 }
