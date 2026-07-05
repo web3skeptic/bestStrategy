@@ -61,6 +61,15 @@ export interface Unit {
   hasCaptured: boolean;
 }
 
+// A unit "still needs to move" this turn while it has neither moved nor attacked.
+// This mirrors the engine's own move gate (selectUnit computes move targets only
+// when !hasMoved && !hasAttacked, and attack() spends both flags), so the to-move
+// dot shows for fresh units and clears the instant the unit acts — moves OR
+// attacks. Reset each turn by endTurn (hasMoved/hasAttacked → false).
+export function unitYetToMove(unit: Unit): boolean {
+  return unit.hp > 0 && !unit.hasMoved && !unit.hasAttacked;
+}
+
 // ── Temple level system ──
 export const TEMPLE_AURA_PER_LEVEL = 2;    // aura income = effective-level × this, per turn
 export const TEMPLE_MAX_LEVEL = 10;

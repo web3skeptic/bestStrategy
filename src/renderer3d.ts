@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, Temple, TeleportBuilding, SUPPORT_RANGE } from './types';
+import { GameState, HexCoord, Unit, Temple, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
 import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
@@ -220,6 +220,10 @@ export class Renderer3D {
   private unitMeshes = new Map<string, THREE.Object3D>();
   private boosterAuras = new Map<string, THREE.Mesh[]>(); // pulsating range rings, keyed by unit id
   private unitHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number }>();
+  // Small pulsating "still to move" dot above each of the local player's units
+  // that still has an action this turn. One per unit, toggled by visibility and
+  // pulsed in advanceAnimations; geometry+material are shared singletons.
+  private toMoveDots = new Map<string, THREE.Mesh>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
   private templeMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
   private teleportMeshes = new Map<string, THREE.Object3D>();
@@ -228,6 +232,8 @@ export class Renderer3D {
   private capGeo: THREE.CylinderGeometry;
   private highlightGeo: THREE.CylinderGeometry;
   private fogMat: THREE.MeshStandardMaterial;
+  private dotGeo: THREE.SphereGeometry;
+  private dotMat: THREE.MeshBasicMaterial;
   // Dimmed clones of the tiles' lit materials (cached, keyed by the lit material),
   // applied to a tile's meshes while it is explored-but-unseen.
   private darkMatCache = new Map<THREE.Material, THREE.Material>();
@@ -431,6 +437,9 @@ export class Renderer3D {
     this.capGeo = new THREE.CylinderGeometry(HEX_R, HEX_R, TILE_H, 6);
     this.highlightGeo = new THREE.CylinderGeometry(HEX_R * 0.92, HEX_R * 0.92, 0.03, 6);
     this.fogMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 1 }); // unexplored: opaque near-black
+    // Shared "still to move" dot: a small unlit sphere drawn on top of units.
+    this.dotGeo = new THREE.SphereGeometry(0.12, 12, 8);
+    this.dotMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false, toneMapped: false });
 
     // Register the shared singletons so disposeObject() never frees them. The
     // shared unit face texture is created lazily by voxelWarrior on the first
@@ -439,6 +448,8 @@ export class Renderer3D {
     this.sharedResources.add(this.capGeo);
     this.sharedResources.add(this.highlightGeo);
     this.sharedResources.add(this.fogMat);
+    this.sharedResources.add(this.dotGeo);
+    this.sharedResources.add(this.dotMat);
 
     this.hudCamera.position.z = 40; // ortho HUD camera looks down -z at the slabs
     // Light the HUD rock slabs from the top-left-front so the chiselled facets read.
@@ -476,6 +487,7 @@ export class Renderer3D {
     this.unitMeshes.clear();
     this.boosterAuras.clear();
     this.unitHpBars.clear();
+    this.toMoveDots.clear();
     this.lastUnitHp.clear();
     this.templeMeshes.clear();
     this.teleportMeshes.clear();
@@ -491,6 +503,17 @@ export class Renderer3D {
   }
 
   // ── public API parity with the 2D renderer ──
+
+  // Debug/testing hook (see window.__dots): count of currently-visible
+  // "still to move" dots. Mirrors __own/__sel — harmless in production.
+  visibleToMoveDots(): number {
+    let n = 0;
+    for (const d of this.toMoveDots.values()) if (d.visible) n++;
+    return n;
+  }
+  // Latest "show to-move dots" decision from render(), reused by the in-flight
+  // move re-sync in advanceAnimations so dots don't flicker off mid-animation.
+  private lastShowToMove = false;
 
   get zoom(): number { return 1; }
   zoomIn(): void { this.dolly(0.85); }
@@ -671,7 +694,13 @@ export class Renderer3D {
     this.syncFog(explored, visible);
     this.syncHighlights(state, explored);
     this.syncStructures(state, explored, visible);
-    this.syncUnits(state, playerId, visible, !!omniscient);
+    // Show "still to move" dots only on the LOCAL viewer's own units, and only
+    // while it is that viewer's turn to act (never during an AI/opponent turn or
+    // an omniscient/spectator view).
+    const showToMove = viewerPlayerId !== undefined && !omniscient
+      && state.phase === 'playing' && state.currentPlayerIndex === viewerPlayerId;
+    this.lastShowToMove = showToMove;
+    this.syncUnits(state, playerId, visible, !!omniscient, showToMove);
   }
 
   private tileKindOf(state: GameState, key: string): TileKind {
@@ -1085,6 +1114,18 @@ export class Renderer3D {
     this.unitHpBars.set(unitId, { group, fg, barW });
   }
 
+  // "Still to move" dot, parented to the unit's outer group so it tracks the
+  // unit's position (incl. move tweens). Hidden by default; syncUnits toggles
+  // visibility and advanceAnimations pulses it. Uses the shared dotGeo/dotMat.
+  private addToMoveDot(parent: THREE.Object3D, unitId: string): void {
+    const dot = new THREE.Mesh(this.dotGeo, this.dotMat);
+    dot.position.y = 2.6; // just above the HP bar (y=2.05)
+    dot.renderOrder = 1000;
+    dot.visible = false;
+    parent.add(dot);
+    this.toMoveDots.set(unitId, dot);
+  }
+
   private updateHpBar(unitId: string, hp: number, maxHp: number): void {
     const bar = this.unitHpBars.get(unitId);
     if (!bar) return;
@@ -1122,7 +1163,7 @@ export class Renderer3D {
     }
   }
 
-  private syncUnits(state: GameState, playerId: number, visible: Set<string>, omniscient: boolean): void {
+  private syncUnits(state: GameState, playerId: number, visible: Set<string>, omniscient: boolean, showToMove = false): void {
     const seen = new Set<string>();
     const now = performance.now();
     for (const unit of state.units) {
@@ -1146,12 +1187,16 @@ export class Renderer3D {
         mesh.add(model);
         mesh.userData.facer = model;
         this.addHpBar(mesh, unit.id);
+        this.addToMoveDot(mesh, unit.id);
         mesh.traverse(o => o.layers.enable(UNIT_LAYER)); // lit by the brighter unit-only lights
         this.unitGroup.add(mesh);
         this.unitMeshes.set(unit.id, mesh);
         this.unitFacing.set(unit.id, { cur: off, tgt: off });
       }
       this.updateHpBar(unit.id, unit.hp, unit.stats.maxHp);
+      // Toggle the "still to move" dot: own units, viewer's turn, action remaining.
+      const dot = this.toMoveDots.get(unit.id);
+      if (dot) dot.visible = showToMove && unit.playerId === playerId && unitYetToMove(unit);
 
       // Forest stealth: fade the viewer's own units while they're hidden in a
       // forest (not revealed to the enemy); solid once spotted.
@@ -1184,6 +1229,7 @@ export class Renderer3D {
         this.unitMeshes.delete(id);
         this.boosterAuras.delete(id);
         this.unitHpBars.delete(id);
+        this.toMoveDots.delete(id);
         this.unitFacing.delete(id);
         this.unitFaded.delete(id);
       }
@@ -1463,6 +1509,15 @@ export class Renderer3D {
     if (this.unitHpBars.size > 0) {
       for (const bar of this.unitHpBars.values()) bar.group.quaternion.copy(this.camera.quaternion);
     }
+    // Pulse the "still to move" dots: a subtle, uniform scale+opacity breathe.
+    if (this.toMoveDots.size > 0) {
+      const osc = 0.5 + 0.5 * Math.sin(now * 0.005); // 0..1, ~1.3s period
+      const scale = 0.85 + 0.35 * osc;
+      this.dotMat.opacity = 0.5 + 0.4 * osc;
+      for (const dot of this.toMoveDots.values()) {
+        if (dot.visible) dot.scale.setScalar(scale);
+      }
+    }
     // Booster/healer range rings ripple outward from the unit: each ring scales
     // 0 → 1 (centre → edge) on a loop and fades, offset in phase.
     if (this.boosterAuras.size > 0) {
@@ -1484,7 +1539,7 @@ export class Renderer3D {
       const visible = this.lastOmniscient
         ? new Set(this.mapHexes.map(h => hexKey(h)))
         : (this.lastViewer !== undefined ? getPlayerVisible(this.lastState, this.lastViewer) : getCurrentPlayerVisible(this.lastState));
-      this.syncUnits(this.lastState, playerId, visible, !!this.lastOmniscient);
+      this.syncUnits(this.lastState, playerId, visible, !!this.lastOmniscient, this.lastShowToMove);
     }
     if (this.explosions.length > 0) {
       this.explosions = this.explosions.filter(ex => {
