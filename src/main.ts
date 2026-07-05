@@ -116,7 +116,7 @@ const renderer = new Renderer3D(canvas);
 renderer.init(state.mapRadius);
 // Debug-only getters for automated verification of touch camera controls.
 (window as any).__cam = () => renderer.cameraDebug();
-(window as any).__dots = () => renderer.visibleToMoveDots();
+(window as any).__tinted = () => renderer.tintedUnitCount();
 (window as any).__sel = () => ({
   mode: state.selectionMode,
   templeId: state.selectedTempleId,

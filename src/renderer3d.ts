@@ -220,10 +220,10 @@ export class Renderer3D {
   private unitMeshes = new Map<string, THREE.Object3D>();
   private boosterAuras = new Map<string, THREE.Mesh[]>(); // pulsating range rings, keyed by unit id
   private unitHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number }>();
-  // Small pulsating "still to move" dot above each of the local player's units
-  // that still has an action this turn. One per unit, toggled by visibility and
-  // pulsed in advanceAnimations; geometry+material are shared singletons.
-  private toMoveDots = new Map<string, THREE.Mesh>();
+  // Ids of the local player's units currently showing the pulsating "still to
+  // move" yellow tint (their per-unit materials' emissive is driven in
+  // advanceAnimations). Populated in syncUnits under the same turn/viewer gate.
+  private toMoveTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
   private templeMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
   private teleportMeshes = new Map<string, THREE.Object3D>();
@@ -232,8 +232,6 @@ export class Renderer3D {
   private capGeo: THREE.CylinderGeometry;
   private highlightGeo: THREE.CylinderGeometry;
   private fogMat: THREE.MeshStandardMaterial;
-  private dotGeo: THREE.SphereGeometry;
-  private dotMat: THREE.MeshBasicMaterial;
   // Dimmed clones of the tiles' lit materials (cached, keyed by the lit material),
   // applied to a tile's meshes while it is explored-but-unseen.
   private darkMatCache = new Map<THREE.Material, THREE.Material>();
@@ -437,9 +435,6 @@ export class Renderer3D {
     this.capGeo = new THREE.CylinderGeometry(HEX_R, HEX_R, TILE_H, 6);
     this.highlightGeo = new THREE.CylinderGeometry(HEX_R * 0.92, HEX_R * 0.92, 0.03, 6);
     this.fogMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 1 }); // unexplored: opaque near-black
-    // Shared "still to move" dot: a small unlit sphere drawn on top of units.
-    this.dotGeo = new THREE.SphereGeometry(0.12, 12, 8);
-    this.dotMat = new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false, toneMapped: false });
 
     // Register the shared singletons so disposeObject() never frees them. The
     // shared unit face texture is created lazily by voxelWarrior on the first
@@ -448,8 +443,6 @@ export class Renderer3D {
     this.sharedResources.add(this.capGeo);
     this.sharedResources.add(this.highlightGeo);
     this.sharedResources.add(this.fogMat);
-    this.sharedResources.add(this.dotGeo);
-    this.sharedResources.add(this.dotMat);
 
     this.hudCamera.position.z = 40; // ortho HUD camera looks down -z at the slabs
     // Light the HUD rock slabs from the top-left-front so the chiselled facets read.
@@ -487,7 +480,7 @@ export class Renderer3D {
     this.unitMeshes.clear();
     this.boosterAuras.clear();
     this.unitHpBars.clear();
-    this.toMoveDots.clear();
+    this.toMoveTintIds.clear();
     this.lastUnitHp.clear();
     this.templeMeshes.clear();
     this.teleportMeshes.clear();
@@ -504,15 +497,13 @@ export class Renderer3D {
 
   // ── public API parity with the 2D renderer ──
 
-  // Debug/testing hook (see window.__dots): count of currently-visible
-  // "still to move" dots. Mirrors __own/__sel — harmless in production.
-  visibleToMoveDots(): number {
-    let n = 0;
-    for (const d of this.toMoveDots.values()) if (d.visible) n++;
-    return n;
+  // Debug/testing hook (see window.__tinted): count of units currently showing
+  // the "still to move" yellow tint. Mirrors __own/__sel — harmless in production.
+  tintedUnitCount(): number {
+    return this.toMoveTintIds.size;
   }
-  // Latest "show to-move dots" decision from render(), reused by the in-flight
-  // move re-sync in advanceAnimations so dots don't flicker off mid-animation.
+  // Latest "show to-move tint" decision from render(), reused by the in-flight
+  // move re-sync in advanceAnimations so the tint doesn't flicker off mid-animation.
   private lastShowToMove = false;
 
   get zoom(): number { return 1; }
@@ -694,9 +685,9 @@ export class Renderer3D {
     this.syncFog(explored, visible);
     this.syncHighlights(state, explored);
     this.syncStructures(state, explored, visible);
-    // Show "still to move" dots only on the LOCAL viewer's own units, and only
-    // while it is that viewer's turn to act (never during an AI/opponent turn or
-    // an omniscient/spectator view).
+    // Show the "still to move" tint only on the LOCAL viewer's own units, and
+    // only while it is that viewer's turn to act (never during an AI/opponent
+    // turn or an omniscient/spectator view).
     const showToMove = viewerPlayerId !== undefined && !omniscient
       && state.phase === 'playing' && state.currentPlayerIndex === viewerPlayerId;
     this.lastShowToMove = showToMove;
@@ -1114,16 +1105,23 @@ export class Renderer3D {
     this.unitHpBars.set(unitId, { group, fg, barW });
   }
 
-  // "Still to move" dot, parented to the unit's outer group so it tracks the
-  // unit's position (incl. move tweens). Hidden by default; syncUnits toggles
-  // visibility and advanceAnimations pulses it. Uses the shared dotGeo/dotMat.
-  private addToMoveDot(parent: THREE.Object3D, unitId: string): void {
-    const dot = new THREE.Mesh(this.dotGeo, this.dotMat);
-    dot.position.y = 2.6; // just above the HP bar (y=2.05)
-    dot.renderOrder = 1000;
-    dot.visible = false;
-    parent.add(dot);
-    this.toMoveDots.set(unitId, dot);
+  // Drive the "still to move" yellow tint by setting the unit model's per-unit
+  // MeshStandardMaterial emissive. `rgb` = pulsing yellow while tinted, or null to
+  // clear it back to black. Shared materials (none on units today, but the face
+  // texture's material could be) are skipped so the tint never bleeds across units.
+  private setUnitEmissive(mesh: THREE.Object3D, rgb: [number, number, number] | null): void {
+    mesh.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.material) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) {
+        if (this.sharedResources.has(mat) || (mat as { userData?: { shared?: boolean } }).userData?.shared) continue;
+        const sm = mat as THREE.MeshStandardMaterial;
+        if (!sm.emissive) continue;
+        if (rgb) sm.emissive.setRGB(rgb[0], rgb[1], rgb[2]);
+        else sm.emissive.setRGB(0, 0, 0);
+      }
+    });
   }
 
   private updateHpBar(unitId: string, hp: number, maxHp: number): void {
@@ -1187,16 +1185,18 @@ export class Renderer3D {
         mesh.add(model);
         mesh.userData.facer = model;
         this.addHpBar(mesh, unit.id);
-        this.addToMoveDot(mesh, unit.id);
         mesh.traverse(o => o.layers.enable(UNIT_LAYER)); // lit by the brighter unit-only lights
         this.unitGroup.add(mesh);
         this.unitMeshes.set(unit.id, mesh);
         this.unitFacing.set(unit.id, { cur: off, tgt: off });
       }
       this.updateHpBar(unit.id, unit.hp, unit.stats.maxHp);
-      // Toggle the "still to move" dot: own units, viewer's turn, action remaining.
-      const dot = this.toMoveDots.get(unit.id);
-      if (dot) dot.visible = showToMove && unit.playerId === playerId && unitYetToMove(unit);
+      // "Still to move" tint: own units, viewer's turn, unit yet to act. Track the
+      // id set (emissive pulsed in advanceAnimations); clear emissive the moment a
+      // unit drops out of the set (moved/attacked, turn ended, etc.).
+      const tint = showToMove && unit.playerId === playerId && unitYetToMove(unit);
+      if (tint) this.toMoveTintIds.add(unit.id);
+      else if (this.toMoveTintIds.delete(unit.id)) this.setUnitEmissive(mesh, null);
 
       // Forest stealth: fade the viewer's own units while they're hidden in a
       // forest (not revealed to the enemy); solid once spotted.
@@ -1229,7 +1229,7 @@ export class Renderer3D {
         this.unitMeshes.delete(id);
         this.boosterAuras.delete(id);
         this.unitHpBars.delete(id);
-        this.toMoveDots.delete(id);
+        this.toMoveTintIds.delete(id);
         this.unitFacing.delete(id);
         this.unitFaded.delete(id);
       }
@@ -1509,13 +1509,16 @@ export class Renderer3D {
     if (this.unitHpBars.size > 0) {
       for (const bar of this.unitHpBars.values()) bar.group.quaternion.copy(this.camera.quaternion);
     }
-    // Pulse the "still to move" dots: a subtle, uniform scale+opacity breathe.
-    if (this.toMoveDots.size > 0) {
+    // Pulse the "still to move" yellow tint: a subtle, uniform emissive breathe
+    // on the tinted units' materials (~1.3s period). Kept low so it reads as a
+    // faint yellow wash, not a solid recolor.
+    if (this.toMoveTintIds.size > 0) {
       const osc = 0.5 + 0.5 * Math.sin(now * 0.005); // 0..1, ~1.3s period
-      const scale = 0.85 + 0.35 * osc;
-      this.dotMat.opacity = 0.5 + 0.4 * osc;
-      for (const dot of this.toMoveDots.values()) {
-        if (dot.visible) dot.scale.setScalar(scale);
+      const e = 0.10 + 0.26 * osc;                    // emissive strength
+      const rgb: [number, number, number] = [e, e * 0.88, e * 0.20]; // warm yellow
+      for (const id of this.toMoveTintIds) {
+        const mesh = this.unitMeshes.get(id);
+        if (mesh) this.setUnitEmissive(mesh, rgb);
       }
     }
     // Booster/healer range rings ripple outward from the unit: each ring scales
