@@ -519,6 +519,13 @@ function leaveActiveGame(): void {
 }
 
 function showMenu(): void {
+  // Pause the local game while the menu is up: cancel any pending AI turn so it
+  // can't run (and potentially END the game) behind the menu. Otherwise a
+  // scheduled runAI() fires while we're on the menu, silently advancing/finishing
+  // the game and leaving the "Continue" CTA stale (offering a game that just
+  // ended, or one that's a single AI move from a loss). Re-armed on resume
+  // (restoreGame / Esc-to-close both call maybeRunAITurn).
+  cancelAITurn();
   saveGame(); // snapshot the local game before leaving to the menu (no-op online)
   menuOverlay.classList.remove('hidden');
   // Clear any turn indicators so they don't linger over the menu.
@@ -1818,7 +1825,9 @@ document.addEventListener('keydown', (e) => {
     if (menuOverlay.classList.contains('hidden')) {
       showMenu();
     } else {
-      if (gameStarted) hideMenu();
+      // Resume in place: re-arm a paused AI turn (no-op if it's the human's turn
+      // or the game is over — showMenu() cancels it when the menu opens).
+      if (gameStarted) { hideMenu(); maybeRunAITurn(); }
     }
     return;
   }
