@@ -228,14 +228,9 @@ export class Renderer3D {
   private templeMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
   private teleportMeshes = new Map<string, THREE.Object3D>();
   private highlightPool: THREE.Mesh[] = [];
-  // Floating green rings that hover ABOVE reachable temple platforms. A temple
-  // mesh is tall enough to occlude the flat ground move-highlight, so temples
-  // that are a legal move destination get this separate hovering marker instead.
-  private templeMovePool: THREE.Mesh[] = [];
 
   private capGeo: THREE.CylinderGeometry;
   private highlightGeo: THREE.CylinderGeometry;
-  private templeMoveGeo: THREE.TorusGeometry;
   private fogMat: THREE.MeshStandardMaterial;
   // Dimmed clones of the tiles' lit materials (cached, keyed by the lit material),
   // applied to a tile's meshes while it is explored-but-unseen.
@@ -439,8 +434,6 @@ export class Renderer3D {
     // that is fogged: features are hidden and this opaque dark tile shows instead.
     this.capGeo = new THREE.CylinderGeometry(HEX_R, HEX_R, TILE_H, 6);
     this.highlightGeo = new THREE.CylinderGeometry(HEX_R * 0.92, HEX_R * 0.92, 0.03, 6);
-    // Flat green ring for the hovering "you can move/capture here" temple marker.
-    this.templeMoveGeo = new THREE.TorusGeometry(HEX_R * 0.55, HEX_R * 0.1, 10, 28);
     this.fogMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 1 }); // unexplored: opaque near-black
 
     // Register the shared singletons so disposeObject() never frees them. The
@@ -449,7 +442,6 @@ export class Renderer3D {
     // userData.shared = true as a belt-and-suspenders guard).
     this.sharedResources.add(this.capGeo);
     this.sharedResources.add(this.highlightGeo);
-    this.sharedResources.add(this.templeMoveGeo);
     this.sharedResources.add(this.fogMat);
 
     this.hudCamera.position.z = 40; // ortho HUD camera looks down -z at the slabs
@@ -493,7 +485,6 @@ export class Renderer3D {
     this.templeMeshes.clear();
     this.teleportMeshes.clear();
     this.highlightPool = [];
-    this.templeMovePool = [];
     this.moveAnims.clear();
     this.unitFacing.clear();
     this.unitFaded.clear();
@@ -694,10 +685,6 @@ export class Renderer3D {
     this.syncFog(explored, visible);
     this.syncHighlights(state, explored);
     this.syncStructures(state, explored, visible);
-    // Temples are tall and occlude the flat ground move-highlight, so reachable
-    // temple tiles get a separate ring that hovers above the platform. Runs
-    // after syncStructures so the temple meshes exist for the height lookup.
-    this.syncTempleMoveMarkers(state, explored);
     // Show the "still to move" tint only on the LOCAL viewer's own units, and
     // only while it is that viewer's turn to act (never during an AI/opponent
     // turn or an omniscient/spectator view).
@@ -986,37 +973,6 @@ export class Renderer3D {
       else if (supportSet.has(key)) place(hex, 0x5096e1);
     }
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
-  }
-
-  // Green ring hovering above each reachable temple. The flat ground highlight
-  // placed by syncHighlights is occluded by the temple mesh, so this marker is
-  // what actually reads as "you can move/capture here" for temple tiles. Pooled
-  // and hidden exactly like syncHighlights so it never leaks and clears on
-  // deselect (empty moveHexes ⇒ every marker hidden).
-  private syncTempleMoveMarkers(state: GameState, explored: Set<string>): void {
-    const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
-    let j = 0;
-    for (const temple of state.temples) {
-      const key = hexKey(temple.pos);
-      if (!explored.has(key)) continue;   // same visibility gating as syncHighlights
-      if (!moveSet.has(key)) continue;
-      let mesh = this.templeMovePool[j];
-      if (!mesh) {
-        mesh = new THREE.Mesh(this.templeMoveGeo, new THREE.MeshBasicMaterial({ color: 0x3cc850, transparent: true, opacity: 0.85 }));
-        mesh.rotation.x = -Math.PI / 2; // lay the torus flat (horizontal ring)
-        this.overlayGroup.add(mesh);
-        this.templeMovePool[j] = mesh;
-      }
-      const { x, z } = hexToWorld(temple.pos);
-      // Float clearly above the actual temple top so it is never occluded. The
-      // top varies with temple level, so measure the built mesh's bounds.
-      const entry = this.templeMeshes.get(temple.id);
-      const topY = entry ? new THREE.Box3().setFromObject(entry.mesh).max.y : 1.8;
-      mesh.position.set(x, topY + 0.4, z);
-      mesh.visible = true;
-      j++;
-    }
-    for (; j < this.templeMovePool.length; j++) this.templeMovePool[j].visible = false;
   }
 
   private syncStructures(state: GameState, explored: Set<string>, visible: Set<string>): void {
