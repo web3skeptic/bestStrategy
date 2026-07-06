@@ -86,15 +86,18 @@ export function build_tileForest(THREE, P) {
   var trunkMat = P.mat(P.colors.wood, 0.95);
   var foliageMat = P.mat(P.colors.leaf, 0.85);
 
-  // Three trees, each in its own group so it can get a little random size +
-  // rotation so forests don't all look identical. All within radius 0.85.
-  var treeData = [
-    { x: -0.28, z: -0.16 },
-    { x:  0.28, z:  0.22 },
-    { x:  0.04, z: -0.40 }
+  // Three trees per tile, placed on a randomly rotated 120-degree fan with
+  // jittered angle/radius (keeps them separated and inside the hex), with one
+  // large / one medium / one small so the size variation always reads. The
+  // whole arrangement is re-rolled per instance, so no two forests match.
+  var baseAngle = Math.random() * Math.PI * 2;
+  var scales = [
+    1.10 + Math.random() * 0.25, // large
+    0.85 + Math.random() * 0.20, // medium
+    0.62 + Math.random() * 0.16  // small
   ];
 
-  for (var i = 0; i < treeData.length; i++) {
+  for (var i = 0; i < 3; i++) {
     var tree = new THREE.Group();
 
     // Trunk: bottom at y=0, top at y=0.28
@@ -109,10 +112,16 @@ export function build_tileForest(THREE, P) {
     foliage.castShadow = true;
     tree.add(foliage);
 
-    var s = 0.82 + Math.random() * 0.45;
-    tree.scale.set(s, s, s);
-    tree.rotation.y = Math.random() * Math.PI;
-    tree.position.set(treeData[i].x, 0, treeData[i].z);
+    var s = scales[i];
+    // Slight extra height variance so trees aren't uniformly proportioned.
+    tree.scale.set(s, s * (0.9 + Math.random() * 0.25), s);
+    tree.rotation.y = Math.random() * Math.PI * 2;
+
+    // Fan slot: 120 deg apart +/- 20 deg, radius 0.26..0.50 from tile center.
+    // Max reach = 0.50 + foliage 0.22*1.35 ~ 0.80, inside the 0.866 hex inradius.
+    var a = baseAngle + i * (Math.PI * 2 / 3) + (Math.random() - 0.5) * 0.7;
+    var r = 0.26 + Math.random() * 0.24;
+    tree.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
     root.add(tree);
   }
 
@@ -193,36 +202,70 @@ export function build_tileWall(THREE, P) {
   var rockMat = new THREE.MeshStandardMaterial({ color: 0x4b4f59, roughness: 1.0, metalness: 0, flatShading: true });
   var rockDark = new THREE.MeshStandardMaterial({ color: 0x383b44, roughness: 1.0, metalness: 0, flatShading: true });
 
-  // Build one jittered, faceted peak (base sits on y = 0).
+  // Build one jittered, faceted peak. ConeGeometry duplicates vertices (UV
+  // seam, apex ring, cap/wall boundary), so the jitter offset is WELDED: keyed
+  // by rounded vertex position, every copy of a vertex gets the same offset and
+  // the mesh stays watertight. (Jittering copies independently is what tore the
+  // old mountains open into see-through slits and a shredded tip.) Y jitter
+  // fades to 0 at the base ring so it stays planar, and the whole peak is sunk
+  // slightly into the tile so no gap can open at the ground line.
   function peak(radius, height, segs, material, jitter) {
     var geo = new THREE.ConeGeometry(radius, height, segs, 3);
     var pos = geo.attributes.position;
+    var weld = {};
     for (var i = 0; i < pos.count; i++) {
-      var y = pos.getY(i);
-      var t = (y + height / 2) / height; // 0 at base ring, 1 at the tip
-      pos.setX(i, pos.getX(i) + (Math.random() - 0.5) * jitter * (0.35 + t));
-      pos.setZ(i, pos.getZ(i) + (Math.random() - 0.5) * jitter * (0.35 + t));
-      pos.setY(i, y + (Math.random() - 0.5) * jitter * 0.6);
+      var x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      var key = Math.round(x * 500) + ',' + Math.round(y * 500) + ',' + Math.round(z * 500);
+      var d = weld[key];
+      if (!d) {
+        var t = (y + height / 2) / height; // 0 at base ring, 1 at the tip
+        d = weld[key] = [
+          (Math.random() - 0.5) * jitter * (0.35 + t),
+          (Math.random() - 0.5) * jitter * 1.2 * t,
+          (Math.random() - 0.5) * jitter * (0.35 + t)
+        ];
+      }
+      pos.setXYZ(i, x + d[0], y + d[1], z + d[2]);
     }
     geo.computeVertexNormals();
     var m = new THREE.Mesh(geo, material);
-    m.position.y = height / 2;
-    m.rotation.y = Math.random() * Math.PI;
+    m.position.y = height / 2 - 0.04; // base sits just below the tile top
+    m.rotation.y = Math.random() * Math.PI * 2;
     m.castShadow = true;
     m.receiveShadow = true;
     return m;
   }
 
-  // Tall main summit + two lower shoulder lumps for an irregular silhouette.
-  root.add(peak(0.84, 1.4, 7, rockMat, 0.18));
+  // Tall main summit + 2-3 lower shoulder lumps at random azimuths for an
+  // irregular (but always solid) massif that differs per tile.
+  root.add(peak(0.80 + Math.random() * 0.06, 1.25 + Math.random() * 0.3, 7, rockMat, 0.18));
 
-  var s1 = peak(0.48, 0.7, 6, rockDark, 0.15);
-  s1.position.set(-0.40, 0.35, 0.24);
-  root.add(s1);
+  var nShoulders = 2 + (Math.random() < 0.4 ? 1 : 0);
+  var shoulderA = Math.random() * Math.PI * 2;
+  for (var k = 0; k < nShoulders; k++) {
+    var sh = peak(0.36 + Math.random() * 0.08, 0.5 + Math.random() * 0.25, 6, rockDark, 0.15);
+    var a = shoulderA + k * (Math.PI * 2 / nShoulders) + (Math.random() - 0.5) * 0.8;
+    var d = 0.30 + Math.random() * 0.08;
+    sh.position.x = Math.cos(a) * d;
+    sh.position.z = Math.sin(a) * d;
+    root.add(sh);
+  }
 
-  var s2 = peak(0.44, 0.6, 6, rockDark, 0.15);
-  s2.position.set(0.40, 0.30, -0.26);
-  root.add(s2);
+  // 1-2 chunky boulders around the skirt ground the massif (mirrors the hill
+  // tile's rock props). Shared geometry; reuses the flat-shaded dark material.
+  var boulderGeo = new THREE.SphereGeometry(0.11, 6, 5);
+  var nBoulders = 1 + Math.floor(Math.random() * 2);
+  for (var b = 0; b < nBoulders; b++) {
+    var ba = Math.random() * Math.PI * 2;
+    var br = 0.58 + Math.random() * 0.14;
+    var boulder = new THREE.Mesh(boulderGeo, rockDark);
+    boulder.position.set(Math.cos(ba) * br, 0.03, Math.sin(ba) * br);
+    var bs = 0.7 + Math.random() * 0.5;
+    boulder.scale.set(bs, bs * 0.7, bs);
+    boulder.rotation.y = Math.random() * Math.PI * 2;
+    boulder.castShadow = true;
+    root.add(boulder);
+  }
 
   return root;
 }
