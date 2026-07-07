@@ -313,9 +313,16 @@ export class Renderer3D {
     this.controls.screenSpacePanning = false;
     // Mobile (touch) gesture map: one finger pans the camera position across the
     // board; two fingers pinch-to-zoom AND orbit the view angle (azimuth + pitch).
-    // Desktop mouse mapping is left at the OrbitControls defaults (left=rotate,
-    // right=pan, wheel=zoom) so desktop behaviour is unchanged.
     this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+    // Desktop mouse map: PRIMARY (left) drag pans the camera across the map — parity
+    // with mobile's one-finger pan, so the natural drag moves the view instead of
+    // being stuck orbiting the home temple. Rotate/orbit moves to the RIGHT button
+    // (like mobile's secondary two-finger orbit); middle-drag dollies; wheel zooms.
+    this.controls.mouseButtons = {
+      LEFT: THREE.MOUSE.PAN,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.ROTATE,
+    };
     // Snappier pan (default is 1.0). panSpeed affects mouse + touch; kept high so
     // one-finger pan feels fast. rotateSpeed only affects desktop mouse-drag orbit
     // now (two-finger touch rotate is handled manually below via twist).
@@ -329,7 +336,8 @@ export class Renderer3D {
     // two-finger path is pure pinch-zoom) and rotate the azimuth ourselves from the
     // TWIST — the change in angle of the finger-to-finger vector, like Google/Apple
     // Maps. Pitch is kept locked during the gesture (no accidental tilt). Desktop
-    // fires no touch events, so its left-drag orbit / wheel-zoom are untouched.
+    // fires no touch events, so its mouse map (left-pan / right-orbit / wheel-zoom)
+    // is untouched.
     const TWIST_DEADZONE = 0.006; // rad per move: ignore micro-jitter
     const TWIST_MULT = 1.0;       // 1:1 twist, like a paper map under your fingers
     const _twOff = new THREE.Vector3();
