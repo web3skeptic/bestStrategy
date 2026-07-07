@@ -2,7 +2,12 @@ import { defineConfig } from "vite";
 import { resolve } from "path";
 
 export default defineConfig({
-  // Sub-path mount: set VITE_BASE=/game/ when serving behind nginx at /game/.
+  // Two deploy targets, so the base is env-driven (do NOT hardcode /game/):
+  //  • Self-hosted interslavic.space/game/  → build with `npm run build:game`
+  //    (VITE_BASE=/game/). nginx's `location /game/` strips the prefix before
+  //    proxying to the :8768 Express server, so assets MUST be emitted as
+  //    /game/assets/*; a plain base "/" build 404s every bundle there → dead UI.
+  //  • Netlify / Railway / Docker (served at root) → plain `npm run build` (base "/").
   base: process.env.VITE_BASE ?? "/",
   build: {
     rollupOptions: {
