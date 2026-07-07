@@ -128,58 +128,74 @@ export function build_tileForest(THREE, P) {
   return root;
 }
 
+// Darker, more muted grass used for plain + hill tiles (keeps forest etc. unchanged).
+var HILL_GRASS = 0x2a4722;
+var HILL_H = 0.6;   // pointed, but much lower than the mountain (~1.25)
+var HILL_R = 0.78;
+
+// ONE clean, watertight hill mound, shared across every hill tile (varied per
+// tile by rotation/scale instead of a bespoke mesh each). Built lazily on the
+// first call so THREE is available. ConeGeometry duplicates vertices (UV seam,
+// apex ring, cap/wall boundary), so the shaping jitter is WELDED — keyed by
+// rounded vertex position, every copy of a vertex gets the SAME offset — and the
+// mesh stays watertight. (Jittering copies independently is exactly what tore the
+// old mountains AND hills open into see-through slits.) Tagged userData.shared so
+// the renderer's per-tile disposeObject() never frees the shared singleton.
+var _hillGeo = null;
+var _hillMat = null;
+function hillAssets(THREE) {
+  if (_hillGeo) return;
+  var geo = new THREE.ConeGeometry(HILL_R, HILL_H, 7, 3);
+  var pos = geo.attributes.position;
+  var weld = {};
+  for (var i = 0; i < pos.count; i++) {
+    var x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    var key = Math.round(x * 500) + ',' + Math.round(y * 500) + ',' + Math.round(z * 500);
+    var d = weld[key];
+    if (!d) {
+      var t = (y + HILL_H / 2) / HILL_H; // 0 at base ring, 1 at the tip
+      d = weld[key] = [
+        (Math.random() - 0.5) * 0.22 * (0.4 + t),
+        (Math.random() - 0.5) * 0.14 * t,
+        (Math.random() - 0.5) * 0.22 * (0.4 + t)
+      ];
+    }
+    pos.setXYZ(i, x + d[0], y + d[1], z + d[2]);
+  }
+  geo.computeVertexNormals();
+  geo.userData = { shared: true };
+  _hillGeo = geo;
+  _hillMat = new THREE.MeshStandardMaterial({ color: HILL_GRASS, roughness: 0.95, metalness: 0, flatShading: true });
+  _hillMat.userData = { shared: true };
+}
+
 export function build_tileHill(THREE, P) {
   // Hills are passable: a peaked, faceted grassy mound — "tippy" but well short
-  // of the mountain's height. Slightly jittered per tile so they vary.
+  // of the mountain's height. One shared watertight mound, varied per tile by a
+  // hex-snapped rotation + slight scale/height jitter so neighbours never match.
+  hillAssets(THREE);
   var root = new THREE.Group();
-
-  // Darker, more muted grass used only for plain + hill tiles (keeps forest etc. unchanged).
-  var darkGrass = 0x2a4722;
 
   // Grass hex prism
   var prismGeo = new THREE.CylinderGeometry(P.HEX_R, P.HEX_R, P.TILE_H, 6);
-  var prism = new THREE.Mesh(prismGeo, P.mat(darkGrass, 0.95));
+  var prism = new THREE.Mesh(prismGeo, P.mat(HILL_GRASS, 0.95));
   prism.rotation.y = Math.PI / 6;
   prism.position.y = -P.TILE_H / 2;
   prism.receiveShadow = true;
   root.add(prism);
 
-  // Peaked grassy hill: a faceted cone (base on y = 0). Height ~0.6 — pointed,
-  // but much lower than the mountain (~1.4).
-  var hillH = 0.6;
-  var hillR = 0.78;
-  var hillGeo = new THREE.ConeGeometry(hillR, hillH, 7, 3);
-  var pos = hillGeo.attributes.position;
-  for (var i = 0; i < pos.count; i++) {
-    var y = pos.getY(i);
-    var t = (y + hillH / 2) / hillH; // 0 base, 1 tip
-    pos.setX(i, pos.getX(i) + (Math.random() - 0.5) * 0.12 * (0.4 + t));
-    pos.setZ(i, pos.getZ(i) + (Math.random() - 0.5) * 0.12 * (0.4 + t));
-  }
-  hillGeo.computeVertexNormals();
-  var hill = new THREE.Mesh(
-    hillGeo,
-    new THREE.MeshStandardMaterial({ color: darkGrass, roughness: 0.95, metalness: 0, flatShading: true })
-  );
-  hill.position.y = hillH / 2;
-  hill.rotation.y = Math.random() * Math.PI;
+  // The shared mound. Random Y-rotation snapped to the 6 hex orientations (so it
+  // still reads as tiled), plus a little size/height jitter. Base sunk 0.04 into
+  // the tile so no gap opens at the ground line.
+  var hill = new THREE.Mesh(_hillGeo, _hillMat);
+  var s = 0.9 + Math.random() * 0.18;             // overall footprint jitter
+  var hy = s * (0.88 + Math.random() * 0.28);     // height a touch independent
+  hill.scale.set(s, hy, s);
+  hill.rotation.y = Math.floor(Math.random() * 6) * (Math.PI / 3);
+  hill.position.y = (HILL_H / 2) * hy - 0.04;
   hill.castShadow = true;
   hill.receiveShadow = true;
   root.add(hill);
-
-  // A couple of small grey rocks around the base so it reads as a hill.
-  var rockGeo = new THREE.SphereGeometry(0.09, 6, 5);
-  var rockMat = P.mat(P.colors.rock, 0.9);
-  var nRocks = 2 + Math.floor(Math.random() * 2);
-  for (var k = 0; k < nRocks; k++) {
-    var a = Math.random() * Math.PI * 2;
-    var r = 0.5 + Math.random() * 0.22;
-    var rock = new THREE.Mesh(rockGeo, rockMat);
-    rock.position.set(Math.cos(a) * r, 0.05, Math.sin(a) * r);
-    rock.scale.set(1, 0.7, 1);
-    rock.castShadow = true;
-    root.add(rock);
-  }
 
   return root;
 }
