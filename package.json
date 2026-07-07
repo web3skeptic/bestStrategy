@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:game": "VITE_BASE=/game/ vite build",
     "build:atlas": "node scripts/build-tile-atlas.mjs",
     "server": "tsx server/server.ts",
     "server:dev": "tsx watch server/server.ts",
