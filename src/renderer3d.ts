@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { GameState, HexCoord, Unit, Temple, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
-import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed } from './game';
+import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canCaptureTemple } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
@@ -224,6 +224,11 @@ export class Renderer3D {
   // move" yellow tint (their per-unit materials' emissive is driven in
   // advanceAnimations). Populated in syncUnits under the same turn/viewer gate.
   private toMoveTintIds = new Set<string>();
+  // Ids of temples currently showing the pulsating warm-yellow tint — either they
+  // sit on a reachable move hex for the selected unit, or a local unit stands on
+  // them with a pending capture. Driven in the same pulse block as toMoveTintIds
+  // (same phase); the temple model itself is tinted (no floating markers).
+  private templeTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
   private templeMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
   private teleportMeshes = new Map<string, THREE.Object3D>();
@@ -496,6 +501,7 @@ export class Renderer3D {
     this.boosterAuras.clear();
     this.unitHpBars.clear();
     this.toMoveTintIds.clear();
+    this.templeTintIds.clear();
     this.lastUnitHp.clear();
     this.templeMeshes.clear();
     this.teleportMeshes.clear();
@@ -695,17 +701,19 @@ export class Renderer3D {
       visible = viewerPlayerId !== undefined ? getPlayerVisible(state, viewerPlayerId) : getCurrentPlayerVisible(state);
     }
 
+    // Show the "still to move" tint only on the LOCAL viewer's own units, and
+    // only while it is that viewer's turn to act (never during an AI/opponent
+    // turn or an omniscient/spectator view). Also gates the pending-capture
+    // temple tint (case b) below.
+    const showToMove = viewerPlayerId !== undefined && !omniscient
+      && state.phase === 'playing' && state.currentPlayerIndex === viewerPlayerId;
+    this.lastShowToMove = showToMove;
+
     if (this.tileMeshes.size === 0) this.buildTiles(state);
     this.detectHits(state, playerId, visible, !!omniscient);
     this.syncFog(explored, visible);
     this.syncHighlights(state, explored);
-    this.syncStructures(state, explored, visible);
-    // Show the "still to move" tint only on the LOCAL viewer's own units, and
-    // only while it is that viewer's turn to act (never during an AI/opponent
-    // turn or an omniscient/spectator view).
-    const showToMove = viewerPlayerId !== undefined && !omniscient
-      && state.phase === 'playing' && state.currentPlayerIndex === viewerPlayerId;
-    this.lastShowToMove = showToMove;
+    this.syncStructures(state, explored, visible, showToMove, playerId);
     this.syncUnits(state, playerId, visible, !!omniscient, showToMove);
   }
 
@@ -999,7 +1007,11 @@ export class Renderer3D {
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }
 
-  private syncStructures(state: GameState, explored: Set<string>, visible: Set<string>): void {
+  private syncStructures(state: GameState, explored: Set<string>, visible: Set<string>, showToMove = false, playerId = -1): void {
+    // Temples the selected unit could step onto (same set / explored gating as the
+    // flat green move highlights in syncHighlights — the temple mesh occludes those
+    // flat tints, which is exactly why we tint the model itself here).
+    const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
     for (const temple of state.temples) {
       const key = hexKey(temple.pos);
       const owner = temple.ownerId !== null ? state.players.find(p => p.id === temple.ownerId) : null;
@@ -1020,6 +1032,22 @@ export class Renderer3D {
       // staying bright; only currently-visible temples show at full brightness.
       const want = visible.has(key) ? 'lit' : explored.has(key) ? 'dark' : 'hidden';
       this.applyStructFog(entry.mesh, 'T' + temple.id, want, rebuilt);
+
+      // Warm-yellow tint (emissive pulsed in advanceAnimations, same phase as the
+      // unit to-move tint):
+      //   (a) a reachable move destination for the selected unit — explored-gated
+      //       exactly like the flat move highlights.
+      //   (b) a local unit stands on it with a pending capture — gated like the
+      //       unit to-move tint (own unit, viewer's turn). Rare with auto-capture,
+      //       kept for legacy/edge states.
+      const tintA = explored.has(key) && moveSet.has(key);
+      let tintB = false;
+      if (showToMove) {
+        const u = getUnitAt(state, temple.pos);
+        tintB = !!u && u.playerId === playerId && canCaptureTemple(state, u) !== null;
+      }
+      if (tintA || tintB) this.templeTintIds.add(temple.id);
+      else if (this.templeTintIds.delete(temple.id)) this.setTempleEmissive(entry.mesh, null);
     }
 
     // Position the rotating pointer over the selected temple.
@@ -1144,6 +1172,32 @@ export class Renderer3D {
         if (!sm.emissive) continue;
         if (rgb) sm.emissive.setRGB(rgb[0], rgb[1], rgb[2]);
         else sm.emissive.setRGB(0, 0, 0);
+      }
+    });
+  }
+
+  // Drive the temple reachable / pending-capture yellow tint. Mirrors
+  // setUnitEmissive, but temples ship their own emissive glows (team-tinted
+  // niches, cyan magic core), so each material's original emissive is captured
+  // on first tint and restored when the tint clears — never left black.
+  private setTempleEmissive(mesh: THREE.Object3D, rgb: [number, number, number] | null): void {
+    mesh.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.material) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) {
+        if (this.sharedResources.has(mat) || (mat as { userData?: { shared?: boolean } }).userData?.shared) continue;
+        const sm = mat as THREE.MeshStandardMaterial;
+        if (!sm.emissive) continue;
+        const ud = sm.userData as { baseEmissive?: THREE.Color };
+        if (rgb) {
+          if (!ud.baseEmissive) ud.baseEmissive = sm.emissive.clone();
+          sm.emissive.setRGB(rgb[0], rgb[1], rgb[2]);
+        } else if (ud.baseEmissive) {
+          sm.emissive.copy(ud.baseEmissive);
+        } else {
+          sm.emissive.setRGB(0, 0, 0);
+        }
       }
     });
   }
@@ -1536,13 +1590,18 @@ export class Renderer3D {
     // Pulse the "still to move" yellow tint: a subtle, uniform emissive breathe
     // on the tinted units' materials (~1.3s period). Kept low so it reads as a
     // faint yellow wash, not a solid recolor.
-    if (this.toMoveTintIds.size > 0) {
+    if (this.toMoveTintIds.size > 0 || this.templeTintIds.size > 0) {
       const osc = 0.5 + 0.5 * Math.sin(now * 0.005); // 0..1, ~1.3s period
       const e = 0.10 + 0.26 * osc;                    // emissive strength
       const rgb: [number, number, number] = [e, e * 0.88, e * 0.20]; // warm yellow
       for (const id of this.toMoveTintIds) {
         const mesh = this.unitMeshes.get(id);
         if (mesh) this.setUnitEmissive(mesh, rgb);
+      }
+      // Temples breathe in sync with the units (same phase / rgb).
+      for (const id of this.templeTintIds) {
+        const entry = this.templeMeshes.get(id);
+        if (entry) this.setTempleEmissive(entry.mesh, rgb);
       }
     }
     // Booster/healer range rings ripple outward from the unit: each ring scales
