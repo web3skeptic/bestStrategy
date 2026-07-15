@@ -1195,9 +1195,11 @@ export class Renderer3D {
           sm.emissive.setRGB(rgb[0], rgb[1], rgb[2]);
         } else if (ud.baseEmissive) {
           sm.emissive.copy(ud.baseEmissive);
-        } else {
-          sm.emissive.setRGB(0, 0, 0);
         }
+        // No baseEmissive on clear ⇒ this material was never tinted (e.g. the
+        // mesh was just rebuilt on owner change and the stale tint id is being
+        // dropped) — its as-built emissive already IS the cleared state, so
+        // leave it untouched instead of blacking out the temple's glow parts.
       }
     });
   }
