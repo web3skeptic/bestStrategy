@@ -964,7 +964,7 @@ export class Renderer3D {
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
 
     let i = 0;
-    const place = (hex: HexCoord, color: number) => {
+    const place = (hex: HexCoord, color: number, opacity: number) => {
       let mesh = this.highlightPool[i];
       if (!mesh) {
         mesh = new THREE.Mesh(this.highlightGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4 }));
@@ -973,8 +973,13 @@ export class Renderer3D {
         this.highlightPool[i] = mesh;
       }
       const { x, z } = hexToWorld(hex);
-      mesh.position.set(x, 0.05, z);
-      (mesh.material as THREE.MeshBasicMaterial).color.setHex(color);
+      // Sit the tint just above the tile's actual surface so it stays visible on
+      // raised hills / temple mounds instead of being buried inside them — this
+      // matters for the red attack highlight on an enemy standing on high ground.
+      mesh.position.set(x, this.elevationAt(state, hex) + 0.05, z);
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(color);
+      mat.opacity = opacity;
       mesh.visible = true;
       i++;
     };
@@ -982,10 +987,14 @@ export class Renderer3D {
     for (const hex of this.mapHexes) {
       const key = hexKey(hex);
       if (!explored.has(key)) continue;
-      if (attackSet.has(key)) place(hex, 0xd23232);
-      else if (moveSet.has(key)) place(hex, 0x3cc850);
-      else if (buildSet.has(key)) place(hex, 0x00c8ff);
-      else if (supportSet.has(key)) place(hex, 0x5096e1);
+      // Attackable enemies get a bold red tint. The set comes straight from the
+      // engine's state.attackHexes (updateHighlights → getEffectiveRange, fog /
+      // forest visibility, hasAttacked & cantShootAfterMove gating) — i.e. the
+      // exact legal-target set combat validation uses, never re-derived here.
+      if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
+      else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
+      else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4);
+      else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
     }
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }
