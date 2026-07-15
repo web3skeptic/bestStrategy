@@ -718,6 +718,15 @@ export function captureTemple(state: GameState, unit: Unit, temple: Temple): voi
   checkWinCondition(state);
 }
 
+// Auto-capture a temple the unit is now standing on (once per turn via the
+// hasCaptured guard inside canCaptureTemple/captureTemple). Called from every
+// path that changes a unit's position so capture is deterministic across local
+// play, AI, multiplayer, and replays.
+function autoCapture(state: GameState, unit: Unit): void {
+  const t = canCaptureTemple(state, unit);
+  if (t) captureTemple(state, unit, t);
+}
+
 // ── Temple upgrade ──
 
 export function canUpgradeTemple(state: GameState, templeId: string): number | null {
@@ -1043,6 +1052,7 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
   }
 
   revealForPlayer(state, unit.playerId, unit.pos, unit.stats.vision);
+  autoCapture(state, unit);
   updateHighlights(state);
 
   return { moved: true };
@@ -1153,6 +1163,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   if (targetKilled && !attackerKilled && attacker.stats.range === 1) {
     attacker.pos = { ...targetPos };
     revealForPlayer(state, attacker.playerId, attacker.pos, attacker.stats.vision);
+    autoCapture(state, attacker);
   }
 
   attacker.hasAttacked = true;
