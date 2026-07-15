@@ -297,14 +297,21 @@ export class Renderer3D {
     this.scene.background = new THREE.Color(0x12131a);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
-    this.camera.position.set(0, 16, 18);
+    // Steeper, more top-down default pitch (~33° from vertical vs the old ~48°):
+    // a flatter, more bird's-eye view makes individual hexes easier to pick and
+    // keeps raised hills from hiding tiles behind them. Distance is kept ~equal
+    // to the old framing so the opening view of the home temple still reads well.
+    this.camera.position.set(0, 20, 13);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 6;
     this.controls.maxDistance = 70;
-    this.controls.maxPolarAngle = Math.PI * 0.49; // stay above the board
+    // Clamp the tilt well above the horizon (~72° from vertical). Letting the
+    // player flatten the view to near-horizontal made hex raycast picking flaky
+    // and let hills occlude the tiles behind them, so the low-angle range is cut.
+    this.controls.maxPolarAngle = Math.PI * 0.40; // stay comfortably above the board
     this.controls.enablePan = true;
     this.controls.enableRotate = true;
     this.controls.enableZoom = true;
@@ -378,7 +385,7 @@ export class Renderer3D {
       if (e.touches.length < 2) {                        // dropped below two fingers
         this.controls.enableRotate = true;               // restore desktop/other orbit
         this.controls.minPolarAngle = 0;
-        this.controls.maxPolarAngle = Math.PI * 0.49;    // restore full tilt range
+        this.controls.maxPolarAngle = Math.PI * 0.40;    // restore tilt range (matches init clamp)
         twistPrev = null;                                // no jump when a finger lingers
       }
     };
