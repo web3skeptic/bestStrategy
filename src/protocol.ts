@@ -10,6 +10,7 @@ export type UnifiedActionName =
   | 'attack'
   | 'recruit'
   | 'capture'
+  | 'destroy'
   | 'upgrade-temple'
   | 'research'
   | 'build-teleport'
@@ -35,6 +36,9 @@ export type ClientMessage =
   | { type: 'action_attack';        targetPos: HexCoord }
   | { type: 'action_spawn';         templeId: string; unitType: UnitType }
   | { type: 'action_capture' }
+  // Disband an owned unit. Carries unitId explicitly (unlike capture, which
+  // relies on server-side selection) so the remote destroys the SAME unit.
+  | { type: 'action_destroy';       unitId: string }
   | { type: 'action_upgrade_temple'; templeId: string }
   | { type: 'action_research';      techId: TechId }
   | { type: 'action_build_teleport'; templeIdA: string; posA: HexCoord; posB: HexCoord }

@@ -554,6 +554,10 @@ function legacyToUnified(
     case 'action_capture':
       // Uses current selection; dispatcher will fall back to state.selectedUnitId.
       return { action: 'capture', params: {} };
+    case 'action_destroy':
+      // Disband carries unitId explicitly (no selection fallback).
+      if (typeof msg.unitId !== 'string') return { error: 'Invalid destroy: missing unitId' };
+      return { action: 'destroy', params: { unitId: msg.unitId } };
     case 'action_upgrade_temple':
       if (typeof msg.templeId !== 'string') return { error: 'Invalid upgrade: missing templeId' };
       return { action: 'upgrade-temple', params: { templeId: msg.templeId } };

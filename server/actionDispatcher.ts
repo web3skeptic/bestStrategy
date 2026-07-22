@@ -20,6 +20,7 @@ import {
   selectUnit, deselectAll,
   moveUnit, attackUnit,
   canCaptureTemple, captureTemple,
+  canDestroyUnit, destroyUnit,
   spawnUnit, endTurn,
   upgradeTemple, researchTech,
   buildTeleportPair,
@@ -46,6 +47,7 @@ export type UnifiedActionName =
   | 'attack'
   | 'recruit'
   | 'capture'
+  | 'destroy'
   | 'upgrade-temple'
   | 'research'
   | 'build-teleport'
@@ -125,6 +127,9 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   // Capture action.
   const capturableTemple = canCaptureTemple(state, unit);
   if (capturableTemple) actions.push({ type: 'capture', templeId: capturableTemple.id });
+
+  // NOTE: 'destroy' (disband) is deliberately NOT enumerated here — the AI / RL
+  // move generation must never consider disbanding its own units.
 
   return actions;
 }
@@ -396,6 +401,23 @@ export function executeAction(
         captureTemple(state, unit, temple);
         log.push(`Unit ${unitId} captured temple ${temple.id}`);
         // Capture doesn't manipulate selection; leave it as-is.
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'destroy': {
+        // Disband an owned unit. unitId is required (no selection fallback) so
+        // the acting player disbands exactly the unit they meant.
+        const { unitId } = params as { unitId?: string };
+        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId');
+
+        const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+        if (!unit) return fail(state, playerSlot, action, `Unit ${unitId} not found or dead`);
+        if (unit.playerId !== playerSlot) return fail(state, playerSlot, action, `Unit ${unitId} is not owned by player ${playerSlot}`);
+
+        if (!destroyUnit(state, unitId)) {
+          return fail(state, playerSlot, action, `Cannot destroy unit ${unitId}`);
+        }
+        log.push(`Unit ${unitId} was disbanded`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

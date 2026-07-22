@@ -197,6 +197,8 @@ function describeAction(ev: ReplayEventDto): string {
       return `recruit ${String(p.unitType)} at ${String(p.templeId)}`;
     case 'capture':
       return `capture w/ ${String(p.unitId)}`;
+    case 'destroy':
+      return `destroy ${String(p.unitId)}`;
     case 'upgrade-temple':
       return `upgrade ${String(p.templeId)}`;
     case 'research':

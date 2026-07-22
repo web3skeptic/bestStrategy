@@ -32,6 +32,7 @@ export type HeadlessAction =
   | { action: 'attack';          params: { unitId: string; targetId: string } }
   | { action: 'recruit';         params: { unitType: UnitType; templeId: string } }
   | { action: 'capture';         params: { unitId: string } }
+  | { action: 'destroy';         params: { unitId: string } }
   | { action: 'upgrade-temple';  params: { templeId: string } }
   | { action: 'research';        params: { techId: TechId } }
   | { action: 'build-teleport';  params: { templeId: string; pos: HexCoord; targetPos: HexCoord } }

@@ -1231,6 +1231,36 @@ export function resignGame(state: GameState, playerId: number): boolean {
   return true;
 }
 
+// ── Destroy / disband ──
+
+/**
+ * Whether the current player may disband the given unit. Legal for any living
+ * unit the current player owns, regardless of hasMoved/hasAttacked/hasCaptured
+ * (disbanding is always available on your own turn).
+ */
+export function canDestroyUnit(state: GameState, unitId: string): boolean {
+  const unit = state.units.find(u => u.id === unitId);
+  if (!unit || unit.hp <= 0) return false;
+  return unit.playerId === getCurrentPlayer(state).id;
+}
+
+/**
+ * Disband one of your own units. The unit dies (hp = 0) and stays in
+ * state.units like any combat casualty, so all existing death handling applies.
+ * Grants NO aura or kill credit to anyone — combat kills award nothing either,
+ * so simply zeroing hp keeps disbanding neutral. Deliberately excluded from the
+ * AI / RL legal-action set (see computeUnitActions in actionDispatcher.ts).
+ */
+export function destroyUnit(state: GameState, unitId: string): boolean {
+  if (!canDestroyUnit(state, unitId)) return false;
+  const unit = state.units.find(u => u.id === unitId)!;
+  unit.hp = 0;
+  if (state.selectedUnitId === unitId) deselectAll(state);
+  updateHighlights(state);
+  checkWinCondition(state);
+  return true;
+}
+
 // ── End turn ──
 
 export function endTurn(state: GameState): void {
