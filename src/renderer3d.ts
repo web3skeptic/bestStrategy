@@ -70,6 +70,7 @@ interface HudButton {
   label: string;
   enabled: boolean;
   hovered: boolean;
+  armed: boolean;   // destroy slab: showing its "Sure?" confirm state
   w: number;
   h: number;
 }
@@ -78,6 +79,11 @@ interface HudButton {
 const ROCK_NORMAL = 0x5e6470;
 const ROCK_HOVER = 0x7a8290;
 const ROCK_DISABLED = 0x2a2e36;
+// Armed (destroy slab awaiting its confirm tap) — loud blood-red so the two-tap
+// guard reads unmistakably.
+const ROCK_ARMED = 0x8a2a2a;
+const ROCK_ARMED_HOVER = 0xb03636;
+const RED_TINT = new THREE.Color(0xff5a5a); // icon flush colour while armed
 
 const ROCK_PEAK_Z = 12; // front-face apex height (also where the label floats above)
 
@@ -176,6 +182,26 @@ function buildHudIcon(kind: string): { group: THREE.Group; mats: THREE.MeshStand
     const arrow = new THREE.Mesh(aGeo, gold);
     arrow.scale.setScalar(0.62);
     arrow.position.set(0, 18.5, 3); group.add(arrow);
+  } else if (kind === 'skull') { // 'skull' — disband / destroy own unit
+    const bone = M(0xe8e2d0, { roughness: 0.9 });
+    const socket = M(0x14100e, { roughness: 1 });
+    // cranium — a slightly flattened low-poly dome
+    const cran = new THREE.Mesh(new THREE.SphereGeometry(9, 8, 6), bone);
+    cran.scale.set(1, 0.92, 0.8); cran.position.y = 3; group.add(cran);
+    // jaw block
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(11, 6, 6.5), bone);
+    jaw.position.y = -6; group.add(jaw);
+    // eye sockets — recessed dark cylinders
+    for (const dx of [-4, 4]) {
+      const eye = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 2.5, 7), socket);
+      eye.rotation.x = Math.PI / 2; eye.position.set(dx, 3.5, 6.4); group.add(eye);
+    }
+    // nasal cavity — a small dark wedge
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(1.8, 4, 4), socket);
+    nose.position.set(0, -1, 6.6); group.add(nose);
+    // teeth ridge — thin bone strip under the jaw front
+    const teeth = new THREE.Mesh(new THREE.BoxGeometry(9, 2.4, 1.5), bone);
+    teeth.position.set(0, -3.4, 6.2); group.add(teeth);
   } else { // 'endturn' — forward arrow
     const gold = M(0xe7c24a, { roughness: 0.5 });
     const pts: [number, number][] = [[-11, -3.5], [2, -3.5], [2, -9], [12, 0], [2, 9], [2, 3.5], [-11, 3.5]];
@@ -1384,7 +1410,7 @@ export class Renderer3D {
       const rock = new THREE.Mesh(rockSlabGeometry(this.hudW, this.hudH), rockMat);
       rock.renderOrder = 1000;
       group.add(rock);
-      const b: HudButton = { id: d.id, group, rock, rockMat, label: d.label, enabled: true, hovered: false, w: this.hudW, h: this.hudH };
+      const b: HudButton = { id: d.id, group, rock, rockMat, label: d.label, enabled: true, hovered: false, armed: false, w: this.hudW, h: this.hudH };
       if (d.icon) {
         // 3D icon sitting on the slab face
         const { group: ig, mats } = buildHudIcon(d.icon);
@@ -1433,10 +1459,23 @@ export class Renderer3D {
     if (b && b.enabled !== enabled) { b.enabled = enabled; this.applyRockState(b); this.drawHudLabel(b); this.drawHudPrice(b); }
   }
 
-  // Show/hide a single HUD slab in place (others keep their fixed positions).
+  // Show/hide a single HUD slab. Since contextual slabs (temple / destroy) come
+  // and go, the row re-lays out over the currently-visible slabs so there is
+  // never a hole where a hidden slab's slot would be.
   setHudButtonVisible(id: string, visible: boolean): void {
     const b = this.hudButtons.find(x => x.id === id);
-    if (b) b.group.visible = visible;
+    if (b && b.group.visible !== visible) {
+      b.group.visible = visible;
+      this.layoutHud(this.canvas.clientWidth, this.canvas.clientHeight);
+    }
+  }
+
+  // Arm/disarm a slab's two-tap confirm state (used by the destroy slab). Armed
+  // paints the rock blood-red; the caller sets the confirm text via the price
+  // strip (setHudButtonPrice).
+  setHudButtonArmed(id: string, armed: boolean): void {
+    const b = this.hudButtons.find(x => x.id === id);
+    if (b && b.armed !== armed) { b.armed = armed; this.applyRockState(b); this.drawHudPrice(b); }
   }
 
   // Set the dynamic aura-price text on a button's price strip (e.g. '⚡12').
@@ -1464,15 +1503,20 @@ export class Renderer3D {
 
   private layoutHud(w: number, h: number): void {
     if (!w || !h || !this.hudButtons.length) return;
+    // Lay out only the currently-visible slabs, centred — contextual slabs
+    // (temple / destroy) appear and disappear, so the row recentres to avoid a
+    // gap where a hidden slab would otherwise sit.
+    const shown = this.hudButtons.filter(b => b.group.visible);
+    if (!shown.length) return;
     // Scale the buttons down on small/phone screens so they don't dominate.
     const scale = w < 480 ? 0.74 : w < 760 ? 0.88 : 1;
     const bw = this.hudW * scale, gap = this.hudGap * scale, bh = this.hudH * scale;
-    const n = this.hudButtons.length;
+    const n = shown.length;
     const total = n * bw + (n - 1) * gap;
     let x = -total / 2 + bw / 2;
     const margin = w < 480 ? 26 : 18; // a touch higher on phones (clear the safe area)
     const y = -h / 2 + margin + bh / 2;
-    for (const b of this.hudButtons) {
+    for (const b of shown) {
       b.group.scale.setScalar(scale);
       b.group.position.set(x, y, 0);
       x += bw + gap;
@@ -1491,17 +1535,21 @@ export class Renderer3D {
     else if (changed) this.canvas.style.cursor = '';
   }
 
-  // Tint the rock slab by state (slightly raised on hover, greyed when disabled).
+  // Tint the rock slab by state (slightly raised on hover, greyed when disabled,
+  // blood-red when armed for a destroy confirm).
   private applyRockState(b: HudButton): void {
-    const color = !b.enabled ? ROCK_DISABLED : b.hovered ? ROCK_HOVER : ROCK_NORMAL;
+    const color = !b.enabled ? ROCK_DISABLED
+      : b.armed ? (b.hovered ? ROCK_ARMED_HOVER : ROCK_ARMED)
+      : b.hovered ? ROCK_HOVER : ROCK_NORMAL;
     b.rockMat.color.setHex(color);
     b.group.position.z = b.hovered && b.enabled ? 2 : 0; // tiny pop on hover
-    // Dim the 3D icon when the button is disabled.
+    // Dim the 3D icon when disabled; flush it red when armed.
     if (b.iconMats) {
       for (const m of b.iconMats) {
         const base = m.userData.baseColor as THREE.Color;
-        if (b.enabled) { m.color.copy(base); m.emissiveIntensity = m.userData.baseEmissive ?? 0; }
-        else { m.color.copy(base).multiplyScalar(0.4); m.emissiveIntensity = (m.userData.baseEmissive ?? 0) * 0.2; }
+        if (!b.enabled) { m.color.copy(base).multiplyScalar(0.4); m.emissiveIntensity = (m.userData.baseEmissive ?? 0) * 0.2; }
+        else if (b.armed) { m.color.copy(base).lerp(RED_TINT, 0.55); m.emissiveIntensity = m.userData.baseEmissive ?? 0; }
+        else { m.color.copy(base); m.emissiveIntensity = m.userData.baseEmissive ?? 0; }
       }
     }
   }
@@ -1538,10 +1586,10 @@ export class Renderer3D {
       c.textAlign = 'center'; c.textBaseline = 'middle';
       const tw = c.measureText(text).width;
       const pw = tw + 16 * dpr, ph = 20 * dpr, px = W / 2 - pw / 2, py = H / 2 - ph / 2;
-      c.fillStyle = 'rgba(0,0,0,0.5)';
+      c.fillStyle = b.armed ? 'rgba(50,0,0,0.55)' : 'rgba(0,0,0,0.5)';
       c.beginPath(); c.roundRect(px, py, pw, ph, 8 * dpr); c.fill();
       c.shadowColor = 'rgba(0,0,0,0.7)'; c.shadowBlur = 2 * dpr; c.shadowOffsetY = 1 * dpr;
-      c.fillStyle = b.enabled ? '#ffd98a' : '#9a8f73';
+      c.fillStyle = b.armed ? '#ffdada' : b.enabled ? '#ffd98a' : '#9a8f73';
       c.fillText(text, W / 2, H / 2 + dpr);
     }
     b.priceTex.needsUpdate = true;

@@ -137,6 +137,9 @@ renderer.setHudButtons([
   { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
   { id: 'research', label: 'Research', icon: 'flask' },
   { id: 'temple', label: 'Level Up Temple', icon: 'temple', price: true },
+  // Contextual: shown only when a living own unit is selected on your turn. The
+  // 'price' strip doubles as the two-tap "Sure?" confirm label.
+  { id: 'destroy', label: 'Destroy', icon: 'skull', price: true },
 ]);
 
 // ── UI elements ──
@@ -158,13 +161,28 @@ const spawnBarWrap = document.getElementById('spawnBarWrap')!;
 const spawnArrowLeft = document.getElementById('spawnArrowLeft') as HTMLButtonElement;
 const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButtonElement;
 const captureBtn = document.getElementById('captureBtn')!;
-const destroyBtn = document.getElementById('destroyBtn')!;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
 
-// Two-tap confirm guard for the destroy/disband button. Holds the unit id the
-// button is currently "armed" for; re-armed only when the SAME unit is tapped
+// Two-tap confirm guard for the destroy/disband HUD slab. Holds the unit id the
+// slab is currently "armed" for; re-armed only when the SAME unit is tapped
 // twice. Any selection change / re-render for a different unit resets it.
 let destroyArmedUnitId: string | null = null;
+
+// Show the contextual destroy slab for `unitId`, reflecting the current armed
+// state (red tint + "Sure?" strip when armed).
+function syncDestroySlab(unitId: string): void {
+  const armed = destroyArmedUnitId === unitId;
+  renderer.updateHudButton('destroy', true); // always tappable while shown
+  renderer.setHudButtonArmed('destroy', armed);
+  renderer.setHudButtonPrice('destroy', armed ? 'Sure?' : '');
+  renderer.setHudButtonVisible('destroy', true);
+}
+
+function hideDestroySlab(): void {
+  renderer.setHudButtonArmed('destroy', false);
+  renderer.setHudButtonPrice('destroy', '');
+  renderer.setHudButtonVisible('destroy', false);
+}
 const logToggle = document.getElementById('logToggle')!;
 const logArrow = document.getElementById('logArrow')!;
 const combatLog = document.getElementById('combatLog')!;
@@ -925,7 +943,7 @@ function updateUI(): void {
     restartBtn.style.display = 'none';
     setSpawnBarVisible(false);
     captureBtn.style.display = 'none';
-    destroyBtn.style.display = 'none';
+    hideDestroySlab();
     buildTeleportBtn.style.display = 'none';
     techTreeBtn.style.display = 'none';
     settingsBtn.style.display = 'none';
@@ -991,17 +1009,14 @@ function updateUI(): void {
         captureBtn.style.display = 'none';
       }
 
-      // Destroy/disband — only for the local player's own unit on their turn.
+      // Destroy/disband slab — only for the local player's own unit on their turn.
       if (myTurn && canDestroyUnit(state, unit.id)) {
-        destroyBtn.style.display = 'block';
         // Re-render for a different unit disarms the confirm state.
         if (destroyArmedUnitId !== unit.id) destroyArmedUnitId = null;
-        const armed = destroyArmedUnitId === unit.id;
-        destroyBtn.classList.toggle('armed', armed);
-        destroyBtn.textContent = armed ? '☠ Sure? Tap again' : '☠ Destroy Unit';
+        syncDestroySlab(unit.id);
       } else {
-        destroyBtn.style.display = 'none';
         destroyArmedUnitId = null;
+        hideDestroySlab();
       }
 
       buildTeleportBtn.style.display = 'none';
@@ -1039,13 +1054,13 @@ function updateUI(): void {
       }
     }
     captureBtn.style.display = 'none';
-    destroyBtn.style.display = 'none';
     destroyArmedUnitId = null;
+    hideDestroySlab();
   } else {
     unitInfoEl.textContent = '';
     captureBtn.style.display = 'none';
-    destroyBtn.style.display = 'none';
     destroyArmedUnitId = null;
+    hideDestroySlab();
     buildTeleportBtn.style.display = 'none';
     if (buildingTeleport) clearBuildTeleport();
   }
@@ -1792,29 +1807,6 @@ captureBtn.addEventListener('click', () => {
   });
 });
 
-destroyBtn.addEventListener('click', () => {
-  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
-  const unit = state.units.find(u => u.id === state.selectedUnitId);
-  if (!unit || !canDestroyUnit(state, unit.id)) return;
-
-  // Miss-tap guard: first tap arms (button turns red + "Sure?"), second tap on
-  // the SAME unit executes. No browser confirm() dialog.
-  if (destroyArmedUnitId !== unit.id) {
-    destroyArmedUnitId = unit.id;
-    destroyBtn.classList.add('armed');
-    destroyBtn.textContent = '☠ Sure? Tap again';
-    return;
-  }
-
-  const unitId = unit.id;
-  const unitType = unit.type;
-  destroyArmedUnitId = null;
-  destroyBtn.classList.remove('armed');
-  sendOrCall({ type: 'action_destroy', unitId }, () => {
-    destroyUnit(state, unitId);
-    logCombat(`Disbanded ${unitType}.`);
-  });
-});
 
 // ── Tap-to-select ──
 // Camera rotate / zoom / pan are handled by the 3D orbit controls (which attach
@@ -1855,6 +1847,32 @@ function handleHudClick(id: string): void {
   if (id === 'endTurn') { if (state.phase !== 'gameOver') doEndTurn(); }
   else if (id === 'research') openTechTree();
   else if (id === 'temple') doUpgradeTemple();
+  else if (id === 'destroy') doDestroyUnit();
+}
+
+// Disband the selected unit, guarded by a two-tap confirm on the HUD slab.
+function doDestroyUnit(): void {
+  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
+  const unit = state.units.find(u => u.id === state.selectedUnitId);
+  if (!unit || !canDestroyUnit(state, unit.id)) return;
+
+  // First tap arms the slab (red tint + "Sure?"); second tap on the SAME unit
+  // executes. No browser confirm() dialog.
+  if (destroyArmedUnitId !== unit.id) {
+    destroyArmedUnitId = unit.id;
+    syncDestroySlab(unit.id);
+    return;
+  }
+
+  const unitId = unit.id;
+  const unitType = unit.type;
+  destroyArmedUnitId = null;
+  renderer.setHudButtonArmed('destroy', false); // clear red immediately (esp. online round-trip)
+  renderer.setHudButtonPrice('destroy', '');
+  sendOrCall({ type: 'action_destroy', unitId }, () => {
+    destroyUnit(state, unitId);
+    logCombat(`Disbanded ${unitType}.`);
+  });
 }
 
 canvas.addEventListener('pointercancel', () => { pointerActive = false; });
