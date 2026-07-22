@@ -13,6 +13,8 @@ import {
   attackUnit,
   canCaptureTemple,
   captureTemple,
+  canDestroyUnit,
+  destroyUnit,
   spawnUnit,
   endTurn,
   calculateEncirclement,
@@ -156,7 +158,13 @@ const spawnBarWrap = document.getElementById('spawnBarWrap')!;
 const spawnArrowLeft = document.getElementById('spawnArrowLeft') as HTMLButtonElement;
 const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButtonElement;
 const captureBtn = document.getElementById('captureBtn')!;
+const destroyBtn = document.getElementById('destroyBtn')!;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
+
+// Two-tap confirm guard for the destroy/disband button. Holds the unit id the
+// button is currently "armed" for; re-armed only when the SAME unit is tapped
+// twice. Any selection change / re-render for a different unit resets it.
+let destroyArmedUnitId: string | null = null;
 const logToggle = document.getElementById('logToggle')!;
 const logArrow = document.getElementById('logArrow')!;
 const combatLog = document.getElementById('combatLog')!;
@@ -917,6 +925,7 @@ function updateUI(): void {
     restartBtn.style.display = 'none';
     setSpawnBarVisible(false);
     captureBtn.style.display = 'none';
+    destroyBtn.style.display = 'none';
     buildTeleportBtn.style.display = 'none';
     techTreeBtn.style.display = 'none';
     settingsBtn.style.display = 'none';
@@ -982,6 +991,19 @@ function updateUI(): void {
         captureBtn.style.display = 'none';
       }
 
+      // Destroy/disband — only for the local player's own unit on their turn.
+      if (myTurn && canDestroyUnit(state, unit.id)) {
+        destroyBtn.style.display = 'block';
+        // Re-render for a different unit disarms the confirm state.
+        if (destroyArmedUnitId !== unit.id) destroyArmedUnitId = null;
+        const armed = destroyArmedUnitId === unit.id;
+        destroyBtn.classList.toggle('armed', armed);
+        destroyBtn.textContent = armed ? '☠ Sure? Tap again' : '☠ Destroy Unit';
+      } else {
+        destroyBtn.style.display = 'none';
+        destroyArmedUnitId = null;
+      }
+
       buildTeleportBtn.style.display = 'none';
     }
   } else if (state.selectionMode === 'temple' && state.selectedTempleId) {
@@ -1017,9 +1039,13 @@ function updateUI(): void {
       }
     }
     captureBtn.style.display = 'none';
+    destroyBtn.style.display = 'none';
+    destroyArmedUnitId = null;
   } else {
     unitInfoEl.textContent = '';
     captureBtn.style.display = 'none';
+    destroyBtn.style.display = 'none';
+    destroyArmedUnitId = null;
     buildTeleportBtn.style.display = 'none';
     if (buildingTeleport) clearBuildTeleport();
   }
@@ -1763,6 +1789,30 @@ captureBtn.addEventListener('click', () => {
   sendOrCall({ type: 'action_capture' }, () => {
     captureTemple(state, unit, temple);
     logCombat(`Captured temple at (${pos.q},${pos.r})!`);
+  });
+});
+
+destroyBtn.addEventListener('click', () => {
+  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
+  const unit = state.units.find(u => u.id === state.selectedUnitId);
+  if (!unit || !canDestroyUnit(state, unit.id)) return;
+
+  // Miss-tap guard: first tap arms (button turns red + "Sure?"), second tap on
+  // the SAME unit executes. No browser confirm() dialog.
+  if (destroyArmedUnitId !== unit.id) {
+    destroyArmedUnitId = unit.id;
+    destroyBtn.classList.add('armed');
+    destroyBtn.textContent = '☠ Sure? Tap again';
+    return;
+  }
+
+  const unitId = unit.id;
+  const unitType = unit.type;
+  destroyArmedUnitId = null;
+  destroyBtn.classList.remove('armed');
+  sendOrCall({ type: 'action_destroy', unitId }, () => {
+    destroyUnit(state, unitId);
+    logCombat(`Disbanded ${unitType}.`);
   });
 });
 
