@@ -1076,9 +1076,13 @@ function getDefenseTypeBonus(defender: Unit, attacker: Unit): number {
   return defender.stats.defenseBonusAgainst?.[attacker.type] ?? 1;
 }
 
-function calculateDamage(attackerAtk: number, defenderDef: number, encirclementMultiplier: number, typeBonus = 1): number {
+// hpFraction scales the damage by the attacker's CURRENT health (hp / maxHp), so
+// a wounded unit hits softer. This is what gives attacking first a real edge: the
+// attacker strikes at full strength, and the defender fights back (if it can) from
+// its reduced post-hit health.
+function calculateDamage(attackerAtk: number, defenderDef: number, encirclementMultiplier: number, typeBonus = 1, hpFraction = 1): number {
   const multiplier = randomMultiplier();
-  const raw = multiplier * encirclementMultiplier * typeBonus * (attackerAtk - defenderDef);
+  const raw = multiplier * encirclementMultiplier * typeBonus * (attackerAtk - defenderDef) * hpFraction;
   return Math.max(0, Math.round(raw));
 }
 
@@ -1116,8 +1120,12 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   const targetDef = getEffectiveDefense(state, target);
   const attackerDef = getEffectiveDefense(state, attacker);
 
+  // Sequential resolution: the attacker strikes first, scaled by its own current
+  // health; a landed attack always deals at least 1.
+  const attackerHpFrac = attacker.hp / attacker.stats.maxHp;
   const typeBonus = getAttackTypeBonus(attacker, target) / getDefenseTypeBonus(target, attacker);
-  const damageDealt = calculateDamage(getEffectiveAttack(state, attacker), targetDef, targetEncirclement.attackMultiplier, typeBonus);
+  let damageDealt = calculateDamage(getEffectiveAttack(state, attacker), targetDef, targetEncirclement.attackMultiplier, typeBonus, attackerHpFrac);
+  if (damageDealt < 1) damageDealt = 1;
   target.hp -= damageDealt;
 
   const targetKilled = target.hp <= 0;
@@ -1134,7 +1142,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
       const splashEnc = calculateEncirclement(state, splashUnit);
       const splashDef = getEffectiveDefense(state, splashUnit);
       const splashDmg = Math.round(
-        calculateDamage(getEffectiveAttack(state, attacker), splashDef, splashEnc.attackMultiplier) * attacker.stats.splashFactor
+        calculateDamage(getEffectiveAttack(state, attacker), splashDef, splashEnc.attackMultiplier, 1, attackerHpFrac) * attacker.stats.splashFactor
       );
       splashUnit.hp -= splashDmg;
       const killed = splashUnit.hp <= 0;
@@ -1151,8 +1159,13 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
     const dist = hexDistance(attacker.pos, target.pos);
     const targetEffRange = getEffectiveRange(state, target);
     if (dist <= targetEffRange) {
+      // Fight-back is scaled by the defender's REMAINING health (after the hit it
+      // just took), so a badly-wounded survivor counters weakly. A dead defender
+      // never reaches here (guarded by !targetKilled above).
+      const defenderHpFrac = target.hp / target.stats.maxHp;
       const revengeTypeBonus = getAttackTypeBonus(target, attacker) / getDefenseTypeBonus(attacker, target);
-      damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier, revengeTypeBonus);
+      damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier, revengeTypeBonus, defenderHpFrac);
+      if (damageReceived < 1) damageReceived = 1;
       attacker.hp -= damageReceived;
       attackerKilled = attacker.hp <= 0;
       if (attackerKilled) attacker.hp = 0;

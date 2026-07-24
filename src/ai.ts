@@ -90,8 +90,9 @@ function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
 }
 
 // Deterministic mean-case damage estimate (multiplier fixed at 1.0). Mirrors the
-// engine's calculateDamage: round(mult * enc * typeBonus * (atk - def)). Used only
-// for target ranking, so no RNG is wanted here.
+// engine's calculateDamage: round(enc * typeBonus * (atk - def) * hpFraction),
+// where hpFraction is the attacker's current health — a landed hit deals ≥1.
+// Used only for target ranking, so no RNG is wanted here.
 function estimateDamage(state: GameState, attacker: Unit, target: Unit): number {
   const enc = calculateEncirclement(state, target);
   const typeBonus =
@@ -99,7 +100,8 @@ function estimateDamage(state: GameState, attacker: Unit, target: Unit): number 
     (target.stats.defenseBonusAgainst?.[attacker.type] ?? 1);
   const atk = getEffectiveAttack(state, attacker);
   const def = getEffectiveDefense(state, target);
-  return Math.max(0, Math.round(enc.attackMultiplier * typeBonus * (atk - def)));
+  const hpFraction = attacker.hp / attacker.stats.maxHp;
+  return Math.max(1, Math.round(enc.attackMultiplier * typeBonus * (atk - def) * hpFraction));
 }
 
 function scoreTarget(state: GameState, attacker: Unit, target: Unit): number {
