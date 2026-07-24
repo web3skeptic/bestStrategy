@@ -558,6 +558,7 @@ function showMenu(): void {
   handoffPending = false;
   opponentTurnOverlay.classList.add('hidden');
   waitingIndicator.classList.add('hidden');
+  renderer.clearCameraKeys(); // drop any held camera keys behind the menu
   if (spectatorMode) {
     // Disconnect spectator and clean up
     leaveActiveGame();
@@ -1437,6 +1438,7 @@ function openSettings(): void {
   if (!DEBUG) return;            // unit-stat editor is debug-only (?debug=1)
   renderSettings();
   settingsOverlay.classList.remove('hidden');
+  renderer.clearCameraKeys();
 }
 
 function closeSettings(): void {
@@ -1609,6 +1611,7 @@ function openTechTree(): void {
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   renderTechTree();
   techOverlay.classList.remove('hidden');
+  renderer.clearCameraKeys();
 }
 
 function closeTechTree(): void {
@@ -1925,6 +1928,33 @@ endTurnBtn.addEventListener('click', () => {
 });
 
 restartBtn.addEventListener('click', () => showMenu());
+
+// ── Desktop camera keys: Q/E rotate, WASD pan ──
+// Continuous motion is applied in the renderer's frame loop; here we just track
+// which keys are down. Ignored while typing in a field or with an overlay open.
+const CAM_KEY_MAP: Record<string, 'rotL' | 'rotR' | 'panF' | 'panB' | 'panL' | 'panR'> = {
+  q: 'rotL', e: 'rotR', w: 'panF', s: 'panB', a: 'panL', d: 'panR',
+};
+function cameraKeysBlocked(): boolean {
+  if (!gameStarted) return true;
+  const ae = document.activeElement as HTMLElement | null;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return true;
+  if (!menuOverlay.classList.contains('hidden')) return true;
+  if (!techOverlay.classList.contains('hidden')) return true;
+  if (!settingsOverlay.classList.contains('hidden')) return true;
+  return false;
+}
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const action = CAM_KEY_MAP[e.key.toLowerCase()];
+  if (!action || cameraKeysBlocked()) return;
+  renderer.setCameraKey(action, true);
+});
+window.addEventListener('keyup', (e) => {
+  const action = CAM_KEY_MAP[e.key.toLowerCase()];
+  if (action) renderer.setCameraKey(action, false); // release even if currently blocked
+});
+window.addEventListener('blur', () => renderer.clearCameraKeys());
 
 // Tap the hot-seat hand-off curtain to reveal the next player's board.
 opponentTurnOverlay.addEventListener('click', () => dismissHandoff());

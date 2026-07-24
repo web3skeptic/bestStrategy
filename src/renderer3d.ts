@@ -289,6 +289,11 @@ export class Renderer3D {
   private templePointer: THREE.Group | null = null;
   private templePointerBaseY = 0;
 
+  // Desktop camera-key state (Q/E rotate, WASD pan). main.ts feeds key up/down
+  // here; applyCameraKeys() drives smooth continuous motion in the render loop.
+  private camKeys = new Set<string>();
+  private camKeysLastNow = 0;
+
   // ── Three.js HUD layer: screen-space buttons rendered over the board ──
   private hudScene = new THREE.Scene();
   private hudCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
@@ -577,6 +582,65 @@ export class Renderer3D {
     const len = THREE.MathUtils.clamp(offset.length() * factor, this.controls.minDistance, this.controls.maxDistance);
     offset.setLength(len);
     this.camera.position.copy(this.controls.target).add(offset);
+  }
+
+  // ── Desktop camera keys (Q/E rotate, WASD pan) ──
+  // main.ts translates keydown/keyup into these calls (respecting input focus /
+  // open overlays); the actual motion is applied per-frame in applyCameraKeys so
+  // it's smooth and continuous rather than a discrete jump.
+  setCameraKey(action: 'rotL' | 'rotR' | 'panF' | 'panB' | 'panL' | 'panR', pressed: boolean): void {
+    if (pressed) this.camKeys.add(action); else this.camKeys.delete(action);
+  }
+  clearCameraKeys(): void { this.camKeys.clear(); }
+
+  private applyCameraKeys(): void {
+    if (this.camKeys.size === 0) { this.camKeysLastNow = 0; return; }
+    const now = performance.now();
+    const dt = this.camKeysLastNow ? Math.min((now - this.camKeysLastNow) / 1000, 0.05) : 0;
+    this.camKeysLastNow = now;
+    if (dt <= 0) return;
+
+    const target = this.controls.target;
+
+    // Rotate the view around the target (azimuth only), mirroring the two-finger
+    // twist path so OrbitControls damping isn't fought.
+    const ROT_SPEED = 1.6; // rad/s
+    let dTheta = 0;
+    if (this.camKeys.has('rotL')) dTheta += ROT_SPEED * dt;
+    if (this.camKeys.has('rotR')) dTheta -= ROT_SPEED * dt;
+    if (dTheta !== 0) {
+      const off = this.camera.position.clone().sub(target);
+      const sph = new THREE.Spherical().setFromVector3(off);
+      sph.theta += dTheta;
+      off.setFromSpherical(sph);
+      this.camera.position.copy(target).add(off);
+    }
+
+    // Pan the target (and camera) across the ground plane, relative to the current
+    // facing. Speed scales with zoom distance so it feels consistent at any zoom.
+    const fwd = new THREE.Vector3().subVectors(target, this.camera.position);
+    fwd.y = 0;
+    if (fwd.lengthSq() > 1e-6) {
+      fwd.normalize();
+      const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+      const move = new THREE.Vector3();
+      if (this.camKeys.has('panF')) move.add(fwd);    // W
+      if (this.camKeys.has('panB')) move.sub(fwd);    // S
+      if (this.camKeys.has('panR')) move.add(right);  // D
+      if (this.camKeys.has('panL')) move.sub(right);  // A
+      if (move.lengthSq() > 0) {
+        const dist = this.camera.position.distanceTo(target);
+        move.normalize().multiplyScalar(dist * 0.9 * dt);
+        // Keep the target within a soft bound of the board so the view can't fly
+        // off; move the camera by the SAME (clamped) delta to preserve the offset.
+        const bound = (this.mapRadius + 2) * HEX_R * 1.8;
+        const nx = THREE.MathUtils.clamp(target.x + move.x, -bound, bound);
+        const nz = THREE.MathUtils.clamp(target.z + move.z, -bound, bound);
+        this.camera.position.x += nx - target.x;
+        this.camera.position.z += nz - target.z;
+        target.x = nx; target.z = nz;
+      }
+    }
   }
 
   resizeToContainer(): boolean {
@@ -1376,6 +1440,7 @@ export class Renderer3D {
   private startLoop(): void {
     const tick = () => {
       this.resizeToContainer();
+      this.applyCameraKeys();
       this.controls.update();
       this.advanceAnimations();
       this.renderer.render(this.scene, this.camera);
