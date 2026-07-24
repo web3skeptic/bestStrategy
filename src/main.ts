@@ -380,6 +380,9 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       researchRollback = null;   // authoritative state supersedes any optimistic research
       applyStateWithAnimation(deserialize(event.state)); // tween visible moves, don't teleport
       maybeAutoSelectSpawned();  // auto-select a freshly-spawned unit (task: instant range)
+      // If the tech tree is open (view-only browsing during the opponent's turn),
+      // re-render it so node clickability tracks whose turn it now is.
+      if (!techOverlay.classList.contains('hidden')) renderTechTree();
       render();
       logCombat(event.lastAction);
       break;
@@ -906,6 +909,14 @@ function updatePlayerList(): void {
   }
 }
 
+// Single source of truth for "can the local human act right now": their turn, in
+// a live game, not spectating. Gates HUD slabs, spawn bar, research, and hex taps
+// so online opponent-turn blocking is consistent rather than scattered.
+function localHasTurn(): boolean {
+  if (spectatorMode || state.phase === 'gameOver') return false;
+  return multiplayerMode ? state.currentPlayerIndex === myPlayerSlot : !isAISlot(state.currentPlayerIndex);
+}
+
 function updateUI(): void {
   const player = getCurrentPlayer(state);
   updatePlayerList();
@@ -916,9 +927,7 @@ function updateUI(): void {
 
   // 3D HUD action buttons (End Turn / Research) — shown during an active game;
   // End Turn is enabled only on the local player's turn.
-  const myTurn = !spectatorMode && state.phase !== 'gameOver'
-    && (multiplayerMode ? state.currentPlayerIndex === myPlayerSlot
-        : !isAISlot(state.currentPlayerIndex));
+  const myTurn = localHasTurn();
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
@@ -1573,8 +1582,9 @@ function appendSection(
       <div class="tech-node-status ${statusClass}">${statusText}</div>
     `;
 
-    if (!isResearched && prereqsMet && !branchBlocked && canAffordIt) {
+    if (!isResearched && prereqsMet && !branchBlocked && canAffordIt && localHasTurn()) {
       card.addEventListener('click', () => {
+        if (!localHasTurn()) return; // view-only on an opponent's turn (server rejects too)
         const applyLocal = (): void => {
           if (researchTech(state, node.id)) {
             logCombat(`Researched: ${node.name} (−${node.cost} ⚡)`);
@@ -1607,8 +1617,8 @@ function appendSection(
 function openTechTree(): void {
   if (!gameStarted) return;
   if (spectatorMode) return;
-  if (isAISlot(state.currentPlayerIndex)) return;
-  if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
+  // The tech tree stays openable and browsable even when it's NOT your turn
+  // (view-only) — buying a tech is gated to your own turn in renderTechTree.
   renderTechTree();
   techOverlay.classList.remove('hidden');
   renderer.clearCameraKeys();
@@ -1765,6 +1775,7 @@ function handleHexClick(clientX: number, clientY: number): void {
 
 // ── Spawn buttons ──
 function handleSpawnBtn(type: UnitType): void {
+  if (!localHasTurn()) return; // no recruiting on an opponent's turn (online)
   if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
   if (!canAfford(state, type)) return;
   const templeId = state.selectedTempleId;
