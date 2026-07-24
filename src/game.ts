@@ -1155,7 +1155,12 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   let damageReceived = 0;
   let attackerKilled = false;
 
-  if (!targetKilled && attacker.stats.canBeRevenged) {
+  // Fight-back happens only if the surviving defender can actually reach the
+  // attacker — i.e. the attacker sits within the defender's effective attack
+  // range (tech/terrain modifiers included). A melee unit cannot counter a
+  // catapult shelling it from 3 tiles; a defender whose range covers the
+  // attacker can. (Replaces the old per-unit `canBeRevenged` immunity.)
+  if (!targetKilled) {
     const dist = hexDistance(attacker.pos, target.pos);
     const targetEffRange = getEffectiveRange(state, target);
     if (dist <= targetEffRange) {

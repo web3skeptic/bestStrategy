@@ -108,8 +108,10 @@ function scoreTarget(state: GameState, attacker: Unit, target: Unit): number {
   const dmg = estimateDamage(state, attacker, target);
   const kill = dmg >= target.hp;
   let score = kill ? 1000 + unitValue(target.type) * 10 : dmg * 3 + unitValue(target.type) * 5 - target.hp;
-  // Discount for expected revenge if this won't be a kill (avoid feeding trades).
-  if (!kill && attacker.stats.canBeRevenged) {
+  // Discount for expected fight-back if this won't be a kill (avoid feeding
+  // trades). Fight-back is now purely range-gated — a surviving defender counters
+  // only if the attacker is within its range.
+  if (!kill) {
     const dist = hexDistance(attacker.pos, target.pos);
     if (dist <= getEffectiveRange(state, target)) {
       score -= estimateDamage(state, target, attacker);

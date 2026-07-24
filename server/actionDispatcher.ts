@@ -244,9 +244,10 @@ export function buildRulesPayload(): Record<string, unknown> {
       note: 'Requires "teleports" tech. Each portal must be within radius of a different owned temple. Unit stepping on portal teleports to free neighbour of partner portal.',
     },
     combat: {
-      formula: 'damage = round(randomMultiplier * encirclementMultiplier * typeBonus * (attackerATK - defenderDEF))',
+      formula: 'damage = max(1, round(randomMultiplier * encirclementMultiplier * typeBonus * (attackerATK - defenderDEF) * attackerHP/attackerMaxHP)); a landed hit always deals at least 1',
       randomMultiplier: 'Normal(1.0, sigma=0.2), clamped [0.5, 1.5]',
-      revengeAttack: 'If target survives and attacker.canBeRevenged is true, target fires back.',
+      firstStrike: 'Damage scales with the attacker\'s current HP fraction, so attacking first (at full HP) beats being countered from reduced HP.',
+      revengeAttack: 'Sequential: the attacker strikes first. If the target survives AND the attacker is within the target\'s effective attack range, the target fights back from its REMAINING HP. A dead defender never fights back; an out-of-range defender (e.g. melee vs a distant catapult) cannot.',
       meleeStep: 'Melee units (range=1) step onto killed target\'s tile.',
       encirclement: 'Up to 2x damage multiplier based on surrounding enemies and map edges.',
     },
