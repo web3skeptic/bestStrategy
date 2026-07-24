@@ -280,7 +280,7 @@ export function buildRulesPayload(): Record<string, unknown> {
     ],
     startingConditions: {
       startingAura: 2,
-      startingUnits: '2 warriors each',
+      startingUnits: '0 — each player starts with no units and recruits from their home temple (starting aura 2 buys up to 2 warriors at cost 1 on turn 1)',
       templeLayout: 'N owned temples (one per player) + N neutral temples = 2N total, placed randomly each game with a minimum separation and maximized spread',
       mapScalesWithPlayers: true,
       mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2)',

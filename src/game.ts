@@ -652,10 +652,13 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const allUnitPositions = layout.unitPositions.flat();
   const { hills, walls, forests } = generateTerrain(mapRadius, temples.map(t => t.pos), allUnitPositions);
 
+  // Players start with ZERO units on the map — they recruit from their home
+  // temple (turn 1: starting aura 2 buys up to 2 warriors at cost 1). A player is
+  // eliminated only once they have no living units AND no owned temples (see
+  // checkWinCondition), so an empty board at game start is NOT an instant loss.
+  // (layout.unitPositions is still fed to terrain generation above so the home
+  // areas stay clear for freshly-recruited units to move into.)
   const units: Unit[] = [];
-  layout.unitPositions.forEach((positions, playerId) => {
-    for (const pos of positions) units.push(createUnit('warrior', playerId, pos));
-  });
 
   const explored: Set<string>[] = players.map(() => new Set<string>());
 
