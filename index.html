@@ -915,6 +915,48 @@
       animation: wi-pulse 1.1s ease-in-out infinite;
     }
     #waitingIndicator .wi-name { color: #ffd98a; }
+
+    /* Toast notifications — small carved-stone chips, auto-dismissed, stacked. */
+    #toastStack {
+      position: fixed;
+      top: 70px;
+      right: 14px;
+      z-index: 121;               /* above the board / banner, below overlays */
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: flex-end;
+      pointer-events: none;
+      max-width: 82vw;
+    }
+    .toast {
+      background: #5e6470;
+      color: #eef1f7;
+      font-size: 13.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 10px 20px;
+      max-width: 100%;
+      clip-path: polygon(4% 0%, 96% 0%, 100% 26%, 100% 74%, 96% 100%, 4% 100%, 0% 74%, 0% 26%);
+      box-shadow:
+        inset 0 0 0 2px #11141c,
+        inset 2px 2px 0 rgba(160,175,200,0.30),
+        inset -2px -2px 0 rgba(0,0,0,0.45);
+      filter: drop-shadow(0 5px 10px rgba(0,0,0,0.55));
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      white-space: nowrap;
+      opacity: 0;
+      transform: translateX(18px);
+      transition: opacity 0.28s ease, transform 0.28s ease;
+    }
+    .toast.show { opacity: 1; transform: translateX(0); }
+    .toast.hide { opacity: 0; transform: translateX(18px); }
+    .toast.good { color: #bdf0c6; }
+    .toast.bad  { color: #f3b3b3; }
+    @media (prefers-reduced-motion: reduce) {
+      .toast { transition: opacity 0.2s ease; transform: none; }
+      .toast.hide { transform: none; }
+    }
     @keyframes wi-pulse { 0%,100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.15); } }
     .settings-panel {
       background: rgba(16,16,36,0.98);
@@ -1359,7 +1401,9 @@
       <div class="sublabel">Please wait — the board is hidden during their turn.</div>
     </div>
   </div>
-  <!-- Subtle waiting pill (vs-AI / online): board stays visible & fog-limited -->
+  <!-- Toast notifications (temple captures, etc.) -->
+  <div id="toastStack"></div>
+  <!-- Persistent opponent-turn banner (vs-AI / online): board stays visible & fog-limited -->
   <div id="waitingIndicator" class="hidden">
     <span class="wi-dot"></span>
     <span>Waiting for <span class="wi-name" id="waitingIndicatorName"></span> to move…</span>

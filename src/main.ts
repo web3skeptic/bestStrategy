@@ -196,6 +196,56 @@ const opponentTurnCardEl = document.getElementById('opponentTurnCard')!;
 const opponentTurnNameEl = document.getElementById('opponentTurnName')!;
 const waitingIndicator = document.getElementById('waitingIndicator')!;
 const waitingIndicatorName = document.getElementById('waitingIndicatorName')!;
+const toastStack = document.getElementById('toastStack')!;
+
+// ── Toast notifications (carved-stone chips, auto-dismiss, stack) ──
+function showToast(msg: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): void {
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind === 'good' ? ' good' : kind === 'bad' ? ' bad' : '');
+  el.textContent = msg;
+  toastStack.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    el.classList.add('hide');
+    setTimeout(() => el.remove(), 320);
+  }, 3500);
+}
+
+// Temple ownership snapshot, diffed each render() so a capture (which can happen
+// silently on auto-capture, on any player's turn, locally or via a server state
+// update) always raises a toast from the local viewer's perspective.
+let prevTempleOwners = new Map<string, number | null>();
+function snapshotTempleOwners(): void {
+  prevTempleOwners = new Map(state.temples.map(t => [t.id, t.ownerId]));
+}
+function checkTempleCaptureToasts(): void {
+  // Treat a changed temple set (new game / first render) as a silent (re)init.
+  const sameBoard = prevTempleOwners.size === state.temples.length
+    && state.temples.every(t => prevTempleOwners.has(t.id));
+  if (!sameBoard) { snapshotTempleOwners(); return; }
+
+  const viewer = viewerPlayerSlot();
+  const nameOf = (id: number | null): string =>
+    id === null ? 'Neutral' : (state.players[id]?.name ?? `Player ${id + 1}`);
+
+  for (const t of state.temples) {
+    const prev = prevTempleOwners.get(t.id)!;
+    if (prev === t.ownerId) continue;
+    const now = t.ownerId;
+    const wasNeutral = prev === null;
+    if (viewer !== null && now === viewer) {
+      showToast(wasNeutral ? 'You captured a neutral temple' : 'You captured a temple', 'good');
+    } else if (viewer !== null && prev === viewer) {
+      showToast(now === null ? 'Your temple was neutralized' : 'An opponent captured your temple', 'bad');
+    } else if (now === null) {
+      showToast(`${nameOf(prev)}'s temple went neutral`);
+    } else {
+      showToast(`${nameOf(now)} captured ${wasNeutral ? 'a neutral temple' : 'a temple'}`);
+    }
+  }
+  snapshotTempleOwners();
+}
 const myPlayerBadge = document.getElementById('myPlayerBadge')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
 const settingsOverlay = document.getElementById('settingsOverlay')!;
@@ -363,6 +413,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       multiplayerMode = true;
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
+      snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
@@ -435,6 +486,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       multiplayerMode = true;
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
+      snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
@@ -654,6 +706,7 @@ function restoreGame(): void {
   buildingTeleport = null;
   handoffPending = false;
   state = deserialize(save.state);
+  snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
@@ -694,6 +747,7 @@ function startLocalGame(kinds: ControllerKind[]): void {
     color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
   }));
   state = createGameState(players);
+  snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
@@ -790,6 +844,7 @@ setupStartBtn.addEventListener('click', () => startLocalGame(setupKinds));
 // ── Render & UI ──
 
 function render(): void {
+  checkTempleCaptureToasts(); // raise a toast for any temple that changed hands
   if (spectatorMode) {
     // Spectators always see the full board (no fog, no player-specific view)
     renderer.render(state);
