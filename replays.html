@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Replays Browser</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: #0d0d1a;
+      color: #ccc;
+      font-family: 'Segoe UI', sans-serif;
+      min-height: 100%;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 22px;
+      color: #ccf;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      color: #889;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+      padding: 14px;
+      background: rgba(22,22,44,0.85);
+      border: 1px solid #334;
+      border-radius: 8px;
+    }
+    .controls input[type="search"] {
+      flex: 1;
+      min-width: 220px;
+      padding: 8px 12px;
+      background: #181830;
+      border: 1px solid #334;
+      border-radius: 6px;
+      color: #eef;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    .controls input[type="search"]:focus { outline: none; border-color: #6ef; }
+    .controls label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #aab;
+      user-select: none;
+      cursor: pointer;
+    }
+    .controls input[type="checkbox"] { accent-color: #6ef; }
+    .controls button {
+      padding: 8px 14px;
+      background: #2a2a4a;
+      border: 1px solid #445;
+      border-radius: 6px;
+      color: #ccf;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+    }
+    .controls button:hover { background: #353560; }
+    .stats {
+      color: #889;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: rgba(17,17,34,0.85);
+      border: 1px solid #334;
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 13px;
+    }
+    thead {
+      background: rgba(40,40,80,0.6);
+    }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      color: #aab;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid #334;
+      white-space: nowrap;
+    }
+    th:hover { color: #ccf; }
+    th .arrow {
+      display: inline-block;
+      width: 12px;
+      color: #6ef;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #223;
+    }
+    tbody tr:hover { background: rgba(50,50,100,0.25); }
+    .gid {
+      font-family: monospace;
+      font-size: 11px;
+      color: #6ef;
+    }
+    .winner-cell { color: #8c8; font-weight: 500; }
+    .winner-cell.none { color: #888; font-style: italic; }
+    .badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .badge-timeout { background: #553; color: #eb7; }
+    .badge-live    { background: #353; color: #8d8; }
+    a.watch {
+      color: #6ef;
+      text-decoration: none;
+      padding: 4px 10px;
+      border: 1px solid #345;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    a.watch:hover { background: rgba(100,200,255,0.1); }
+    .empty {
+      text-align: center;
+      padding: 40px;
+      color: #889;
+    }
+    .error {
+      padding: 12px;
+      background: rgba(150,40,40,0.2);
+      border: 1px solid #844;
+      color: #faa;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Replays</h1>
+    <p class="subtitle">Browse and search all recorded games. Click a column to sort; type to filter.</p>
+
+    <div id="errorBox"></div>
+
+    <div class="controls">
+      <input type="search" id="searchInput" placeholder="Search by player name, winner, or game id…" autocomplete="off">
+      <label><input type="checkbox" id="finishedOnly"> Finished only</label>
+      <label><input type="checkbox" id="winsOnly"> Decisive only</label>
+      <button id="refreshBtn">↻ Refresh</button>
+    </div>
+
+    <div class="stats" id="stats">Loading…</div>
+
+    <table id="table">
+      <thead>
+        <tr>
+          <th data-sort="createdAt">When <span class="arrow"></span></th>
+          <th data-sort="player1Name">Player 1 <span class="arrow"></span></th>
+          <th data-sort="player2Name">Player 2 <span class="arrow"></span></th>
+          <th data-sort="winnerName">Winner <span class="arrow"></span></th>
+          <th data-sort="eventCount" style="text-align: right;">Events <span class="arrow"></span></th>
+          <th data-sort="durationSec" style="text-align: right;">Duration <span class="arrow"></span></th>
+          <th data-sort="gameId">Game ID <span class="arrow"></span></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <script type="module" src="./src/replays.ts"></script>
+</body>
+</html>

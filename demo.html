@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Best Strategy — Asset Demo</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #12131a; overflow: hidden; }
+      #c { display: block; width: 100vw; height: 100vh; }
+      #hud {
+        position: fixed; top: 12px; left: 14px; z-index: 10;
+        font: 13px/1.4 -apple-system, system-ui, sans-serif; color: #cfd3de;
+        background: rgba(18, 19, 26, 0.6); padding: 8px 12px; border-radius: 8px;
+        pointer-events: none; user-select: none;
+      }
+      #hud b { color: #ffd27a; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud"><b>Best Strategy — Asset Demo</b><br />Tiles · Units · Structures (Temples L1–L10 + Portals)<br />Drag to orbit · scroll to zoom</div>
+    <script type="module" src="/src/demo.ts"></script>
+  </body>
+</html>

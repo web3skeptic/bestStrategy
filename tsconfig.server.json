@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "strict": true,
+    "outDir": "server-dist",
+    "rootDir": ".",
+    "skipLibCheck": true
+  },
+  "include": ["server/**/*", "src/types.ts", "src/serializer.ts", "src/game.ts", "src/hex.ts"]
+}

@@ -1,0 +1,230 @@
+═══════════════════════════════════════════════════════════════════════════════
+  ARMY SIMULATION REPORT  |  aura=15  |  73344 battles  |  4 games/matchup
+═══════════════════════════════════════════════════════════════════════════════
+
+RANKINGS (all compositions)
+─────────────────────────────────────────────────────────────────────────────
+  #      Win%      W     L    D    AvgHP  Army
+  ────────────────────────────────────────────────────────────────────────────
+  1      90.4%    691    73    0     32.3  2×archer + 2×catapult + 3×warrior  [↑c]
+  2      89.9%    687    77    0     32.7  1×archer + 3×catapult + 1×warrior  [↑c]
+  3      89.5%    684    80    0     38.2  3×archer + 2×catapult + 1×warrior  [↑c]
+  4      89.5%    684    80    0     24.3  3×catapult + 1×horserider  [↑c]
+  5      89.0%    680    84    0     30.6  2×archer + 2×catapult + 1×spearsman + 1×warrior  [↑sc]
+  6      88.7%    678    86    0     26.9  3×catapult + 3×warrior  [↑c]
+  7      88.6%    677    87    0     26.5  3×catapult + 1×spearsman + 1×warrior  [↑sc]
+  8      88.1%    673    91    0     25.6  1×archer + 2×catapult + 1×spearsman + 3×warrior  [↑sc]
+  9      87.6%    669    95    0     19.2  2×catapult + 3×spearsman + 1×warrior  [↑sc]
+  10     87.4%    668    96    0     24.3  2×archer + 2×catapult + 1×horserider  [↑c]
+  11     86.8%    663   101    0     25.5  1×archer + 2×catapult + 5×warrior  [↑c]
+  12     86.5%    661   103    0     20.3  2×catapult + 2×spearsman + 3×warrior  [↑sc]
+  13     86.5%    661   103    0     24.4  1×archer + 2×catapult + 1×horserider + 2×warrior  [↑c]
+  14     84.9%    649   115    0     18.5  2×catapult + 1×horserider + 4×warrior  [↑c]
+  15     84.6%    646   118    0     18.3  2×catapult + 7×warrior  [↑c]
+  16     84.0%    642   122    0     41.8  4×archer + 1×catapult + 3×warrior  [↑c]
+  17     83.8%    640   124    0     23.5  1×archer + 2×catapult + 2×spearsman + 1×warrior  [↑sc]
+  18     83.2%    636   128    0     19.7  2×catapult + 1×spearsman + 5×warrior  [↑sc]
+  19     82.5%    630   134    0     18.3  2×catapult + 1×horserider + 1×spearsman + 2×warrior  [↑sc]
+  20     82.2%    628   136    0     34.4  3×archer + 1×catapult + 1×spearsman + 3×warrior  [↑sc]
+  21     81.7%    624   140    0     35.4  4×archer + 1×catapult + 1×spearsman + 1×warrior  [↑sc]
+  22     81.5%    623   141    0     20.3  1×archer + 2×catapult + 1×horserider + 1×spearsman  [↑sc]
+  23     81.3%    621   143    0     56.9  7×spearsman + 1×warrior  [↑s]
+  24     81.0%    619   145    0     44.7  5×archer + 1×catapult + 1×warrior  [↑c]
+  25     80.1%    612   152    0     30.6  3×archer + 1×catapult + 1×horserider + 2×warrior  [↑c]
+  26     79.8%    610   154    0     33.3  3×archer + 1×catapult + 5×warrior  [↑c]
+  27     79.8%    610   154    0     17.4  2×catapult + 2×horserider + 1×warrior  [↑c]
+  28     79.5%    607   157    0     16.3  2×catapult + 1×horserider + 2×spearsman  [↑sc]
+  29     78.3%    598   166    0     28.9  2×archer + 1×catapult + 2×spearsman + 3×warrior  [↑sc]
+  30     76.7%    586   178    0     35.6  1×horserider + 6×spearsman  [↑s]
+  31     76.4%    584   180    0     54.2  1×archer + 6×spearsman + 1×warrior  [↑s]
+  32     76.3%    583   181    0     25.0  2×archer + 1×catapult + 1×horserider + 4×warrior  [↑c]
+  33     76.3%    583   181    0     30.0  1×catapult + 5×spearsman + 1×warrior  [↑sc]
+  34     76.0%    581   183    0     32.0  3×archer + 1×catapult + 2×spearsman + 1×warrior  [↑sc]
+  35     75.7%    578   186    0     23.3  2×archer + 1×catapult + 1×horserider + 1×spearsman + 2×warrior  [↑sc]
+  36     74.5%    569   195    0     16.8  2×catapult + 1×heavyknight  [↑ch]
+  37     74.3%    568   196    0     27.9  2×archer + 1×catapult + 3×spearsman + 1×warrior  [↑sc]
+  38     74.2%    567   197    0     66.5  6×spearsman + 3×warrior  [↑s]
+  39     74.1%    566   198    0     27.8  2×archer + 1×catapult + 1×spearsman + 5×warrior  [↑sc]
+  40     73.4%    561   203    0     28.6  4×archer + 1×catapult + 1×horserider  [↑c]
+  41     73.3%    560   204    0     27.9  1×catapult + 4×spearsman + 3×warrior  [↑sc]
+  42     72.6%    555   209    0     25.6  2×archer + 1×catapult + 7×warrior  [↑c]
+  43     71.6%    547   217    0     27.3  1×archer + 1×catapult + 3×spearsman + 3×warrior  [↑sc]
+  44     70.8%    541   223    0     27.0  1×archer + 1×catapult + 4×spearsman + 1×warrior  [↑sc]
+  45     70.4%    538   226    0     24.1  1×archer + 1×catapult + 2×spearsman + 5×warrior  [↑sc]
+  46     70.2%    536   228    0     53.4  2×archer + 5×spearsman + 1×warrior  [↑s]
+  47     69.6%    532   232    0     32.6  1×heavyknight + 4×spearsman  [↑sh]
+  48     69.4%    530   234    0     20.3  1×archer + 1×catapult + 1×heavyknight + 2×warrior  [↑ch]
+  49     69.0%    527   237    0     36.5  1×archer + 1×horserider + 5×spearsman  [↑s]
+  50     67.7%    517   247    0     18.8  1×catapult + 1×horserider + 3×spearsman + 2×warrior  [↑sc]
+  51     67.4%    515   249    0     21.4  1×archer + 1×catapult + 1×spearsman + 7×warrior  [↑sc]
+  52     67.3%    514   250    0     18.4  1×archer + 1×catapult + 1×horserider + 2×spearsman + 2×warrior  [↑sc]
+  53     67.0%    512   252    0     24.3  3×archer + 1×catapult + 1×horserider + 1×spearsman  [↑sc]
+  54     66.5%    508   256    0     18.6  1×archer + 1×catapult + 1×horserider + 1×spearsman + 4×warrior  [↑sc]
+  55     66.2%    506   258    0     71.0  5×spearsman + 5×warrior  [↑s]
+  56     66.1%    505   259    0     24.2  1×catapult + 3×spearsman + 5×warrior  [↑sc]
+  57     65.8%    503   261    0     62.4  1×archer + 5×spearsman + 3×warrior  [↑s]
+  58     65.3%    499   265    0     21.5  2×archer + 1×catapult + 1×horserider + 2×spearsman  [↑sc]
+  59     64.8%    495   269    0     19.0  1×catapult + 1×heavyknight + 1×spearsman + 2×warrior  [↑sch]
+  60     64.5%    493   271    0     19.4  1×archer + 1×catapult + 9×warrior  [↑c]
+  61     64.3%    491   273    0     17.7  1×archer + 1×catapult + 1×horserider + 6×warrior  [↑c]
+  62     62.8%    480   284    0     47.4  1×horserider + 5×spearsman + 2×warrior  [↑s]
+  63     62.0%    474   290    0     52.1  2×archer + 4×spearsman + 3×warrior  [↑s]
+  64     61.9%    473   291    0     18.0  1×archer + 1×catapult + 1×horserider + 3×spearsman  [↑sc]
+  65     61.8%    472   292    0     18.9  1×catapult + 1×heavyknight + 4×warrior  [↑ch]
+  66     61.4%    469   295    0     15.5  1×archer + 1×catapult + 2×horserider + 3×warrior  [↑c]
+  67     59.9%    458   306    0     58.6  1×archer + 4×spearsman + 5×warrior  [↑s]
+  68     59.8%    457   307    0     19.5  1×catapult + 2×spearsman + 7×warrior  [↑sc]
+  69     59.7%    456   308    0     17.0  1×catapult + 1×horserider + 4×spearsman  [↑sc]
+  70     59.2%    452   312    0     34.4  1×archer + 1×heavyknight + 3×spearsman  [↑sh]
+  71     58.8%    449   315    0     50.7  3×archer + 4×spearsman + 1×warrior  [↑s]
+  72     58.2%    445   319    0     37.3  2×archer + 1×horserider + 4×spearsman  [↑s]
+  73     57.6%    440   324    0     17.4  2×archer + 1×catapult + 2×horserider + 1×warrior  [↑c]
+  74     57.1%    436   328    0     46.4  1×heavyknight + 3×spearsman + 2×warrior  [↑sh]
+  75     56.9%    435   329    0     50.5  2×archer + 3×spearsman + 5×warrior  [↑s]
+  76     56.5%    432   332    0     17.7  1×catapult + 1×horserider + 2×spearsman + 4×warrior  [↑sc]
+  77     56.3%    430   334    0     43.1  5×archer + 2×spearsman + 1×warrior  [↑s]
+  78     56.3%    430   334    0     21.5  2×archer + 1×catapult + 1×heavyknight  [↑ch]
+  79     55.8%    426   338    0     12.7  1×catapult + 2×horserider + 1×spearsman + 3×warrior  [↑sc]
+  80     55.6%    425   339    0     44.9  4×archer + 3×spearsman + 1×warrior  [↑s]
+  81     55.2%    422   342    0     41.4  4×archer + 2×spearsman + 3×warrior  [↑s]
+  82     54.1%    413   351    0     46.6  3×archer + 2×spearsman + 5×warrior  [↑s]
+  83     53.8%    411   353    0     49.5  3×archer + 3×spearsman + 3×warrior  [↑s]
+  84     53.5%    409   355    0     17.3  1×catapult + 1×spearsman + 9×warrior  [↑sc]
+  85     53.4%    408   356    0     45.1  1×archer + 1×horserider + 4×spearsman + 2×warrior  [↑s]
+  86     53.3%    407   357    0     65.2  4×spearsman + 7×warrior  [↑s]
+  87     52.5%    401   363    0     15.3  1×catapult + 1×horserider + 1×spearsman + 6×warrior  [↑sc]
+  88     52.5%    401   363    0     43.9  5×archer + 1×spearsman + 3×warrior  [↑s]
+  89     52.2%    399   365    0     19.1  1×archer + 1×catapult + 1×heavyknight + 1×spearsman  [↑sch]
+  90     51.7%    395   369    0     48.2  6×archer + 3×warrior
+  91     51.2%    391   373    0     41.1  4×archer + 1×spearsman + 5×warrior  [↑s]
+  92     51.2%    391   373    0     25.3  2×heavyknight + 1×warrior  [↑h]
+  93     50.9%    389   375    0     53.5  1×horserider + 4×spearsman + 4×warrior  [↑s]
+  94     50.8%    388   376    0     17.1  1×catapult + 1×heavyknight + 2×spearsman  [↑sch]
+  95     50.5%    386   378    0     55.5  1×archer + 3×spearsman + 7×warrior  [↑s]
+  96     50.4%    385   379    0     12.2  1×catapult + 2×horserider + 2×spearsman + 1×warrior  [↑sc]
+  97     49.7%    380   384    0     14.3  1×catapult + 1×horserider + 8×warrior  [↑c]
+  98     49.6%    379   385    0     13.5  1×archer + 1×catapult + 2×horserider + 1×spearsman + 1×warrior  [↑sc]
+  99     49.3%    377   387    0     35.5  2×archer + 1×heavyknight + 2×spearsman  [↑sh]
+  100    49.1%    375   389    0     43.3  5×archer + 5×warrior
+  101    49.1%    375   389    0     12.6  1×catapult + 2×horserider + 5×warrior  [↑c]
+  102    49.1%    375   389    0     32.7  2×horserider + 4×spearsman + 1×warrior  [↑s]
+  103    48.8%    373   391    0     11.8  1×catapult + 1×heavyknight + 1×horserider + 1×warrior  [↑ch]
+  104    48.7%    372   392    0     34.7  3×archer + 1×horserider + 3×spearsman  [↑s]
+  105    48.2%    368   396    0     52.1  7×archer + 1×warrior
+  106    47.9%    366   398    0     42.8  1×archer + 1×heavyknight + 2×spearsman + 2×warrior  [↑sh]
+  107    47.8%    365   399    0     15.2  1×catapult + 11×warrior  [↑c]
+  108    46.6%    356   408    0     44.8  6×archer + 1×spearsman + 1×warrior  [↑s]
+  109    45.8%    350   414    0     48.2  2×archer + 2×spearsman + 7×warrior  [↑s]
+  110    45.3%    346   418    0     50.8  1×heavyknight + 2×spearsman + 4×warrior  [↑sh]
+  111    45.0%    344   420    0     42.9  3×archer + 1×spearsman + 7×warrior  [↑s]
+  112    44.2%    338   426    0     64.4  3×spearsman + 9×warrior  [↑s]
+  113    44.1%    337   427    0     10.6  1×catapult + 3×horserider + 2×warrior  [↑c]
+  114    44.0%    336   428    0     38.0  2×archer + 1×horserider + 3×spearsman + 2×warrior  [↑s]
+  115    43.2%    330   434    0     35.8  4×archer + 1×horserider + 4×warrior
+  116    42.8%    327   437    0     41.7  4×archer + 7×warrior
+  117    42.3%    323   441    0     34.9  3×archer + 1×horserider + 2×spearsman + 2×warrior  [↑s]
+  118    42.1%    322   442    0     38.8  2×archer + 1×horserider + 2×spearsman + 4×warrior  [↑s]
+  119    41.2%    315   449    0     34.5  4×archer + 1×horserider + 2×spearsman  [↑s]
+  120    40.8%    312   452    0     37.7  2×archer + 1×heavyknight + 4×warrior  [↑h]
+  121    40.6%    310   454    0     43.6  1×archer + 1×heavyknight + 1×spearsman + 4×warrior  [↑sh]
+  122    40.4%    309   455    0     30.4  1×heavyknight + 1×horserider + 2×spearsman + 1×warrior  [↑sh]
+  123    40.2%    307   457    0     35.4  3×archer + 1×horserider + 1×spearsman + 4×warrior  [↑s]
+  124    39.7%    303   461    0     39.5  2×archer + 1×heavyknight + 1×spearsman + 2×warrior  [↑sh]
+  125    39.5%    302   462    0     51.7  1×archer + 2×spearsman + 9×warrior  [↑s]
+  126    39.5%    302   462    0     34.3  3×archer + 1×heavyknight + 1×spearsman  [↑sh]
+  127    39.1%    299   465    0     35.4  3×archer + 1×heavyknight + 2×warrior  [↑h]
+  128    38.2%    292   472    0     47.6  1×heavyknight + 1×spearsman + 6×warrior  [↑sh]
+  129    37.8%    289   475    0     49.1  1×horserider + 3×spearsman + 6×warrior  [↑s]
+  130    37.8%    289   475    0     39.0  5×archer + 1×horserider + 2×warrior
+  131    37.4%    286   478    0     46.2  1×archer + 1×horserider + 3×spearsman + 4×warrior  [↑s]
+  132    37.2%    284   480    0     46.9  1×archer + 1×heavyknight + 6×warrior  [↑h]
+  133    37.2%    284   480    0     39.1  5×archer + 1×horserider + 1×spearsman  [↑s]
+  134    37.0%    283   481    0     39.8  1×archer + 1×horserider + 2×spearsman + 6×warrior  [↑s]
+  135    36.8%    281   483    0     39.9  2×archer + 1×spearsman + 9×warrior  [↑s]
+  136    36.8%    281   483    0     32.8  1×archer + 2×horserider + 3×spearsman + 1×warrior  [↑s]
+  137    36.1%    276   488    0     37.2  4×archer + 1×heavyknight  [↑h]
+  138    35.3%    270   494    0     42.2  3×archer + 9×warrior
+  139    34.8%    266   498    0     32.8  4×archer + 1×horserider + 1×spearsman + 2×warrior  [↑s]
+  140    33.5%    256   508    0     52.6  1×heavyknight + 8×warrior  [↑h]
+  141    33.1%    253   511    0     40.0  6×archer + 1×horserider
+  142    33.1%    253   511    0     11.5  1×archer + 1×catapult + 3×horserider  [↑c]
+  143    32.9%    251   513    0     51.8  2×spearsman + 11×warrior  [↑s]
+  144    32.9%    251   513    0     33.7  3×archer + 1×horserider + 6×warrior
+  145    32.2%    246   518    0     38.8  2×horserider + 3×spearsman + 3×warrior  [↑s]
+  146    30.8%    235   529    0     39.3  2×archer + 1×horserider + 1×spearsman + 6×warrior  [↑s]
+  147    30.8%    235   529    0     38.3  1×heavyknight + 1×horserider + 1×spearsman + 3×warrior  [↑sh]
+  148    30.0%    229   535    0     45.4  1×horserider + 2×spearsman + 8×warrior  [↑s]
+  149    28.9%    221   543    0     19.8  3×horserider + 3×spearsman  [↑s]
+  150    28.3%    216   548    0     43.5  1×archer + 1×spearsman + 11×warrior  [↑s]
+  151    27.7%    212   552    0     41.3  2×archer + 11×warrior
+  152    27.6%    211   553    0     31.9  1×archer + 1×heavyknight + 1×horserider + 1×spearsman + 1×warrior  [↑sh]
+  153    26.3%    201   563    0     38.0  1×heavyknight + 1×horserider + 5×warrior  [↑h]
+  154    25.5%    195   569    0      7.7  1×catapult + 3×horserider + 1×spearsman  [↑sc]
+  155    25.5%    195   569    0     18.4  1×heavyknight + 2×horserider + 1×spearsman  [↑sh]
+  156    25.3%    193   571    0     39.1  1×archer + 1×horserider + 1×spearsman + 8×warrior  [↑s]
+  157    25.3%    193   571    0     32.9  1×archer + 1×heavyknight + 1×horserider + 3×warrior  [↑h]
+  158    25.3%    193   571    0     31.9  2×archer + 2×horserider + 2×spearsman + 1×warrior  [↑s]
+  159    25.1%    192   572    0     35.8  2×archer + 1×horserider + 8×warrior
+  160    23.8%    182   582    0     48.2  1×spearsman + 13×warrior  [↑s]
+  161    23.7%    181   583    0     31.1  4×archer + 2×horserider + 1×warrior
+  162    22.6%    173   591    0     46.7  1×archer + 13×warrior
+  163    22.4%    171   593    0     27.7  2×archer + 2×horserider + 1×spearsman + 3×warrior  [↑s]
+  164    22.4%    171   593    0     30.5  2×archer + 1×heavyknight + 1×horserider + 1×warrior  [↑h]
+  165    22.3%    170   594    0     35.4  1×archer + 2×horserider + 1×spearsman + 5×warrior  [↑s]
+  166    22.3%    170   594    0     28.1  3×archer + 2×horserider + 3×warrior
+  167    22.3%    170   594    0     36.9  1×archer + 2×horserider + 2×spearsman + 3×warrior  [↑s]
+  168    21.7%    166   598    0     30.9  3×archer + 2×horserider + 1×spearsman + 1×warrior  [↑s]
+  169    21.1%    161   603    0     38.2  2×horserider + 2×spearsman + 5×warrior  [↑s]
+  170    20.4%    156   608    0     29.9  2×archer + 2×horserider + 5×warrior
+  171    19.2%    147   617    0     48.4  15×warrior
+  172    19.2%    147   617    0     28.5  3×horserider + 2×spearsman + 2×warrior  [↑s]
+  173    18.8%    144   620    0     26.3  1×heavyknight + 2×horserider + 2×warrior  [↑h]
+  174    18.2%    139   625    0     46.7  1×horserider + 1×spearsman + 10×warrior  [↑s]
+  175    17.9%    137   627    0     23.7  1×archer + 3×horserider + 2×spearsman  [↑s]
+  176    17.7%    135   629    0     22.2  1×archer + 1×heavyknight + 2×horserider  [↑h]
+  177    17.5%    134   630    0     33.9  2×horserider + 1×spearsman + 7×warrior  [↑s]
+  178    15.7%    120   644    0     41.7  1×archer + 1×horserider + 10×warrior
+  179    15.1%    115   649    0     26.8  2×archer + 3×horserider + 1×spearsman  [↑s]
+  180    13.5%    103   661    0     39.9  1×horserider + 12×warrior
+  181    13.4%    102   662    0     37.1  1×archer + 2×horserider + 7×warrior
+  182    11.6%     89   675    0     28.1  1×archer + 3×horserider + 4×warrior
+  183    11.5%     88   676    0     24.6  1×archer + 3×horserider + 1×spearsman + 2×warrior  [↑s]
+  184    11.0%     84   680    0     34.5  3×horserider + 1×spearsman + 4×warrior  [↑s]
+  185    10.7%     82   682    0     22.4  3×archer + 3×horserider
+  186    10.6%     81   683    0     37.6  2×horserider + 9×warrior
+  187     9.0%     69   695    0     23.2  2×archer + 3×horserider + 2×warrior
+  188     8.5%     65   699    0     30.8  3×horserider + 6×warrior
+  189     7.5%     57   707    0     23.7  4×horserider + 1×spearsman + 1×warrior  [↑s]
+  190     5.2%     40   724    0     26.1  4×horserider + 3×warrior
+  191     3.9%     30   734    0     25.2  1×archer + 4×horserider + 1×warrior
+  192     3.1%     24   740    0     14.3  5×horserider
+
+MOST DOMINANT MATCHUPS (highest win-rate gap)
+─────────────────────────────────────────────────────────────────────────────
+  100%  15×warrior  >  1×horserider + 12×warrior  (4/4)
+  100%  2×spearsman + 11×warrior  >  15×warrior  (4/4)
+  100%  1×catapult + 11×warrior  >  15×warrior  (4/4)
+  100%  15×warrior  >  1×archer + 1×horserider + 10×warrior  (4/4)
+  100%  2×archer + 1×spearsman + 9×warrior  >  15×warrior  (4/4)
+  100%  1×archer + 2×spearsman + 9×warrior  >  15×warrior  (4/4)
+  100%  1×archer + 1×catapult + 9×warrior  >  15×warrior  (4/4)
+  100%  15×warrior  >  2×horserider + 9×warrior  (4/4)
+  100%  1×catapult + 1×spearsman + 9×warrior  >  15×warrior  (4/4)
+  100%  1×catapult + 1×horserider + 8×warrior  >  15×warrior  (4/4)
+  100%  1×heavyknight + 8×warrior  >  15×warrior  (4/4)
+  100%  3×archer + 1×spearsman + 7×warrior  >  15×warrior  (4/4)
+  100%  2×archer + 2×spearsman + 7×warrior  >  15×warrior  (4/4)
+  100%  2×archer + 1×catapult + 7×warrior  >  15×warrior  (4/4)
+  100%  15×warrior  >  1×archer + 2×horserider + 7×warrior  (4/4)
+
+UNIT TYPE CONTRIBUTION
+  Avg win rate of all armies containing at least 1 of this unit type.
+─────────────────────────────────────────────────────────────────────────────
+  warrior        avg  50.0%   158 armies   best: 2×archer + 2×catapult + 3×warrior (90.4%)   worst: 1×archer + 4×horserider + 1×warrior (3.9%)
+  archer         avg  50.3%   122 armies   best: 2×archer + 2×catapult + 3×warrior (90.4%)   worst: 1×archer + 4×horserider + 1×warrior (3.9%)
+  catapult       avg  70.3%   74 armies   best: 2×archer + 2×catapult + 3×warrior (90.4%)   worst: 1×catapult + 3×horserider + 1×spearsman (25.5%)
+  horserider     avg  40.5%   99 armies   best: 3×catapult + 1×horserider (89.5%)   worst: 5×horserider (3.1%)
+  spearsman      avg  51.8%   122 armies   best: 2×archer + 2×catapult + 1×spearsman + 1×warrior (89.0%)   worst: 4×horserider + 1×spearsman + 1×warrior (7.5%)
+  heavyknight    avg  43.6%   33 armies   best: 2×catapult + 1×heavyknight (74.5%)   worst: 1×archer + 1×heavyknight + 2×horserider (17.7%)
+
+═══════════════════════════════════════════════════════════════════════════════

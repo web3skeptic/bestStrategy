@@ -1,0 +1,49 @@
+═══════════════════════════════════════════════════════════════════════
+  ARMY COMPOSITION SIMULATION REPORT
+  1088 battles · aura cap 10 · 8 games/matchup
+═══════════════════════════════════════════════════════════════════════
+
+RANKINGS BY WIN RATE
+────────────────────────────────────────────────────────────────────────
+  #     Win%     W    L    D   Avg HP (win)  Army
+  ──────────────────────────────────────────────────────────────────────
+  1    85.2%   109   19    0           37.8  3×archer + 4×warrior
+  2    80.5%   103   25    0           43.1  5×archer
+  3    79.7%   102   26    0           42.0  2×archer + 6×warrior
+  4    78.9%   101   27    0           40.3  4×archer + 2×warrior
+  5    76.6%    98   30    0           44.4  1×archer + 8×warrior
+  6    68.8%    88   40    0           40.9  10×warrior
+  7    59.4%    76   52    0           24.0  1×archer + 1×horserider + 5×warrior
+  8    58.6%    75   53    0           23.1  2×archer + 1×horserider + 3×warrior
+  9    53.1%    68   60    0           24.3  3×archer + 1×horserider + 1×warrior
+  10   52.3%    67   61    0            6.9  1×catapult + 1×warrior
+  11   46.1%    59   69    0           30.0  1×horserider + 7×warrior
+  12   38.3%    49   79    0           16.7  2×horserider + 4×warrior
+  13   27.3%    35   93    0            9.7  1×archer + 2×horserider + 2×warrior
+  14   16.4%    21  107    0            3.8  2×archer + 2×horserider
+  15   11.7%    15  113    0            2.8  3×horserider + 1×warrior
+  16   10.9%    14  114    0            2.2  1×spearsman + 2×warrior
+  17    6.3%     8  120    0            2.1  1×archer + 1×spearsman
+
+TOP MATCHUPS (biggest win-rate gaps)
+────────────────────────────────────────────────────────────────────────
+  10×warrior  beats  1×horserider + 7×warrior  (8/8)
+  10×warrior  beats  2×horserider + 4×warrior  (8/8)
+  10×warrior  beats  1×archer + 2×horserider + 2×warrior  (8/8)
+  10×warrior  beats  1×spearsman + 2×warrior  (8/8)
+  10×warrior  beats  3×horserider + 1×warrior  (8/8)
+  5×archer  beats  10×warrior  (8/8)
+  10×warrior  beats  2×archer + 2×horserider  (8/8)
+  10×warrior  beats  1×archer + 1×spearsman  (8/8)
+  1×archer + 8×warrior  beats  1×horserider + 7×warrior  (8/8)
+  1×archer + 8×warrior  beats  2×horserider + 4×warrior  (8/8)
+
+UNIT TYPE CONTRIBUTION (avg win rate of armies containing this unit type)
+────────────────────────────────────────────────────────────────────────
+  warrior     : avg win rate 53.3%  (14 armies)  best: 3×archer + 4×warrior @ 85.2%
+  archer      : avg win rate 56.5%  (11 armies)  best: 3×archer + 4×warrior @ 85.2%
+  horserider  : avg win rate 38.9%  (8 armies)  best: 1×archer + 1×horserider + 5×warrior @ 59.4%
+  spearsman   : avg win rate 8.6%  (2 armies)  best: 1×spearsman + 2×warrior @ 10.9%
+  catapult    : avg win rate 52.3%  (1 armies)  best: 1×catapult + 1×warrior @ 52.3%
+
+═══════════════════════════════════════════════════════════════════════

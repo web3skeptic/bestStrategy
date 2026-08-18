@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Combat Matrix — Best Strategy</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d0d1a;
+    color: #ccd;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    padding: 16px;
+  }
+
+  h1 { font-size: 20px; color: #e8e8ff; margin-bottom: 4px; }
+  .subtitle { color: #778; margin-bottom: 16px; font-size: 12px; }
+
+  /* ── Toolbar ── */
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  button {
+    background: #2a2a4a;
+    color: #aac;
+    border: 1px solid #445;
+    border-radius: 5px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #3a3a6a; color: #ddf; }
+  button.active { background: #3a3a6a; border-color: #88a; color: #eef; }
+  button.danger { border-color: #633; color: #c88; }
+  button.danger:hover { background: #3a1a1a; color: #faa; }
+
+  .sep { width: 1px; height: 22px; background: #334; }
+
+  .legend {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    color: #778;
+    flex-wrap: wrap;
+  }
+  .leg-item { display: flex; align-items: center; gap: 4px; }
+  .leg-swatch { width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0; }
+
+  /* ── Matrix wrapper ── */
+  .matrix-wrap {
+    overflow-x: auto;
+    border: 1px solid #334;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+
+  table { border-collapse: collapse; min-width: max-content; }
+  th, td { border: 1px solid #222238; padding: 0; }
+
+  .corner {
+    background: #111128;
+    min-width: 96px;
+    padding: 6px 8px;
+    font-size: 10px;
+    color: #445;
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  th.col-header {
+    background: #181830;
+    padding: 6px 4px 5px;
+    text-align: center;
+    vertical-align: bottom;
+    min-width: 84px; max-width: 84px;
+    user-select: none;
+  }
+  .col-header-inner { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .unit-icon { font-size: 15px; line-height: 1; }
+  .unit-name-col { font-size: 10px; color: #99b; line-height: 1.2; }
+  .stat-hint { font-size: 9px; color: #445; }
+
+  td.row-header {
+    background: #181830;
+    padding: 4px 8px;
+    text-align: right;
+    min-width: 96px;
+    user-select: none;
+  }
+  .row-header-inner { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+  .unit-name-row { font-size: 11px; color: #aac; }
+
+  /* ── Data cells ── */
+  td.cell {
+    min-width: 84px; max-width: 84px;
+    height: 54px;
+    padding: 3px 4px;
+    vertical-align: middle;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    transition: filter 0.1s;
+    user-select: none;
+  }
+  td.cell:hover { filter: brightness(1.25); }
+  td.cell.selected-cell { outline: 2px solid #88aaff; outline-offset: -2px; }
+
+  .cell-content { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .hits { font-size: 17px; font-weight: bold; line-height: 1; }
+  .hits-inf { font-size: 20px; }
+
+  .hp-row { display: flex; align-items: center; gap: 4px; font-size: 10px; color: rgba(255,255,255,0.75); }
+  .hp-bar-wrap { width: 42px; height: 4px; background: rgba(0,0,0,0.35); border-radius: 2px; overflow: hidden; }
+  .hp-bar { height: 100%; border-radius: 2px; }
+
+  .tags { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; }
+  .tag { font-size: 9px; padding: 0 3px; border-radius: 2px; background: rgba(0,0,0,0.3); line-height: 1.5; }
+
+  /* Custom matchup dot indicator */
+  .custom-dot {
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #88aaff;
+    opacity: 0.85;
+  }
+
+  /* Cell background colors */
+  .c-self      { background: #111128; cursor: default; }
+  .c-impossible{ background: #141422; }
+  .c-green3    { background: #0d2e14; }
+  .c-green2    { background: #1a3a1a; }
+  .c-yellow    { background: #382e08; }
+  .c-orange    { background: #3a2008; }
+  .c-red       { background: #350808; }
+
+  /* ── Popover ── */
+  #popover {
+    position: fixed;
+    z-index: 200;
+    background: #161628;
+    border: 1px solid #556;
+    border-radius: 9px;
+    width: 290px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    font-size: 12px;
+  }
+
+  .pop-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px 8px;
+    border-bottom: 1px solid #2a2a40;
+    font-size: 12px;
+    color: #ccd;
+  }
+  .pop-title-text { font-weight: 600; color: #dde; }
+  .pop-close-btn {
+    background: none;
+    border: none;
+    color: #668;
+    font-size: 16px;
+    padding: 0 2px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .pop-close-btn:hover { color: #aac; background: none; }
+
+  .pop-section {
+    padding: 8px 12px 6px;
+    border-bottom: 1px solid #1e1e30;
+  }
+  .pop-section:last-of-type { border-bottom: none; }
+
+  .pop-section-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: #778;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 7px;
+  }
+  .pop-section-title.revenge-title { color: #668; }
+
+  .pop-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .pop-row:last-child { margin-bottom: 0; }
+
+  .pop-label {
+    font-size: 11px;
+    color: #99b;
+    flex: 1;
+    line-height: 1.3;
+  }
+  .pop-label em { font-style: normal; color: #778; font-size: 10px; }
+
+  .pop-input-wrap { display: flex; align-items: center; gap: 5px; }
+  .pop-mult-label { font-size: 11px; color: #556; }
+
+  .pop-row input[type="number"] {
+    width: 60px;
+    background: #1e1e38;
+    border: 1px solid #445;
+    border-radius: 4px;
+    color: #dde;
+    padding: 4px 6px;
+    font-size: 13px;
+    text-align: center;
+    -moz-appearance: textfield;
+  }
+  .pop-row input[type="number"]::-webkit-outer-spin-button,
+  .pop-row input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .pop-row input[type="number"]:focus { outline: none; border-color: #88aaff; background: #24243e; }
+  .pop-row input[type="number"].modified { border-color: #6688cc; color: #aaccff; }
+
+  .revenge-note {
+    font-size: 10px;
+    color: #556;
+    padding: 4px 12px 6px;
+    font-style: italic;
+  }
+
+  .pop-footer {
+    padding: 7px 12px 9px;
+    display: flex;
+    gap: 6px;
+  }
+  .pop-footer button { flex: 1; font-size: 11px; padding: 4px 8px; }
+
+  .no-revenge-banner {
+    font-size: 10px;
+    color: #557;
+    padding: 5px 12px 6px;
+    background: #111126;
+    font-style: italic;
+  }
+
+  /* ── Stats editor ── */
+  .editor-wrap {
+    border: 1px solid #334;
+    border-radius: 8px;
+    padding: 14px;
+    background: #0f0f20;
+    overflow-x: auto;
+  }
+
+  .stats-table { border-collapse: collapse; min-width: 600px; }
+  .stats-table th {
+    text-align: center; padding: 4px 8px; font-size: 11px;
+    color: #668; border-bottom: 1px solid #2a2a40;
+    background: transparent; font-weight: 600; white-space: nowrap;
+  }
+  .stats-table td { padding: 3px 5px; border-bottom: 1px solid #1a1a2c; text-align: center; vertical-align: middle; }
+  .stats-table tr:last-child td { border-bottom: none; }
+
+  .unit-label-cell {
+    display: flex; align-items: center; gap: 5px;
+    justify-content: flex-start; white-space: nowrap;
+    font-size: 12px; color: #aac; padding-right: 8px; text-align: left;
+  }
+
+  .stats-table input[type="number"] {
+    width: 52px; background: #1a1a30; border: 1px solid #334; border-radius: 4px;
+    color: #ccd; padding: 3px 5px; font-size: 12px; text-align: center;
+    -moz-appearance: textfield;
+  }
+  .stats-table input[type="number"]::-webkit-outer-spin-button,
+  .stats-table input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .stats-table input[type="number"]:focus { outline: none; border-color: #669; background: #222240; }
+  .stats-table input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: #66aaff; }
+
+  .editor-note { font-size: 10px; color: #445; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>⚔ Combat Matrix</h1>
+<p class="subtitle">Rows = attacker · Columns = defender · Average damage, no terrain/encirclement/support · Click any cell to set per-matchup multipliers</p>
+
+<div class="toolbar">
+  <button id="resetStatsBtn">↺ Reset Stats</button>
+  <button id="resetMatchupsBtn" class="danger">↺ Reset All Matchups</button>
+  <div class="sep"></div>
+  <button id="editorToggle">⚙ Edit Stats ▾</button>
+  <div class="sep"></div>
+  <div class="legend">
+    <span style="color:#556">HP after fight:</span>
+    <div class="leg-item"><div class="leg-swatch" style="background:#1a5c28"></div>&gt;66%</div>
+    <div class="leg-item"><div class="leg-swatch" style="background:#3a6010"></div>33–66%</div>
+    <div class="leg-item"><div class="leg-swatch" style="background:#5c5000"></div>&lt;33%</div>
+    <div class="leg-item"><div class="leg-swatch" style="background:#5c2800"></div>nearly dead</div>
+    <div class="leg-item"><div class="leg-swatch" style="background:#5c0808"></div>attacker dies</div>
+    <div class="leg-item"><div class="leg-swatch" style="background:#141422"></div>no damage</div>
+    <div class="leg-item" style="margin-left:4px"><div class="custom-dot" style="position:static;display:inline-block"></div>&nbsp;custom mult</div>
+  </div>
+</div>
+
+<div class="matrix-wrap">
+  <table id="matrix"></table>
+</div>
+
+<!-- Matchup Popover -->
+<div id="popover" style="display:none">
+  <div class="pop-header">
+    <span class="pop-title-text" id="popTitle"></span>
+    <button class="pop-close-btn" id="popClose">×</button>
+  </div>
+
+  <div class="pop-section">
+    <div class="pop-section-title">▶ Primary Attack</div>
+    <div class="pop-row">
+      <span class="pop-label" id="lbl-atk"></span>
+      <div class="pop-input-wrap">
+        <span class="pop-mult-label">×</span>
+        <input type="number" id="inp-atk" min="0" step="0.1">
+      </div>
+    </div>
+    <div class="pop-row">
+      <span class="pop-label" id="lbl-def"></span>
+      <div class="pop-input-wrap">
+        <span class="pop-mult-label">×</span>
+        <input type="number" id="inp-def" min="0" step="0.1">
+      </div>
+    </div>
+  </div>
+
+  <div id="revenge-block">
+    <div class="pop-section">
+      <div class="pop-section-title revenge-title">↩ Revenge Strike</div>
+      <div class="pop-row">
+        <span class="pop-label" id="lbl-rev-atk"></span>
+        <div class="pop-input-wrap">
+          <span class="pop-mult-label">×</span>
+          <input type="number" id="inp-rev-atk" min="0" step="0.1">
+        </div>
+      </div>
+      <div class="pop-row">
+        <span class="pop-label" id="lbl-rev-def"></span>
+        <div class="pop-input-wrap">
+          <span class="pop-mult-label">×</span>
+          <input type="number" id="inp-rev-def" min="0" step="0.1">
+        </div>
+      </div>
+    </div>
+    <div class="revenge-note" id="revenge-note"></div>
+  </div>
+
+  <div id="no-revenge-banner" class="no-revenge-banner" style="display:none"></div>
+
+  <div class="pop-footer">
+    <button id="popResetPair" class="danger">↺ Reset pair</button>
+  </div>
+</div>
+
+<!-- Stats editor -->
+<div style="margin-bottom:10px">
+  <button id="editorToggle2" style="display:none"></button>
+</div>
+<div id="statsEditor" style="display:none">
+  <div class="editor-wrap">
+    <table class="stats-table" id="statsTable"></table>
+    <p class="editor-note">* canBeRev — if unchecked, this unit can never receive revenge strikes regardless of range</p>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+//  Data definitions
+// ─────────────────────────────────────────────
+
+const UNIT_TYPES = ['warrior','archer','catapult','horserider','heavyknight','spearsman','healer','damageBooster','rangeBooster'];
+
+const UNIT_LABELS = {
+  warrior:      { name: 'Warrior',    icon: '⚔' },
+  archer:       { name: 'Archer',     icon: '🏹' },
+  catapult:     { name: 'Catapult',   icon: '💣' },
+  horserider:   { name: 'Horserider', icon: '🐎' },
+  heavyknight:  { name: 'H.Knight',   icon: '🛡' },
+  spearsman:    { name: 'Spearsman',  icon: '🗡' },
+  healer:       { name: 'Healer',     icon: '✚' },
+  damageBooster:{ name: 'Dmg Boost',  icon: '🔥' },
+  rangeBooster: { name: 'Rng Boost',  icon: '↔' },
+};
+
+const DEFAULTS = {
+  warrior:      { maxHp:15, attack:10, defense:5,  speed:1, range:1, canBeRevenged:true,  vision:2 },
+  archer:       { maxHp:15, attack:10, defense:3,  speed:2, range:2, canBeRevenged:true,  vision:2 },
+  catapult:     { maxHp:10, attack:14, defense:1,  speed:1, range:3, canBeRevenged:false, vision:4 },
+  horserider:   { maxHp:15, attack:16, defense:2,  speed:2, range:1, canBeRevenged:true,  vision:3 },
+  heavyknight:  { maxHp:22, attack:20, defense:8,  speed:3, range:1, canBeRevenged:true,  vision:2 },
+  spearsman:    { maxHp:15, attack:10, defense:5,  speed:2, range:1, canBeRevenged:true,  vision:2 },
+  healer:       { maxHp:12, attack:4,  defense:2,  speed:2, range:1, canBeRevenged:true,  vision:3 },
+  damageBooster:{ maxHp:12, attack:4,  defense:2,  speed:2, range:1, canBeRevenged:true,  vision:3 },
+  rangeBooster: { maxHp:12, attack:4,  defense:2,  speed:2, range:1, canBeRevenged:true,  vision:3 },
+};
+
+// ─────────────────────────────────────────────
+//  Default per-matchup multipliers
+//  matchups[atkType][defType] = { atkMult, defMult }
+//
+//  atkMult: multiplier on attacker's effective damage vs this specific defender
+//  defMult: multiplier on defender's resistance vs this specific attacker
+//           → applied BOTH in the primary attack (defender resists)
+//              AND during revenge (now the original attacker resists this defender's hit)
+//
+//  Formula primary:  dmg = max(0, round((atk.attack - def.defense) * atkMult / defMult))
+//  Formula revenge:  dmg = max(0, round((def.attack - atk.defense)
+//                                * matchups[def][atk].atkMult / matchups[def][atk].defMult))
+//  (revenge uses the reverse pair's values)
+// ─────────────────────────────────────────────
+
+function buildDefaultMatchups() {
+  const m = {};
+  for (const a of UNIT_TYPES) {
+    m[a] = {};
+    for (const d of UNIT_TYPES) {
+      m[a][d] = { atkMult: 1.0, defMult: 1.0 };
+    }
+  }
+  // Spearsman vs cavalry (mirrors game's attackBonusAgainst / defenseBonusAgainst)
+  m['spearsman']['horserider']  = { atkMult: 3.0, defMult: 1.0 };
+  m['spearsman']['heavyknight'] = { atkMult: 4.0, defMult: 1.0 };
+  // Cavalry attacking spearsman: spear's defenseBonusAgainst → acts as defMult in the reverse pair
+  m['horserider']['spearsman']  = { atkMult: 1.0, defMult: 3.0 };
+  m['heavyknight']['spearsman'] = { atkMult: 1.0, defMult: 6.0 };
+  return m;
+}
+
+let stats    = deepCopy(DEFAULTS);
+let matchups = buildDefaultMatchups();
+
+function deepCopy(o) { return JSON.parse(JSON.stringify(o)); }
+
+function isDefault(atkType, defType) {
+  const m = matchups[atkType][defType];
+  return m.atkMult === 1.0 && m.defMult === 1.0;
+}
+
+// ─────────────────────────────────────────────
+//  Combat simulation
+// ─────────────────────────────────────────────
+
+function simulate(atkType, defType) {
+  const atk = stats[atkType];
+  const def = stats[defType];
+  const m   = matchups[atkType][defType];
+  const mRev = matchups[defType][atkType];
+
+  // Average damage per hit (no randomness)
+  const atkDmg = Math.max(0, Math.round((atk.attack - def.defense) * m.atkMult / m.defMult));
+
+  if (atkDmg === 0) {
+    return { wins: false, hits: null, hpLeft: atk.maxHp, revengeActive: false, atkDmg: 0, revDmg: 0 };
+  }
+
+  // Revenge fires if attacker's canBeRevenged flag is set AND defender has enough range to reach attacker
+  // (attacker fires from their range — defender needs >= that range to hit back)
+  const revengeActive = atk.canBeRevenged && (def.range >= atk.range);
+
+  const revDmg = revengeActive
+    ? Math.max(0, Math.round((def.attack - atk.defense) * mRev.atkMult / mRev.defMult))
+    : 0;
+
+  let atkHp = atk.maxHp;
+  let defHp = def.maxHp;
+  let hits  = 0;
+
+  while (hits < 500) {
+    defHp -= atkDmg;
+    hits++;
+    if (defHp <= 0) {
+      return { wins: true, hits, hpLeft: atkHp, revengeActive, atkDmg, revDmg };
+    }
+    if (revengeActive && revDmg > 0) {
+      atkHp -= revDmg;
+      if (atkHp <= 0) {
+        return { wins: false, hits, hpLeft: 0, revengeActive, atkDmg, revDmg };
+      }
+    }
+  }
+  return { wins: true, hits, hpLeft: atkHp, revengeActive, atkDmg, revDmg };
+}
+
+// ─────────────────────────────────────────────
+//  Matrix rendering
+// ─────────────────────────────────────────────
+
+function hpColorClass(pct) {
+  if (pct > 0.66) return 'c-green3';
+  if (pct > 0.33) return 'c-green2';
+  if (pct > 0.10) return 'c-yellow';
+  return 'c-orange';
+}
+function hpBarColor(pct) {
+  if (pct > 0.66) return '#2ecc71';
+  if (pct > 0.33) return '#f0b429';
+  if (pct > 0.10) return '#e67e22';
+  return '#e74c3c';
+}
+
+function renderMatrix() {
+  const table = document.getElementById('matrix');
+  table.innerHTML = '';
+
+  // Header row
+  const thead = document.createElement('thead');
+  const hrow  = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner';
+  corner.innerHTML = '<div style="font-size:10px;color:#445">ATK&nbsp;↓&nbsp;/&nbsp;DEF&nbsp;→</div>';
+  hrow.appendChild(corner);
+
+  for (const d of UNIT_TYPES) {
+    const th = document.createElement('th');
+    th.className = 'col-header';
+    const lbl = UNIT_LABELS[d];
+    th.innerHTML = `<div class="col-header-inner">
+      <span class="unit-icon">${lbl.icon}</span>
+      <span class="unit-name-col">${lbl.name}</span>
+      <span class="stat-hint">HP:${stats[d].maxHp} DEF:${stats[d].defense}</span>
+    </div>`;
+    hrow.appendChild(th);
+  }
+  thead.appendChild(hrow);
+  table.appendChild(thead);
+
+  // Body
+  const tbody = document.createElement('tbody');
+  for (const a of UNIT_TYPES) {
+    const tr = document.createElement('tr');
+
+    // Row header
+    const rh = document.createElement('td');
+    rh.className = 'row-header';
+    rh.innerHTML = `<div class="row-header-inner">
+      <span class="unit-name-row">${UNIT_LABELS[a].icon} ${UNIT_LABELS[a].name}</span>
+      <span class="stat-hint">ATK:${stats[a].attack} RNG:${stats[a].range}</span>
+    </div>`;
+    tr.appendChild(rh);
+
+    for (const d of UNIT_TYPES) {
+      const td = document.createElement('td');
+      td.dataset.atk = a;
+      td.dataset.def = d;
+
+      if (a === d) {
+        td.className = 'cell c-self';
+        td.innerHTML = `<div style="color:#334;font-size:18px">—</div>`;
+        tr.appendChild(td);
+        continue;
+      }
+
+      td.className = 'cell';
+      fillCell(td, a, d);
+      td.addEventListener('click', () => openPopover(a, d, td));
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+}
+
+function fillCell(td, atkType, defType) {
+  const result = simulate(atkType, defType);
+
+  // Custom matchup indicator
+  const hasCustomPrimary = !isDefault(atkType, defType);
+  const hasCustomReverse = !isDefault(defType, atkType);
+  const hasCustom = hasCustomPrimary || hasCustomReverse;
+
+  // Base color class
+  let colorClass = '';
+  if (!result.wins && result.hits === null) {
+    colorClass = 'c-impossible';
+  } else if (!result.wins) {
+    colorClass = 'c-red';
+  } else {
+    colorClass = hpColorClass(result.hpLeft / stats[atkType].maxHp);
+  }
+
+  td.className = 'cell ' + colorClass;
+  if (td.dataset.selected === 'true') td.classList.add('selected-cell');
+
+  // Build inner HTML
+  let inner = '';
+  const dot = hasCustom ? '<div class="custom-dot"></div>' : '';
+
+  if (result.hits === null) {
+    inner = `<div class="cell-content">
+      <span class="hits hits-inf" style="color:#334">∞</span>
+      <span style="font-size:9px;color:#445">no dmg</span>
+    </div>`;
+  } else if (!result.wins) {
+    inner = `<div class="cell-content">
+      <span class="hits">${result.hits}</span>
+      <div class="hp-row">
+        <div class="hp-bar-wrap"><div class="hp-bar" style="width:0%;background:#e74c3c"></div></div>
+        <span style="color:#e74c3c;font-size:11px">💀</span>
+      </div>
+    </div>`;
+  } else {
+    const pct = result.hpLeft / stats[atkType].maxHp;
+    const bw  = Math.round(pct * 100);
+    const bc  = hpBarColor(pct);
+    const revTag = result.revengeActive ? '<span class="tag">↩</span>' : '';
+    const mPrimary = matchups[atkType][defType];
+    const mRev     = matchups[defType][atkType];
+    const multTag  = (mPrimary.atkMult !== 1 || mPrimary.defMult !== 1 || mRev.atkMult !== 1 || mRev.defMult !== 1)
+      ? '' : '';
+
+    inner = `<div class="cell-content">
+      <span class="hits">${result.hits}</span>
+      <div class="hp-row">
+        <div class="hp-bar-wrap"><div class="hp-bar" style="width:${bw}%;background:${bc}"></div></div>
+        <span>${result.hpLeft}</span>
+      </div>
+      ${revTag ? `<div class="tags">${revTag}</div>` : ''}
+    </div>`;
+  }
+
+  td.innerHTML = inner + dot;
+}
+
+function refreshCell(atkType, defType) {
+  const td = document.querySelector(`td[data-atk="${atkType}"][data-def="${defType}"]`);
+  if (td) fillCell(td, atkType, defType);
+}
+
+function refreshAll() {
+  for (const a of UNIT_TYPES) for (const d of UNIT_TYPES) {
+    if (a !== d) refreshCell(a, d);
+  }
+  // Also update col/row stat hints
+  document.querySelectorAll('th.col-header').forEach((th, i) => {
+    const d = UNIT_TYPES[i];
+    th.querySelector('.stat-hint').textContent = `HP:${stats[d].maxHp} DEF:${stats[d].defense}`;
+  });
+  document.querySelectorAll('td.row-header').forEach((td, i) => {
+    const a = UNIT_TYPES[i];
+    td.querySelector('.stat-hint').textContent = `ATK:${stats[a].attack} RNG:${stats[a].range}`;
+  });
+}
+
+// ─────────────────────────────────────────────
+//  Popover
+// ─────────────────────────────────────────────
+
+let activePopover = null; // { atkType, defType }
+
+function openPopover(atkType, defType, cellEl) {
+  // Toggle: close if same cell
+  if (activePopover && activePopover.atkType === atkType && activePopover.defType === defType) {
+    closePopover();
+    return;
+  }
+  // Deselect previous
+  document.querySelectorAll('td.cell.selected-cell').forEach(el => {
+    el.classList.remove('selected-cell');
+    el.dataset.selected = 'false';
+  });
+
+  activePopover = { atkType, defType };
+  cellEl.classList.add('selected-cell');
+  cellEl.dataset.selected = 'true';
+
+  const la = UNIT_LABELS[atkType];
+  const ld = UNIT_LABELS[defType];
+
+  // Title
+  document.getElementById('popTitle').textContent = `${la.icon} ${la.name}  →  ${ld.icon} ${ld.name}`;
+
+  // ── Primary attack labels ──
+  const m = matchups[atkType][defType];
+  document.getElementById('lbl-atk').innerHTML =
+    `<b>${la.icon} ${la.name}</b> ATK mult<br><em>vs ${ld.icon} ${ld.name}</em>`;
+  document.getElementById('lbl-def').innerHTML =
+    `<b>${ld.icon} ${ld.name}</b> DEF mult<br><em>vs ${la.icon} ${la.name}</em>`;
+
+  const inpAtk = document.getElementById('inp-atk');
+  const inpDef = document.getElementById('inp-def');
+  inpAtk.value = m.atkMult;
+  inpDef.value = m.defMult;
+  styleInput(inpAtk, m.atkMult);
+  styleInput(inpDef, m.defMult);
+
+  // ── Revenge section ──
+  const atkStat = stats[atkType];
+  const defStat = stats[defType];
+  const revengeWillFire = atkStat.canBeRevenged && defStat.range >= atkStat.range;
+  const mRev = matchups[defType][atkType];
+
+  const revengeBlock  = document.getElementById('revenge-block');
+  const noRevBanner   = document.getElementById('no-revenge-banner');
+
+  revengeBlock.style.display  = 'block';
+  noRevBanner.style.display   = 'none';
+
+  document.getElementById('lbl-rev-atk').innerHTML =
+    `<b>${ld.icon} ${ld.name}</b> ATK mult<br><em>vs ${la.icon} ${la.name}</em>`;
+  document.getElementById('lbl-rev-def').innerHTML =
+    `<b>${la.icon} ${la.name}</b> DEF mult<br><em>vs ${ld.icon} ${ld.name}</em>`;
+
+  const inpRevAtk = document.getElementById('inp-rev-atk');
+  const inpRevDef = document.getElementById('inp-rev-def');
+  inpRevAtk.value = mRev.atkMult;
+  inpRevDef.value = mRev.defMult;
+  styleInput(inpRevAtk, mRev.atkMult);
+  styleInput(inpRevDef, mRev.defMult);
+
+  const noteEl = document.getElementById('revenge-note');
+  if (!revengeWillFire) {
+    let reason = '';
+    if (!atkStat.canBeRevenged) reason = `${la.name} is immune to revenge`;
+    else reason = `${ld.name} range (${defStat.range}) < ${la.name} range (${atkStat.range})`;
+    noteEl.textContent = `↩ Revenge currently inactive: ${reason}. Multipliers still apply if stats change.`;
+    noteEl.style.display = 'block';
+  } else {
+    noteEl.style.display = 'none';
+  }
+
+  // Position popover
+  positionPopover(cellEl);
+  document.getElementById('popover').style.display = 'block';
+}
+
+function styleInput(inp, val) {
+  inp.classList.toggle('modified', val !== 1.0);
+}
+
+function positionPopover(cellEl) {
+  const pop  = document.getElementById('popover');
+  pop.style.display = 'block'; // needs to be visible to get dimensions
+  const rect = cellEl.getBoundingClientRect();
+  const pw   = pop.offsetWidth;
+  const ph   = pop.offsetHeight;
+  const vw   = window.innerWidth;
+  const vh   = window.innerHeight;
+
+  let left = rect.right + 8;
+  let top  = rect.top;
+
+  // Flip left if not enough room
+  if (left + pw > vw - 8) left = rect.left - pw - 8;
+  // Clamp vertical
+  if (top + ph > vh - 8) top = vh - ph - 8;
+  if (top < 8) top = 8;
+
+  pop.style.left = left + 'px';
+  pop.style.top  = top  + 'px';
+}
+
+function closePopover() {
+  document.getElementById('popover').style.display = 'none';
+  document.querySelectorAll('td.cell.selected-cell').forEach(el => {
+    el.classList.remove('selected-cell');
+    el.dataset.selected = 'false';
+  });
+  activePopover = null;
+}
+
+// Popover input handlers
+function wirePopoverInput(inputId, getter, setter) {
+  document.getElementById(inputId).addEventListener('input', function() {
+    const v = parseFloat(this.value);
+    if (isNaN(v) || v < 0) return;
+    setter(v);
+    styleInput(this, v);
+    if (activePopover) {
+      refreshCell(activePopover.atkType, activePopover.defType);
+      // Also refresh reverse cell since revenge values affect it
+      refreshCell(activePopover.defType, activePopover.atkType);
+    }
+  });
+}
+
+wirePopoverInput('inp-atk', null, v => {
+  if (activePopover) matchups[activePopover.atkType][activePopover.defType].atkMult = v;
+});
+wirePopoverInput('inp-def', null, v => {
+  if (activePopover) matchups[activePopover.atkType][activePopover.defType].defMult = v;
+});
+wirePopoverInput('inp-rev-atk', null, v => {
+  if (activePopover) matchups[activePopover.defType][activePopover.atkType].atkMult = v;
+});
+wirePopoverInput('inp-rev-def', null, v => {
+  if (activePopover) matchups[activePopover.defType][activePopover.atkType].defMult = v;
+});
+
+document.getElementById('popClose').addEventListener('click', closePopover);
+
+document.getElementById('popResetPair').addEventListener('click', () => {
+  if (!activePopover) return;
+  const { atkType, defType } = activePopover;
+  matchups[atkType][defType] = { atkMult: 1.0, defMult: 1.0 };
+  matchups[defType][atkType] = { atkMult: 1.0, defMult: 1.0 };
+  // Re-open to refresh inputs
+  const cellEl = document.querySelector(`td[data-atk="${atkType}"][data-def="${defType}"]`);
+  activePopover = null;
+  if (cellEl) openPopover(atkType, defType, cellEl);
+  refreshCell(atkType, defType);
+  refreshCell(defType, atkType);
+});
+
+// Close popover on outside click
+document.addEventListener('mousedown', (e) => {
+  const pop = document.getElementById('popover');
+  if (pop.style.display === 'none') return;
+  if (!pop.contains(e.target) && !e.target.closest('td.cell')) {
+    closePopover();
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePopover();
+});
+
+// ─────────────────────────────────────────────
+//  Stats editor
+// ─────────────────────────────────────────────
+
+function renderEditor() {
+  const table = document.getElementById('statsTable');
+  table.innerHTML = '';
+
+  const hrow = document.createElement('tr');
+  for (const h of ['Unit', 'Max HP', 'Attack', 'Defense', 'Speed', 'Range', 'Vision', 'canBeRev *']) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    hrow.appendChild(th);
+  }
+  table.appendChild(hrow);
+
+  for (const type of UNIT_TYPES) {
+    const lbl = UNIT_LABELS[type];
+    const s   = stats[type];
+    const tr  = document.createElement('tr');
+
+    const tdLbl = document.createElement('td');
+    tdLbl.innerHTML = `<div class="unit-label-cell">${lbl.icon} ${lbl.name}</div>`;
+    tr.appendChild(tdLbl);
+
+    for (const field of ['maxHp','attack','defense','speed','range','vision']) {
+      const td  = document.createElement('td');
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.step = '1'; inp.value = s[field];
+      inp.addEventListener('input', () => {
+        const v = parseInt(inp.value);
+        if (!isNaN(v) && v >= 0) {
+          stats[type][field] = v;
+          refreshAll();
+          if (activePopover) {
+            // Re-open popover to refresh revenge note
+            const a = activePopover.atkType, d = activePopover.defType;
+            const cellEl = document.querySelector(`td[data-atk="${a}"][data-def="${d}"]`);
+            activePopover = null;
+            if (cellEl) openPopover(a, d, cellEl);
+          }
+        }
+      });
+      td.appendChild(inp);
+      tr.appendChild(td);
+    }
+
+    const tdRev = document.createElement('td');
+    const cb    = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = s.canBeRevenged;
+    cb.addEventListener('change', () => {
+      stats[type].canBeRevenged = cb.checked;
+      refreshAll();
+    });
+    tdRev.appendChild(cb);
+    tr.appendChild(tdRev);
+
+    table.appendChild(tr);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Toolbar buttons
+// ─────────────────────────────────────────────
+
+document.getElementById('resetStatsBtn').addEventListener('click', () => {
+  stats = deepCopy(DEFAULTS);
+  renderEditor();
+  refreshAll();
+});
+
+document.getElementById('resetMatchupsBtn').addEventListener('click', () => {
+  matchups = buildDefaultMatchups();
+  refreshAll();
+  if (activePopover) {
+    const a = activePopover.atkType, d = activePopover.defType;
+    const cellEl = document.querySelector(`td[data-atk="${a}"][data-def="${d}"]`);
+    activePopover = null;
+    if (cellEl) openPopover(a, d, cellEl);
+  }
+});
+
+let editorVisible = false;
+document.getElementById('editorToggle').addEventListener('click', () => {
+  editorVisible = !editorVisible;
+  document.getElementById('statsEditor').style.display = editorVisible ? 'block' : 'none';
+  document.getElementById('editorToggle').textContent = editorVisible ? '⚙ Hide Stats ▴' : '⚙ Edit Stats ▾';
+});
+
+// ─────────────────────────────────────────────
+//  Init
+// ─────────────────────────────────────────────
+
+renderMatrix();
+renderEditor();
+</script>
+</body>
+</html>
