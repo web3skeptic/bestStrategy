@@ -1510,10 +1510,13 @@ function updateUnitCards(): void {
     card.classList.toggle('disabled', !affordable);
 
     // Card art = a 3D render of the unit model, team-tinted to the current
-    // player. Regenerated only when the player colour changes (cached otherwise).
+    // player plus its faction banner. Regenerated only when the player
+    // colour or faction changes (cached otherwise) — faction changes exactly
+    // once, at reveal, so this also refreshes the pre-reveal placeholder art.
     const thumb = card.querySelector('.unit-card-thumb') as HTMLImageElement;
-    if (thumb && thumb.dataset.thumbColor !== player.color) {
-      try { thumb.src = getUnitThumbnail(type, player.color); thumb.dataset.thumbColor = player.color; }
+    const thumbKey = `${player.color}:${player.faction ?? 'none'}`;
+    if (thumb && thumb.dataset.thumbKey !== thumbKey) {
+      try { thumb.src = getUnitThumbnail(type, player.color, player.faction); thumb.dataset.thumbKey = thumbKey; }
       catch { /* keep the PNG fallback set in buildUnitCards */ }
     }
 
@@ -1756,28 +1759,28 @@ function renderTechTree(): void {
 
   // Section 1: Unit unlocks (no branch)
   const unitUnlockNodes = TECH_NODES.filter(n => n.unitUnlock && !n.branch && n.prereqs.length === 0);
-  appendSection(techBody, 'Unit Unlocks', undefined, unitUnlockNodes, tech, player.aura, player.color);
+  appendSection(techBody, 'Unit Unlocks', undefined, unitUnlockNodes, tech, player.aura, player.color, player.faction);
 
   // Section 2: Catapult sub-upgrade
   const catapultUpgrade = TECH_NODES.filter(n => n.id === 'catapult_splash');
-  appendSection(techBody, 'Catapult Upgrade', undefined, catapultUpgrade, tech, player.aura, player.color);
+  appendSection(techBody, 'Catapult Upgrade', undefined, catapultUpgrade, tech, player.aura, player.color, player.faction);
 
   // Section 3+: Branches
   const branches = ['movement', 'stat_bonus', 'support'];
   for (const branch of branches) {
     const nodes = TECH_NODES.filter(n => n.branch === branch);
     const meta = BRANCH_META[branch]!;
-    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color);
+    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color, player.faction);
   }
 }
 
 // The art a tech card "stands for": the unlocked unit, the teleport portal, or
 // the catapult for its splash sub-upgrade. Rendered (team-coloured) the same way
 // as the build-card thumbnails, so the tech tree shows the actual game model.
-function techNodeArt(node: typeof TECH_NODES[number], color: string): string | null {
-  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color);
+function techNodeArt(node: typeof TECH_NODES[number], color: string, faction: FactionId | null): string | null {
+  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color, faction);
   if (node.id === 'teleports') return getPortalThumbnail(color);
-  if (node.id === 'catapult_splash') return getUnitThumbnail('catapult', color);
+  if (node.id === 'catapult_splash') return getUnitThumbnail('catapult', color, faction);
   return null;
 }
 
@@ -1789,6 +1792,7 @@ function appendSection(
   tech: { researched: Set<TechId> },
   aura: number,
   playerColor: string,
+  playerFaction: FactionId | null,
 ): void {
   if (nodes.length === 0) return;
 
@@ -1839,7 +1843,7 @@ function appendSection(
       statusClass = 'status-available';
     }
 
-    const artUrl = techNodeArt(node, playerColor);
+    const artUrl = techNodeArt(node, playerColor, playerFaction);
     const artHtml = artUrl
       ? `<img class="tech-node-art" src="${artUrl}" alt="${node.name}" draggable="false">`
       : '';

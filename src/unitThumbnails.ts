@@ -2,7 +2,7 @@
 // unit-card UI, using a single shared offscreen WebGL renderer. Results are
 // cached per (type, team colour), so each model is rendered at most once.
 import * as THREE from 'three';
-import { UnitType } from './types';
+import { UnitType, FactionId } from './types';
 import { buildUnitModel } from './voxelUnits';
 import { buildTemple } from './voxelTemple';
 import { buildPortal } from './voxelPortal';
@@ -33,10 +33,13 @@ function disposeModel(model: THREE.Object3D): void {
 }
 
 // Render one unit model to a data-URL PNG. `color` is any CSS colour string.
-export function getUnitThumbnail(type: UnitType, color: string, size = 256): string {
-  let byColor = cache.get(color);
+// `faction`, when known (post-reveal), includes the faction banner accent —
+// cached separately per faction so pre-/post-reveal cards never share a stale image.
+export function getUnitThumbnail(type: UnitType, color: string, faction?: FactionId | null, size = 256): string {
+  const cacheKey = `${color}:${faction ?? 'none'}`;
+  let byColor = cache.get(cacheKey);
   if (byColor && byColor[type]) return byColor[type]!;
-  if (!byColor) { byColor = {}; cache.set(color, byColor); }
+  if (!byColor) { byColor = {}; cache.set(cacheKey, byColor); }
 
   const r = getRenderer(size);
   const scene = new THREE.Scene();
@@ -48,7 +51,7 @@ export function getUnitThumbnail(type: UnitType, color: string, size = 256): str
   rim.position.set(-4, 3, -5);
   scene.add(rim);
 
-  const model = buildUnitModel(type, new THREE.Color(color).getHex());
+  const model = buildUnitModel(type, new THREE.Color(color).getHex(), faction);
   scene.add(model);
 
   // Frame the model: fit a bounding sphere into the view from a 3/4 front angle.
