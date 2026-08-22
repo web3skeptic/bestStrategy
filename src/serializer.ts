@@ -1,7 +1,9 @@
-import { GameState, TechId } from './types';
+import { GameState, TechId, RULES_VERSION } from './types';
 
 // Serialized form: Sets become arrays for JSON transport
 export interface SerializedGameState {
+  /** Stamped by serialize() from RULES_VERSION. See assertCompatibleRulesVersion. */
+  rulesVersion: number;
   players: GameState['players'];
   units: GameState['units'];
   temples: GameState['temples'];
@@ -31,6 +33,7 @@ export interface SerializedGameState {
 export function serialize(state: GameState): SerializedGameState {
   return {
     ...state,
+    rulesVersion:     RULES_VERSION,
     hills:            Array.from(state.hills),
     walls:            Array.from(state.walls),
     forests:          Array.from(state.forests),
@@ -40,7 +43,29 @@ export function serialize(state: GameState): SerializedGameState {
   };
 }
 
+// Thrown by deserialize() when a saved/replayed blob predates the current
+// rules. Every load site (server/db.ts rejoin, server/gameLogger.ts replay
+// read, server/headlessApi.ts replay load) must catch this specifically and
+// fail cleanly — never silently reinterpret older state under the new rules.
+export class IncompatibleRulesVersionError extends Error {
+  constructor(public readonly foundVersion: number | undefined) {
+    super(
+      `This match was created with an older, incompatible ruleset ` +
+      `(rulesVersion=${foundVersion ?? 'none'}, current=${RULES_VERSION}). ` +
+      `It can no longer be loaded.`,
+    );
+    this.name = 'IncompatibleRulesVersionError';
+  }
+}
+
+export function assertCompatibleRulesVersion(data: { rulesVersion?: number }): void {
+  if (data.rulesVersion !== RULES_VERSION) {
+    throw new IncompatibleRulesVersionError(data.rulesVersion);
+  }
+}
+
 export function deserialize(data: SerializedGameState): GameState {
+  assertCompatibleRulesVersion(data);
   return {
     ...(data as unknown as GameState),
     // Backwards-compatibility: older saved states may pre-date `turnNumber`.

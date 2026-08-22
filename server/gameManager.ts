@@ -5,9 +5,9 @@ import {
   upsertPlayer, createRoom, joinRoom, setRoomStatus,
   getRoomById, saveGameState, loadGameState,
 } from './db';
-import { serialize, deserialize, SerializedGameState } from '../src/serializer';
+import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from '../src/serializer';
 import { createGameState, selectUnit, selectTemple, deselectAll } from '../src/game';
-import { GameState, HexCoord, UnitType, TechId, PLAYER_COLORS, MAX_PLAYERS } from '../src/types';
+import { GameState, HexCoord, UnitType, TechId, PLAYER_COLORS } from '../src/types';
 import { headlessSessions, setHeadlessSpectatorPush } from './headlessApi';
 import { resyncCounters } from './stateUtils';
 import {
@@ -32,7 +32,7 @@ export function pushHeadlessStateUpdate(gameId: string): void {
   const hl = headlessSessions.get(gameId);
   if (!hl) return;
   const serialized = serialize(hl.gameState);
-  const strippedState = stripSelectionState(serialized);
+  const strippedState = viewPayload(serialized, null, null);
   for (const spec of specs) {
     send(spec.ws, { type: 'state_update', state: strippedState, lastAction: '' });
   }
@@ -87,29 +87,56 @@ function stripSelectionState(s: ReturnType<typeof serialize>): ReturnType<typeof
   };
 }
 
+// The Founding Round secret faction pick (§5-6) is a real information
+// boundary, not just a UI nicety: until BOTH players have chosen, a viewer
+// may see their OWN pick (if they made one) but never the opponent's —
+// regardless of whether they're the acting player, the other seat, or a
+// spectator. `viewerSlot` is null for spectators (and anyone else with no
+// seat), who see neither pick until reveal. This is applied to every
+// broadcast payload below, independently of stripSelectionState.
+function stripHiddenFaction(s: ReturnType<typeof serialize>, viewerSlot: number | null): ReturnType<typeof serialize> {
+  const bothChosen = s.players.every(p => p.faction !== null);
+  if (bothChosen) return s;
+  return {
+    ...s,
+    players: s.players.map(p => (p.id === viewerSlot ? p : { ...p, faction: null })),
+  };
+}
+
+// Build the exact payload a given seat (or spectator, slot=null) is allowed
+// to see: hidden-faction stripping always applies; selection-state stripping
+// applies to every seat except the one that just acted.
+function viewPayload(serialized: ReturnType<typeof serialize>, viewerSlot: number | null, actingSlot: number | null): ReturnType<typeof serialize> {
+  let payload = stripHiddenFaction(serialized, viewerSlot);
+  if (viewerSlot !== actingSlot) payload = stripSelectionState(payload);
+  return payload;
+}
+
 function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: number, toAll: boolean): void {
   const serialized = serialize(room.state!);
   const gameOver = room.state!.phase === 'gameOver';
 
   if (toAll || gameOver) {
-    // Send each player their own view: acting player sees full state,
-    // opponent sees state with selection stripped.
-    const strippedForOpponent = stripSelectionState(serialized);
+    // Send each player their own view: acting player sees full state (minus
+    // any still-hidden opponent faction pick), opponent sees selection AND
+    // hidden-faction stripped.
     for (let slot = 0; slot < room.sessions.length; slot++) {
       const sess = room.sessions[slot];
       if (!sess) continue;
-      const payload = slot === actingSlot ? serialized : strippedForOpponent;
-      send(sess.ws, { type: 'state_update', state: payload, lastAction });
+      send(sess.ws, { type: 'state_update', state: viewPayload(serialized, slot, actingSlot), lastAction });
     }
   } else {
     const actingSess = room.sessions[actingSlot];
-    if (actingSess) send(actingSess.ws, { type: 'state_update', state: serialized, lastAction });
+    if (actingSess) send(actingSess.ws, { type: 'state_update', state: viewPayload(serialized, actingSlot, actingSlot), lastAction });
   }
 
-  // Always send full (stripped) state to spectators on any broadcast
-  const spectatorState = stripSelectionState(serialized);
+  // Spectators never see an unrevealed faction pick, from either seat.
+  const spectatorState = viewPayload(serialized, null, actingSlot);
   broadcastToSpectators(room, { type: 'state_update', state: spectatorState, lastAction });
 
+  // The DB always stores the true, authoritative, unstripped state — stripping
+  // only ever happens on the outbound broadcast payload (same precedent as
+  // selection state).
   saveGameState(room.id, JSON.stringify(serialized));
 
   if (gameOver) {
@@ -231,10 +258,13 @@ function handleLogin(sess: ClientSession, username: string): void {
   send(sess.ws, { type: 'logged_in', username });
 }
 
-// Clamp a requested player count into the supported range (2..MAX_PLAYERS).
-function normalizeExpectedPlayers(n: unknown): number {
-  const v = typeof n === 'number' && Number.isFinite(n) ? Math.floor(n) : 2;
-  return Math.max(2, Math.min(MAX_PLAYERS, v));
+// The Asymmetric Tribes redesign is 1v1 only. Room size is pinned to 2
+// server-side regardless of what a (possibly stale) client requests — the
+// old N-player room machinery below is left in place since it's harmless and
+// still generic/reusable, but nothing can actually create a room for more
+// than 2 seats any more.
+function normalizeExpectedPlayers(_n: unknown): number {
+  return 2;
 }
 
 // Once a room is full, build the N-player game state and broadcast game_start
@@ -378,8 +408,16 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
     const savedJson = loadGameState(roomId);
     if (savedJson) {
       const parsed = JSON.parse(savedJson) as SerializedGameState;
-      room.state = deserialize(parsed);
-      resyncCounters(room.state);
+      try {
+        room.state = deserialize(parsed);
+        resyncCounters(room.state);
+      } catch (err) {
+        if (err instanceof IncompatibleRulesVersionError) {
+          send(sess.ws, { type: 'error', message: err.message });
+          return;
+        }
+        throw err;
+      }
     }
   }
 
@@ -393,7 +431,10 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
     const serialized = serialize(room.state);
     // If rejoining player is NOT the acting player, strip selections so they
     // cannot see the acting player's in-progress moves from the saved state.
-    const payload = slot === currentTurnSlot ? serialized : stripSelectionState(serialized);
+    // Either way, an unrevealed opponent faction pick stays hidden (§5-6) —
+    // this matters especially here: "reconnect before the opponent chooses"
+    // must show MY own locked pick but never theirs.
+    const payload = viewPayload(serialized, slot, currentTurnSlot);
     send(sess.ws, { type: 'game_start', playerSlot: slot, state: payload });
     for (let i = 0; i < room.sessions.length; i++) {
       const other = room.sessions[i];
@@ -475,7 +516,7 @@ function handleSpectate(sess: ClientSession, gameId: string): void {
     if (!hlList.includes(sess)) hlList.push(sess);
 
     const serialized = serialize(hl.gameState);
-    const strippedState = stripSelectionState(serialized);
+    const strippedState = viewPayload(serialized, null, null);
     send(sess.ws, {
       type: 'spectate_start',
       state: strippedState,
@@ -505,7 +546,7 @@ function handleSpectate(sess: ClientSession, gameId: string): void {
   if (!room.spectators.includes(sess)) room.spectators.push(sess);
 
   const serialized = serialize(room.state);
-  const strippedState = stripSelectionState(serialized);
+  const strippedState = viewPayload(serialized, null, null);
 
   send(sess.ws, {
     type: 'spectate_start',

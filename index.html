@@ -877,6 +877,40 @@
     #opponentTurnCard .label { font-weight: bold; font-size: 24px; margin-top: 8px; color: #fff; }
     #opponentTurnCard .opp-name { color: #4a90d9; font-size: 18px; margin-top: 4px; }
     #opponentTurnCard .sublabel { font-size: 14px; color: #556; margin-top: 12px; letter-spacing: 0.05em; }
+    /* ── Faction choice overlay (end of the Founding Round) ── */
+    #factionChoiceOverlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(5,5,15,0.93);
+      backdrop-filter: blur(8px);
+      z-index: 210;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+    #factionChoiceOverlay.hidden { display: none; }
+    #factionChoiceOverlay .fc-title { color: #ffd98a; font-size: 24px; font-weight: 800; letter-spacing: 0.03em; text-align: center; }
+    #factionChoiceOverlay .fc-sub { color: #99a; font-size: 14px; text-align: center; max-width: 480px; margin-bottom: 8px; }
+    #factionChoiceOverlay .fc-choices { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
+    #factionChoiceOverlay .fc-card {
+      width: 260px;
+      background: rgba(20, 20, 50, 0.9);
+      border: 2px solid #4a4a70;
+      border-radius: 14px;
+      padding: 22px;
+      color: #e8e8ff;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    #factionChoiceOverlay .fc-card:hover { border-color: #ffd98a; transform: translateY(-2px); }
+    #factionChoiceOverlay .fc-card .fc-name { font-size: 20px; font-weight: 800; margin-bottom: 6px; }
+    #factionChoiceOverlay .fc-card.fc-agrar .fc-name { color: #8fd98a; }
+    #factionChoiceOverlay .fc-card.fc-temple .fc-name { color: #d98a8f; }
+    #factionChoiceOverlay .fc-card ul { margin: 0; padding-left: 18px; font-size: 13px; color: #c8c8e0; line-height: 1.6; }
+    #factionChoiceOverlay .fc-locked { color: #778; font-size: 14px; margin-top: 8px; }
     /* ── Subtle non-blocking "waiting for opponent" pill (vs-AI / online) ── */
     /* Persistent opponent-turn banner — carved-stone slab (same family as the
        bottom 3D HUD slabs: #5e6470 fill, octagon bevel, chiselled rim). */
@@ -908,6 +942,33 @@
       white-space: nowrap;
     }
     #waitingIndicator.hidden { display: none; }
+    #foundingRoundBanner {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 12px 30px;
+      background: #4a4a70;
+      color: #eef1f7;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      clip-path: polygon(4% 0%, 96% 0%, 100% 26%, 100% 74%, 96% 100%, 4% 100%, 0% 74%, 0% 26%);
+      box-shadow:
+        inset 0 0 0 2px #11141c,
+        inset 2px 2px 0 rgba(160,175,200,0.30),
+        inset -2px -2px 0 rgba(0,0,0,0.45);
+      filter: drop-shadow(0 5px 10px rgba(0,0,0,0.55));
+      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+    }
+    #foundingRoundBanner.hidden { display: none; }
     #waitingIndicator .wi-dot {
       width: 10px; height: 10px; border-radius: 50%;
       background: #ffd98a;
@@ -1287,15 +1348,7 @@
       <div class="lobby-panel hidden" id="lobbyRoomList">
         <div class="lobby-title">Lobby</div>
         <div class="lobby-status ok" id="lobbyWelcomeMsg"></div>
-        <div class="setup-row">
-          <span>Room size</span>
-          <div class="setup-stepper">
-            <button class="lobby-btn" id="lobbyPlayersDec">−</button>
-            <span id="lobbyPlayersCount">2</span>
-            <button class="lobby-btn" id="lobbyPlayersInc">+</button>
-          </div>
-        </div>
-        <button class="lobby-btn primary" id="lobbyCreateRoomBtn">+ Create Room</button>
+        <button class="lobby-btn primary" id="lobbyCreateRoomBtn">+ Create Room (1v1)</button>
         <hr class="lobby-divider" />
         <div style="font-size:12px;color:#668;margin-bottom:2px">Open Rooms</div>
         <div class="lobby-room-list" id="lobbyRoomListEl"></div>
@@ -1401,6 +1454,31 @@
       <div class="sublabel">Please wait — the board is hidden during their turn.</div>
     </div>
   </div>
+  <!-- Faction choice overlay: shown to a player who still needs to pick once
+       the Founding Round (Round 1) has ended for both players. -->
+  <div id="factionChoiceOverlay" class="hidden">
+    <div class="fc-title" id="fcTitle">Choose your civilization</div>
+    <div class="fc-sub">Your pick is secret until your opponent also chooses. Once made, it cannot be changed.</div>
+    <div class="fc-choices">
+      <div class="fc-card fc-agrar" id="fcAgrarCard">
+        <div class="fc-name">⚒ Agrar</div>
+        <ul>
+          <li>Slower, sturdier units</li>
+          <li>Farms, Cities, Roads</li>
+          <li>Build the network — move the fortress</li>
+        </ul>
+      </div>
+      <div class="fc-card fc-temple" id="fcTempleCard">
+        <div class="fc-name">🔥 Temple</div>
+        <ul>
+          <li>Faster, lighter units</li>
+          <li>Temples, mobile pressure</li>
+          <li>Own the nodes — be everywhere</li>
+        </ul>
+      </div>
+    </div>
+    <div class="fc-locked hidden" id="fcLockedNote">Choice locked in. Waiting for the opponent…</div>
+  </div>
   <!-- Toast notifications (temple captures, etc.) -->
   <div id="toastStack"></div>
   <!-- Persistent opponent-turn banner (vs-AI / online): board stays visible & fog-limited -->
@@ -1408,6 +1486,8 @@
     <span class="wi-dot"></span>
     <span>Waiting for <span class="wi-name" id="waitingIndicatorName"></span> to move…</span>
   </div>
+  <!-- Founding Round (Round 1) reminder: scouting only, no combat/recruit/research yet -->
+  <div id="foundingRoundBanner" class="hidden">🔍 Founding Round — scouting only, no combat or recruiting yet</div>
   <script type="module" src="./src/main.ts"></script>
   <!-- In-game agent chat drawer (button top-right). Self-mounting; independent of main.ts. -->
   <script type="module" src="./src/chatPanel.ts"></script>

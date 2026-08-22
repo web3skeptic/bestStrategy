@@ -5,13 +5,13 @@
 import { Renderer } from './renderer';
 import {
   GameState, Unit, UnitType, UnitStats, Temple, Player, PlayerTech,
-  TeleportBuilding, HexCoord, TechId,
+  TeleportBuilding, HexCoord, TechId, FactionId, RULES_VERSION,
 } from './types';
 import { generateHexMap, hexKey } from './hex';
 
 // ── Snapshot types — mirror what serializeStateForApi() emits in headlessApi.ts ──
 
-interface SnapshotPlayer { id: number; name: string; color: string; aura: number; popCap: number; currentPop: number; }
+interface SnapshotPlayer { id: number; name: string; color: string; aura: number; faction?: FactionId | null; popCap: number; currentPop: number; }
 interface SnapshotUnit {
   id: string;
   type: UnitType;
@@ -32,6 +32,8 @@ interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
 }
 interface ApiSnapshot {
+  /** Absent in replays recorded before the v0.2 redesign — treated as incompatible. */
+  rulesVersion?: number;
   phase: 'playing' | 'gameOver';
   currentPlayer: number;
   turnNumber: number;
@@ -71,12 +73,23 @@ interface ReplayDto {
   events: ReplayEventDto[];
 }
 
+// Thrown by apiSnapshotToGameState() for a replay recorded under an older,
+// incompatible ruleset — callers must show a clear message, not crash.
+export class IncompatibleReplayVersionError extends Error {
+  constructor(public readonly foundVersion: number | undefined) {
+    super(`This replay used an older, incompatible ruleset (rulesVersion=${foundVersion ?? 'none'}, current=${RULES_VERSION}) and can no longer be viewed.`);
+    this.name = 'IncompatibleReplayVersionError';
+  }
+}
+
 // ── Convert an API snapshot back into a (rendering-only) GameState. ──
 // We don't reconstruct UI/selection fields (left empty) or per-turn state
 // (spawnedTempleIds). Explored is populated lazily based on viewer.
 function apiSnapshotToGameState(s: ApiSnapshot): GameState {
+  if (s.rulesVersion !== RULES_VERSION) throw new IncompatibleReplayVersionError(s.rulesVersion);
+
   const players: Player[] = s.players.map(p => ({
-    id: p.id, name: p.name, color: p.color, aura: p.aura,
+    id: p.id, name: p.name, color: p.color, aura: p.aura, faction: p.faction ?? null,
   }));
 
   const hills = new Set<string>();
@@ -313,15 +326,20 @@ async function main(): Promise<void> {
     return;
   }
 
-  // State 0 = initial state (stateBefore of new-game event)
-  states.push(apiSnapshotToGameState(events[0]!.stateBefore));
+  try {
+    // State 0 = initial state (stateBefore of new-game event)
+    states.push(apiSnapshotToGameState(events[0]!.stateBefore));
 
-  // For each subsequent event: state after it = its stateAfter (fallback to
-  // next event's stateBefore if stateAfter is null, e.g. failed actions).
-  for (let i = 1; i < events.length; i++) {
-    const ev = events[i]!;
-    const snap = ev.stateAfter ?? ev.stateBefore;
-    states.push(apiSnapshotToGameState(snap));
+    // For each subsequent event: state after it = its stateAfter (fallback to
+    // next event's stateBefore if stateAfter is null, e.g. failed actions).
+    for (let i = 1; i < events.length; i++) {
+      const ev = events[i]!;
+      const snap = ev.stateAfter ?? ev.stateBefore;
+      states.push(apiSnapshotToGameState(snap));
+    }
+  } catch (err) {
+    errorBox.innerHTML = `<div class="error-banner">${err instanceof Error ? err.message : String(err)}</div>`;
+    return;
   }
 
   // ── Renderer ──

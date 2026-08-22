@@ -1,4 +1,4 @@
-import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, MAX_PLAYERS } from './types';
+import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -40,11 +40,15 @@ import {
   getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
+  isFoundingRound,
+  isAwaitingFactionReveal,
+  chooseFaction,
+  founderDisplayName,
 } from './game';
 import { getUnitThumbnail, getPortalThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
-import { serialize, deserialize, SerializedGameState } from './serializer';
+import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from './serializer';
 import type { ServerMessage } from './protocol';
 
 // ── Unit artwork (bundled by Vite) — same sprites the board renderer uses ──
@@ -68,6 +72,10 @@ const UNIT_ART: Record<UnitType, string> = {
   healer:       healerImg,
   damageBooster: damageBoosterImg,
   rangeBooster:  rangeBoosterImg,
+  // Placeholder — Founder/Builder/Acolyte has no dedicated art yet (§70 asset
+  // fallback policy). Reuses the Warrior thumbnail; it's never recruitable via
+  // the build-card UI anyway (starts on the board, converts in place).
+  founder:      warriorImg,
 };
 
 const AI_DELAY_MS = 600;
@@ -197,6 +205,12 @@ const opponentTurnNameEl = document.getElementById('opponentTurnName')!;
 const waitingIndicator = document.getElementById('waitingIndicator')!;
 const waitingIndicatorName = document.getElementById('waitingIndicatorName')!;
 const toastStack = document.getElementById('toastStack')!;
+const factionChoiceOverlay = document.getElementById('factionChoiceOverlay')!;
+const fcTitle = document.getElementById('fcTitle')!;
+const fcAgrarCard = document.getElementById('fcAgrarCard')!;
+const fcTempleCard = document.getElementById('fcTempleCard')!;
+const fcLockedNote = document.getElementById('fcLockedNote')!;
+const foundingRoundBanner = document.getElementById('foundingRoundBanner')!;
 
 // ── Toast notifications (carved-stone chips, auto-dismiss, stack) ──
 function showToast(msg: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): void {
@@ -356,6 +370,21 @@ function applyStateWithAnimation(newState: GameState): void {
 // ── Multiplayer event handler ──
 
 function handleMultiplayerEvent(event: ServerMessage): void {
+  try {
+    handleMultiplayerEventInner(event);
+  } catch (err) {
+    if (err instanceof IncompatibleRulesVersionError) {
+      // The server was updated to a new ruleset mid-session (stale tab). Fail
+      // cleanly instead of leaving the UI in a half-deserialized, broken state.
+      logCombat('This game used an older ruleset and can no longer be displayed. Please reload the page.');
+      alert('This game used an older, incompatible ruleset. Please reload the page.');
+      return;
+    }
+    throw err;
+  }
+}
+
+function handleMultiplayerEventInner(event: ServerMessage): void {
   switch (event.type) {
     case 'logged_in': {
       lobbyLoginStatus.textContent = '';
@@ -551,17 +580,9 @@ lobbyUsernameInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') lobbyLoginBtn.click();
 });
 
-// Online room-size selector (2..MAX_PLAYERS).
-const lobbyPlayersCountEl = document.getElementById('lobbyPlayersCount')!;
-const lobbyPlayersDec = document.getElementById('lobbyPlayersDec')!;
-const lobbyPlayersInc = document.getElementById('lobbyPlayersInc')!;
-let lobbyRoomSize = 2;
-function updateLobbyRoomSize(): void { lobbyPlayersCountEl.textContent = String(lobbyRoomSize); }
-lobbyPlayersDec.addEventListener('click', () => { if (lobbyRoomSize > 2) { lobbyRoomSize--; updateLobbyRoomSize(); } });
-lobbyPlayersInc.addEventListener('click', () => { if (lobbyRoomSize < MAX_PLAYERS) { lobbyRoomSize++; updateLobbyRoomSize(); } });
-
+// Online rooms are 1v1 only (the Asymmetric Tribes redesign is a 2-player game).
 lobbyCreateRoomBtn.addEventListener('click', () => {
-  mpClient!.createRoom(lobbyRoomSize);
+  mpClient!.createRoom(2);
 });
 
 lobbyRefreshBtn.addEventListener('click', () => {
@@ -685,6 +706,9 @@ function loadSavedGame(): SavedGame | null {
     if (!save || save.v !== 1 || !save.state) return null;
     if (!save.controllers && save.aiEnabled === undefined) return null;
     if (save.state.phase === 'gameOver') return null; // don't resume a finished game
+    // A save from an older, incompatible ruleset (missing/mismatched
+    // rulesVersion) — treat as if there's no save rather than crash on resume.
+    if (save.state.rulesVersion !== RULES_VERSION) { localStorage.removeItem(SAVE_KEY); return null; }
     return save;
   } catch { return null; }
 }
@@ -833,17 +857,97 @@ function updateSetupInfo(): void {
 
 menuCustom.addEventListener('click', () => showLobbyPanel('setup'));
 setupBack.addEventListener('click', () => showLobbyPanel('main'));
-setupPlayersDec.addEventListener('click', () => {
-  if (setupKinds.length > 2) { setupKinds = setupKinds.slice(0, -1); renderSetupSlots(); }
-});
-setupPlayersInc.addEventListener('click', () => {
-  if (setupKinds.length < MAX_PLAYERS) { setupKinds = [...setupKinds, 'normal']; renderSetupSlots(); }
-});
+// The Asymmetric Tribes redesign is 1v1 only — seat count is fixed at 2
+// (still pick human/AI per seat), so the +/- steppers are inert now.
+setupPlayersDec.addEventListener('click', () => {});
+setupPlayersInc.addEventListener('click', () => {});
 setupStartBtn.addEventListener('click', () => startLocalGame(setupKinds));
+
+// ── Faction choice (end of the Founding Round, §5-6) ──
+//
+// Local (hotseat/vs-AI) faction secrecy is honor-system only: unlike online
+// play (server-authoritative hiding — see gameManager.ts stripHiddenFaction),
+// a second local human seat CAN see the first seat's overlay if they look at
+// the same screen at the wrong moment. Full hotseat-curtain secrecy for this
+// step is a deliberate simplification, not an oversight.
+
+// AI-controlled local seats auto-pick the instant the pause begins — a coin
+// flip is fine; this is not a fairness-sensitive decision to model deeply yet.
+function maybeAutoChooseFactionForAI(): void {
+  if (multiplayerMode || spectatorMode) return;
+  if (!isAwaitingFactionReveal(state)) return;
+  let changed = false;
+  for (let i = 0; i < state.players.length; i++) {
+    if (controllers[i] && controllers[i] !== 'human' && state.players[i]?.faction === null) {
+      chooseFaction(state, i, Math.random() < 0.5 ? 'agrar' : 'temple');
+      changed = true;
+    }
+  }
+  if (changed) render();
+}
+
+// Which local seat (if any) should see the picker right now: in multiplayer,
+// only the local viewer's own slot; locally, the first human seat that still
+// needs to choose (sequential — see the honor-system note above).
+function pendingFactionSlot(): number | null {
+  if (!isAwaitingFactionReveal(state)) return null;
+  if (multiplayerMode) {
+    if (spectatorMode) return null;
+    return state.players[myPlayerSlot]?.faction === null ? myPlayerSlot : null;
+  }
+  for (let i = 0; i < state.players.length; i++) {
+    if (controllers[i] === 'human' && state.players[i]?.faction === null) return i;
+  }
+  return null;
+}
+
+function submitFactionChoice(faction: FactionId): void {
+  const slot = pendingFactionSlot();
+  if (slot === null) return;
+  if (multiplayerMode) {
+    mpClient?.sendAction({ type: 'action', action: 'choose-faction', params: { faction } });
+    return;
+  }
+  chooseFaction(state, slot, faction);
+  render();
+  maybeAutoChooseFactionForAI();
+  maybeRunAITurn(); // in case the reveal just completed and it's actually an AI's move
+}
+
+fcAgrarCard.addEventListener('click', () => submitFactionChoice('agrar'));
+fcTempleCard.addEventListener('click', () => submitFactionChoice('temple'));
+
+function updateFactionOverlay(): void {
+  const slot = pendingFactionSlot();
+  if (slot === null) {
+    // Still show a brief "locked in, waiting" note for the online player who
+    // already chose but the opponent hasn't revealed yet.
+    if (!spectatorMode && isAwaitingFactionReveal(state) && multiplayerMode && state.players[myPlayerSlot]?.faction !== null) {
+      factionChoiceOverlay.classList.remove('hidden');
+      fcTitle.textContent = 'Faction locked in';
+      fcAgrarCard.classList.add('hidden');
+      fcTempleCard.classList.add('hidden');
+      fcLockedNote.classList.remove('hidden');
+    } else {
+      factionChoiceOverlay.classList.add('hidden');
+    }
+    return;
+  }
+  factionChoiceOverlay.classList.remove('hidden');
+  fcAgrarCard.classList.remove('hidden');
+  fcTempleCard.classList.remove('hidden');
+  fcLockedNote.classList.add('hidden');
+  fcTitle.textContent = multiplayerMode
+    ? 'Choose your civilization'
+    : `${state.players[slot]?.name ?? `Player ${slot + 1}`} — choose your civilization`;
+}
 
 // ── Render & UI ──
 
 function render(): void {
+  maybeAutoChooseFactionForAI();
+  updateFactionOverlay();
+  foundingRoundBanner.classList.toggle('hidden', !(gameStarted && !spectatorMode && isFoundingRound(state)));
   checkTempleCaptureToasts(); // raise a toast for any temple that changed hands
   if (spectatorMode) {
     // Spectators always see the full board (no fog, no player-specific view)
@@ -1050,7 +1154,9 @@ function updateUI(): void {
         damageBooster: 'Dmg Booster',
         rangeBooster: 'Rng Booster',
       };
-      const typeName = TYPE_NAMES[unit.type] ?? (unit.type.charAt(0).toUpperCase() + unit.type.slice(1));
+      const typeName = unit.type === 'founder'
+        ? founderDisplayName(state.players.find(p => p.id === unit.playerId)?.faction)
+        : (TYPE_NAMES[unit.type] ?? (unit.type.charAt(0).toUpperCase() + unit.type.slice(1)));
       const enc = calculateEncirclement(state, unit);
       const encStr = enc.attackMultiplier > 1 ? ` | Enc x${enc.attackMultiplier.toFixed(1)}` : '';
       const effDef = getEffectiveDefense(state, unit);
@@ -1248,6 +1354,7 @@ const UNIT_CARD_NAMES: Record<UnitType, string> = {
   healer:       'Healer',
   damageBooster: 'Dmg Boost',
   rangeBooster:  'Rng Boost',
+  founder:      'Founder', // not recruitable — see founderDisplayName for the in-game label
 };
 
 // Order matches the original spawn bar.
@@ -1418,6 +1525,7 @@ const UNIT_DISPLAY: Record<UnitType, string> = {
   healer:       '✚ Healer',
   damageBooster:'🔥 Dmg Booster',
   rangeBooster: '↔ Rng Booster',
+  founder:      '🔨 Founder',
 };
 
 const STAT_FIELDS: Array<{ key: keyof UnitStats; label: string; min: number; step: number }> = [

@@ -15,7 +15,8 @@ export type UnifiedActionName =
   | 'research'
   | 'build-teleport'
   | 'end-turn'
-  | 'resign';
+  | 'resign'
+  | 'choose-faction';
 
 // ── Client → Server messages ──
 

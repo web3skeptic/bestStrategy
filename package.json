@@ -9,7 +9,9 @@
     "build:atlas": "node scripts/build-tile-atlas.mjs",
     "server": "tsx server/server.ts",
     "server:dev": "tsx watch server/server.ts",
-    "test": "tsx scripts/verify-combat-v3.ts",
+    "test:combat": "tsx scripts/verify-combat-v3.ts",
+    "test:founding-round": "tsx scripts/verify-founding-round.ts",
+    "test": "npm run test:combat && npm run test:founding-round",
     "build:root": "vite build"
   },
   "keywords": [],

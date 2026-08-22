@@ -121,8 +121,12 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
     });
   }
 
+  // Faction picks stay hidden from a non-owning viewer until both players
+  // have chosen (mirrors the WS path's stripHiddenFaction — see gameManager.ts).
+  const bothFactionsChosen = state.players.every(p => p.faction !== null);
   const result: Record<string, unknown> = {
     gameId: null, // filled in by caller
+    rulesVersion: s.rulesVersion,
     phase: s.phase,
     currentPlayer: s.currentPlayerIndex,
     turnNumber: s.turnNumber,
@@ -132,6 +136,7 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
       name: p.name,
       color: p.color,
       aura: p.aura,
+      faction: (!validViewer || p.id === viewerId || bothFactionsChosen) ? p.faction : null,
       popCap: getPopulationCap(state, p.id),
       currentPop: getPopulationCount(state, p.id),
     })),

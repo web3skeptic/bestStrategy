@@ -7,12 +7,14 @@ import {
   TechId, TechNode, TECH_NODES, PlayerTech,
   TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
   PLAYER_COLORS, mapRadiusForPlayers, templeCountForPlayers,
+  FactionId,
 } from './types';
 import {
   hexDistance, hexEqual, hexNeighbors, getReachableHexes,
   hexKey, generateHexMap, DIRECTIONS, OPPOSING_PAIRS, hexLineDraw,
 } from './hex';
 import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
+import { FACTION_UNITS, FactionUnitDef } from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
 // (see ./combat.ts). The faction-specific v0.2 roster will assign its own
@@ -28,6 +30,7 @@ export const UNIT_CLASS: Record<UnitType, UnitClass> = {
   healer:        'support',
   damageBooster: 'support',
   rangeBooster:  'support',
+  founder:       'support',
 };
 
 export function getUnitTypeMultiplier(attackerType: UnitType, defenderType: UnitType): number {
@@ -91,6 +94,14 @@ const RANGE_BOOSTER_STATS: UnitStats = {
   range: 0, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
+// The Founding Round starter (§6). Identical stats regardless of eventual
+// faction — becomes "Builder" (Agrar) or "Acolyte" (Temple) in display only
+// once the player's faction is revealed (see factionDisplayName in this file).
+const FOUNDER_STATS: UnitStats = {
+  maxHp: 12, attack: 5, defense: 3, speed: 2,
+  range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
+};
+
 export const HEALER_HEAL_AMOUNT = 5;
 export const DAMAGE_BOOST_AMOUNT = 5;
 export const RANGE_BOOST_AMOUNT = 1;
@@ -105,6 +116,7 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
   healer:       HEALER_STATS,
   damageBooster: DAMAGE_BOOSTER_STATS,
   rangeBooster:  RANGE_BOOSTER_STATS,
+  founder:       FOUNDER_STATS,
 };
 
 // ── Tech helpers ──
@@ -141,19 +153,46 @@ function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): U
   return stats;
 }
 
+// Types that get faction-flavored stats once their owner's faction is
+// revealed (§37/§38 Agrar/Temple rosters). Other unit types keep the
+// universal roster's numbers until faction-specific recruitment is built.
+const FACTION_FLAVORED_TYPES: ReadonlySet<UnitType> = new Set(['warrior', 'archer']);
+
+function factionUnitDef(faction: FactionId, type: UnitType): FactionUnitDef | undefined {
+  return FACTION_UNITS[faction].find(u => u.id === `${faction}_${type}`);
+}
+
+// Overwrite a unit's combat stats with its faction's flavor of the same base
+// type (§37/§38). No-op for types without a faction-specific entry.
+function applyFactionToStats(stats: UnitStats, type: UnitType, faction: FactionId | null | undefined): UnitStats {
+  if (!faction || !FACTION_FLAVORED_TYPES.has(type)) return stats;
+  const def = factionUnitDef(faction, type);
+  if (!def) return stats;
+  stats.maxHp = def.hp;
+  stats.attack = def.attack;
+  stats.defense = def.defense;
+  stats.speed = def.speed;
+  stats.range = def.range;
+  stats.vision = def.vision;
+  return stats;
+}
+
 /**
- * Rebuild a living unit's stats from base + currently-researched tech. Used
- * by `researchTech()` to retroactively apply tech effects to units that were
- * spawned before the tech was researched.
+ * Rebuild a living unit's stats from base + currently-researched tech +
+ * (if revealed) its owner's faction flavor. Used by `researchTech()` to
+ * retroactively apply tech effects to units that were spawned before the
+ * tech was researched, and by `chooseFaction()` to convert Round-1 neutral
+ * units the instant both players reveal.
  *
  * Idempotent — always starts from `UNIT_STATS[unit.type]`, so calling multiple
  * times never double-applies. Preserves current HP (and clamps it to the new
  * maxHp if max ever shrinks — currently nothing shrinks, but the guard makes
  * future tech changes safe).
  */
-function rebuildUnitStats(unit: Unit, tech: PlayerTech): void {
+function rebuildUnitStats(unit: Unit, tech: PlayerTech, faction?: FactionId | null): void {
   const fresh = cloneStats(UNIT_STATS[unit.type]);
   applyTechToStats(fresh, unit.type, tech);
+  applyFactionToStats(fresh, unit.type, faction);
   unit.stats = fresh;
   if (unit.hp > fresh.maxHp) unit.hp = fresh.maxHp;
 }
@@ -177,9 +216,10 @@ export function getCounters(): [number, number, number] {
   return [unitIdCounter, templeIdCounter, teleportIdCounter];
 }
 
-function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech): Unit {
+function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech, faction?: FactionId | null): Unit {
   const stats = cloneStats(UNIT_STATS[type]);
   if (tech) applyTechToStats(stats, type, tech);
+  applyFactionToStats(stats, type, faction);
   return {
     id: `unit_${unitIdCounter++}`,
     type, playerId,
@@ -486,7 +526,8 @@ const TEMPLE_SPREAD_CANDIDATES = 18;
 // per-temple best-candidate sampling.
 const TEMPLE_LAYOUT_ATTEMPTS = 16;
 
-const STARTING_UNITS_PER_PLAYER = 2;
+// §5 — each player's Founding Round starters: Warrior + Archer + Founder.
+const STARTING_UNITS_PER_PLAYER = 3;
 
 function shuffle<T>(arr: T[]): T[] {
   for (let i = arr.length - 1; i > 0; i--) {
@@ -648,6 +689,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     name: cfg.name,
     color: cfg.color || PLAYER_COLORS[i % PLAYER_COLORS.length]!,
     aura: 2,
+    faction: null, // chosen at the end of the Founding Round — see chooseFaction()
   }));
 
   const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>() }));
@@ -667,13 +709,20 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const allUnitPositions = layout.unitPositions.flat();
   const { hills, walls, forests } = generateTerrain(mapRadius, temples.map(t => t.pos), allUnitPositions);
 
-  // Players start with ZERO units on the map — they recruit from their home
-  // temple (turn 1: starting aura 2 buys up to 2 warriors at cost 1). A player is
+  // §5 Founding Round: each player starts with a neutral Warrior + Archer +
+  // Founder already on the board (not recruited) — genuinely faction-agnostic
+  // until the reveal (chooseFaction converts them in place). A player is
   // eliminated only once they have no living units AND no owned temples (see
-  // checkWinCondition), so an empty board at game start is NOT an instant loss.
-  // (layout.unitPositions is still fed to terrain generation above so the home
-  // areas stay clear for freshly-recruited units to move into.)
+  // checkWinCondition), so losing all three early is dangerous but not instant.
   const units: Unit[] = [];
+  const FOUNDING_LOADOUT: UnitType[] = ['warrior', 'archer', 'founder'];
+  layout.unitPositions.forEach((positions, playerIdx) => {
+    positions.forEach((pos, i) => {
+      const type = FOUNDING_LOADOUT[i];
+      if (!type) return; // extra reserved tiles (shouldn't happen at STARTING_UNITS_PER_PLAYER=3)
+      units.push(createUnit(type, playerIdx, pos));
+    });
+  });
 
   const explored: Set<string>[] = players.map(() => new Set<string>());
 
@@ -701,6 +750,80 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   return state;
 }
 
+// ── Founding Round / faction reveal (§5-6) ──
+//
+// Round 1 (turnNumber === 1) is the neutral Founding Round: scouting/movement
+// only, no combat, recruiting, research, capture, or construction. Once BOTH
+// players have ended their turn 1 (turnNumber becomes 2 — endTurn()'s existing
+// wrap-to-firstPlayerIndex logic needs no changes for this), the match pauses:
+// every action except choosing a faction (or resigning) is rejected until
+// EACH player has independently and secretly locked Agrar or Temple. The
+// instant the second player locks, both reveal simultaneously and every
+// Round-1 neutral unit converts in place (see applyFactionConversion).
+//
+// Secrecy is NOT enforced here — chooseFaction always writes the true value
+// into the authoritative Player.faction. Hiding an unrevealed pick from the
+// opponent is the transport layer's job (see stripHiddenFaction in
+// server/gameManager.ts) — this file only ever deals in ground truth.
+
+export function isFoundingRound(state: GameState): boolean {
+  return state.turnNumber === 1;
+}
+
+export function isAwaitingFactionReveal(state: GameState): boolean {
+  return state.turnNumber >= 2 && state.players.some(p => p.faction === null);
+}
+
+// True while combat/recruit/research/capture/construction actions are
+// rejected — during Round 1 itself, and during the post-Round-1 pause.
+export function isMatchSetupRestricted(state: GameState): boolean {
+  return isFoundingRound(state) || isAwaitingFactionReveal(state);
+}
+
+// Convert a player's Round-1 neutral units to their revealed faction's flavor
+// (§37/§38 stat tables). Founder keeps its stats (identical either faction,
+// §6) — only its DISPLAY name changes (see factionDisplayName), driven purely
+// by Player.faction, no unit-level field needed.
+function applyFactionConversion(state: GameState, player: Player): void {
+  if (!player.faction) return;
+  const tech = state.playerTech[player.id]!;
+  for (const unit of state.units) {
+    if (unit.playerId !== player.id || unit.hp <= 0) continue;
+    if (!FACTION_FLAVORED_TYPES.has(unit.type)) continue;
+    rebuildUnitStats(unit, tech, player.faction);
+  }
+}
+
+/**
+ * Secretly lock in a player's faction choice. Idempotent for a repeated
+ * identical choice (a duplicate submit — e.g. a retried request — succeeds
+ * as a no-op); rejected if the player already chose a DIFFERENT faction, since
+ * the choice is permanent once made (§5). The instant both players have
+ * chosen, reveal + conversion happens atomically for both.
+ */
+export function chooseFaction(state: GameState, playerId: number, faction: FactionId): boolean {
+  if (!isAwaitingFactionReveal(state)) return false;
+  const player = state.players.find(p => p.id === playerId);
+  if (!player) return false;
+  if (player.faction !== null) return player.faction === faction;
+
+  player.faction = faction;
+
+  if (state.players.every(p => p.faction !== null)) {
+    for (const p of state.players) applyFactionConversion(state, p);
+  }
+  return true;
+}
+
+// Display-only label for a Founder-type unit, reflecting its owner's
+// revealed faction. No engine/stat change — Builder and Acolyte are
+// mechanically identical (§6).
+export function founderDisplayName(faction: FactionId | null | undefined): string {
+  if (faction === 'agrar') return 'Builder';
+  if (faction === 'temple') return 'Acolyte';
+  return 'Founder';
+}
+
 // ── Getters ──
 
 export function getCurrentPlayer(state: GameState): Player {
@@ -718,6 +841,8 @@ export function getTempleAt(state: GameState, pos: HexCoord): Temple | undefined
 // ── Temple capture ──
 
 export function canCaptureTemple(state: GameState, unit: Unit): Temple | null {
+  // No capture during the Founding Round or the faction-reveal pause (§5).
+  if (isMatchSetupRestricted(state)) return null;
   // Capture is a separate action from move/attack: it does NOT consume
   // hasMoved/hasAttacked. A unit that already moved this turn (or is standing
   // on a temple from a previous turn without having acted yet) can still
@@ -748,6 +873,7 @@ function autoCapture(state: GameState, unit: Unit): void {
 // ── Temple upgrade ──
 
 export function canUpgradeTemple(state: GameState, templeId: string): number | null {
+  if (isMatchSetupRestricted(state)) return null;
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return null;
   const cost = templeUpgradeCost(temple.level);
@@ -768,6 +894,7 @@ export function upgradeTemple(state: GameState, templeId: string): boolean {
 // ── Tech research ──
 
 export function canResearch(state: GameState, techId: TechId): boolean {
+  if (isMatchSetupRestricted(state)) return false;
   const player = getCurrentPlayer(state);
   const tech = state.playerTech[player.id]!;
   if (tech.researched.has(techId)) return false;
@@ -805,7 +932,7 @@ export function researchTech(state: GameState, techId: TechId): boolean {
   const tech = state.playerTech[player.id]!;
   for (const unit of state.units) {
     if (unit.playerId !== player.id || unit.hp <= 0) continue;
-    rebuildUnitStats(unit, tech);
+    rebuildUnitStats(unit, tech, player.faction);
   }
 
   return true;
@@ -826,6 +953,7 @@ export function canAfford(state: GameState, unitType: UnitType): boolean {
 }
 
 export function spawnUnit(state: GameState, templeId: string, unitType: UnitType): boolean {
+  if (isMatchSetupRestricted(state)) return false;
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return false;
 
@@ -850,7 +978,7 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   if (getUnitAt(state, temple.pos)) return false;
 
   player.aura -= cost;
-  const unit = createUnit(unitType, player.id, temple.pos, state.playerTech[player.id]);
+  const unit = createUnit(unitType, player.id, temple.pos, state.playerTech[player.id], player.faction);
   // Unit may move and attack on the turn it is spawned
   unit.hasMoved = false;
   unit.hasAttacked = false;
@@ -1050,6 +1178,9 @@ export interface MoveResult {
 }
 
 export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
+  // Movement/scouting IS allowed during the Founding Round itself (§5) — only
+  // the post-Round-1 faction-reveal pause blocks everything.
+  if (isAwaitingFactionReveal(state)) return { moved: false };
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit || unit.hasMoved || unit.hasAttacked) return { moved: false };
 
@@ -1117,6 +1248,8 @@ export interface CombatResult {
 }
 
 export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult | null {
+  // No combat during the Founding Round (§5) or the faction-reveal pause.
+  if (isMatchSetupRestricted(state)) return null;
   const attacker = state.units.find(u => u.id === state.selectedUnitId);
   if (!attacker || attacker.hasAttacked) return null;
   if (attacker.stats.cantShootAfterMove && attacker.hasMoved) return null;
@@ -1297,6 +1430,10 @@ export function destroyUnit(state: GameState, unitId: string): boolean {
 
 export function endTurn(state: GameState): void {
   if (state.phase === 'gameOver') return;
+  // Ending a turn is how Round 1 progresses (§5), so it stays available during
+  // the Founding Round itself — but the post-Round-1 pause blocks everything,
+  // including this, until both factions are locked.
+  if (isAwaitingFactionReveal(state)) return;
   deselectAll(state);
 
   state.units.forEach(u => {
@@ -1406,6 +1543,7 @@ export function getValidTeleportHexesForOtherTemples(state: GameState, excludeTe
 }
 
 export function canBuildTeleportPair(state: GameState, templeId: string): boolean {
+  if (isMatchSetupRestricted(state)) return false;
   const player = getCurrentPlayer(state);
   const temple = state.temples.find(t => t.id === templeId);
   if (!temple || temple.ownerId !== player.id) return false;

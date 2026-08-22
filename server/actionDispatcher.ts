@@ -29,6 +29,7 @@ import {
   getPlayerVisible, isForestUnitRevealed,
   UNIT_STATS, HEALER_HEAL_AMOUNT, DAMAGE_BOOST_AMOUNT, RANGE_BOOST_AMOUNT,
   UNIT_CLASS,
+  chooseFaction, isFoundingRound, isAwaitingFactionReveal,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -53,7 +54,8 @@ export type UnifiedActionName =
   | 'research'
   | 'build-teleport'
   | 'end-turn'
-  | 'resign';
+  | 'resign'
+  | 'choose-faction';
 
 export interface UnifiedAction {
   action: UnifiedActionName;
@@ -95,6 +97,10 @@ export type ExecuteResult = ExecuteSuccess | ExecuteFailure;
 export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] {
   const actions: LegalAction[] = [];
 
+  // During the post-Round-1 faction-reveal pause, nothing is legal except
+  // choose-faction/resign (neither of which is a per-unit action).
+  if (isAwaitingFactionReveal(state)) return actions;
+
   // Move actions — only available when the unit has not yet moved or attacked.
   if (!unit.hasMoved && !unit.hasAttacked) {
     const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
@@ -112,8 +118,9 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
     for (const h of reachable) actions.push({ type: 'move', to: h });
   }
 
-  // Attack actions — available unless already attacked or cantShootAfterMove+hasMoved.
-  const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
+  // Attack actions — available unless already attacked, cantShootAfterMove+hasMoved,
+  // or it's still the Founding Round (no combat allowed — §5).
+  const canAttack = !isFoundingRound(state) && !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
   if (canAttack) {
     const effectiveRange = getEffectiveRange(state, unit);
     const visible = getPlayerVisible(state, unit.playerId);
@@ -268,14 +275,15 @@ export function buildRulesPayload(): Record<string, unknown> {
       ],
       availableActions: [
         'move — move a unit to a reachable hex (does NOT auto-capture; use a separate capture action)',
-        'attack — attack an enemy unit within range',
-        'recruit — spawn a unit at an owned temple',
-        'capture — capture the enemy/neutral temple the unit is currently standing on',
-        'upgrade-temple — upgrade an owned temple level',
-        'research — research a tech',
-        'build-teleport — build a teleport portal pair',
-        'end-turn — end the current player\'s turn',
-        'resign — concede the game, opponent wins',
+        'attack — attack an enemy unit within range (blocked during the Founding Round)',
+        'recruit — spawn a unit at an owned temple (blocked during Founding Round / faction-reveal pause)',
+        'capture — capture the enemy/neutral temple the unit is currently standing on (same restriction)',
+        'upgrade-temple — upgrade an owned temple level (same restriction)',
+        'research — research a tech (same restriction)',
+        'build-teleport — build a teleport portal pair (same restriction)',
+        'end-turn — end the current player\'s turn (blocked only during the faction-reveal pause)',
+        'resign — concede the game, opponent wins (always available)',
+        'choose-faction — { faction: "agrar" | "temple" }. Only legal once Round 1 has ended for BOTH players; not tied to turn order — either player may submit any time. Secret until both have chosen, then reveals simultaneously and converts Round-1 Warrior/Archer/Founder in place.',
       ],
       constraints: [
         'A unit can move then attack, or just attack, or just move — but not attack then move.',
@@ -284,19 +292,23 @@ export function buildRulesPayload(): Record<string, unknown> {
         'Capture is a separate action — it does NOT consume hasMoved/hasAttacked, but each unit can capture at most once per turn (hasCaptured).',
       ],
     },
+    foundingRound: {
+      note: 'Round 1 (turnNumber === 1) is a neutral Founding Round — move-only scouting for both players, no combat/recruit/research/capture/build. Once BOTH players have ended turn 1, the match pauses (turnNumber becomes 2 but nothing else is legal) until EACH player independently submits choose-faction. The instant both have chosen, they reveal simultaneously and Round-1 Warrior/Archer/Founder units convert to that faction\'s stats (Founder becomes Builder/Agrar or Acolyte/Temple — display name only, stats are identical).',
+      factions: ['agrar', 'temple'],
+    },
     winConditions: [
       'Own ALL temples → win',
       'All other players have no units AND no temples → win (N-player: last player standing)',
     ],
     startingConditions: {
       startingAura: 2,
-      startingUnits: '0 — each player starts with no units and recruits from their home temple (starting aura 2 buys up to 2 warriors at cost 1 on turn 1)',
+      startingUnits: '1 Warrior + 1 Archer + 1 Founder per player, placed near their home temple (Founding Round loadout — see foundingRound above). Faction-flavored recruiting begins only after the faction reveal.',
       templeLayout: 'N owned temples (one per player) + N neutral temples = 2N total, placed randomly each game with a minimum separation and maximized spread',
       mapScalesWithPlayers: true,
-      mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2)',
+      mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2); 1v1 (the only supported online match size) is a fixed radius 5',
       mapRadiusExamples: { '2p': mapRadiusForPlayers(2), '3p': mapRadiusForPlayers(3), '4p': mapRadiusForPlayers(4) },
       templeCountFormula: 'templeCountForPlayers(N) = 2N',
-      note: 'The classic 2-player game is radius 6 with 4 temples (2 owned + 2 neutral).',
+      note: 'Online rooms are 1v1 only. N-player (3-6) game creation still works in this engine/headless API for tooling but is not an online-lobby-facing feature.',
     },
   };
 }
@@ -335,8 +347,10 @@ export function executeAction(
     return fail(state, playerSlot, action, 'Game is already over');
   }
 
-  // Turn guard — resign is allowed even on the opponent's turn (concede early).
-  if (action !== 'resign' && state.currentPlayerIndex !== playerSlot) {
+  // Turn guard — resign is allowed even on the opponent's turn (concede
+  // early); choose-faction is allowed regardless of turn order (both players
+  // commit independently once Round 1 ends — see §5-6).
+  if (action !== 'resign' && action !== 'choose-faction' && state.currentPlayerIndex !== playerSlot) {
     return fail(
       state,
       playerSlot,
@@ -487,6 +501,23 @@ export function executeAction(
             ? `Player ${playerSlot} resigned. Player ${state.winner.id} (${state.winner.name}) wins.`
             : `Player ${playerSlot} resigned (game continues).`,
         );
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'choose-faction': {
+        const { faction } = params as { faction?: string };
+        if (faction !== 'agrar' && faction !== 'temple') {
+          return fail(state, playerSlot, action, `Invalid faction: ${String(faction)} (expected "agrar" or "temple")`);
+        }
+        const ok = chooseFaction(state, playerSlot, faction);
+        if (!ok) return fail(state, playerSlot, action, 'Cannot choose faction now (not awaiting reveal, or already locked a different faction)');
+        // Log intentionally omits WHICH faction was chosen when the reveal
+        // hasn't happened yet — the log itself is broadcast to both players via
+        // lastAction, and must not leak the opponent's unrevealed pick.
+        const revealed = state.players.every(p => p.faction !== null);
+        log.push(revealed
+          ? `Both players revealed their faction: ${state.players.map(p => `player ${p.id}=${p.faction}`).join(', ')}.`
+          : `Player ${playerSlot} locked in a faction (hidden until the opponent also chooses).`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

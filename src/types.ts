@@ -4,7 +4,18 @@ export interface HexCoord {
   r: number;
 }
 
-export type UnitType = 'warrior' | 'archer' | 'catapult' | 'horserider' | 'heavyknight' | 'spearsman' | 'healer' | 'damageBooster' | 'rangeBooster';
+export type UnitType = 'warrior' | 'archer' | 'catapult' | 'horserider' | 'heavyknight' | 'spearsman' | 'healer' | 'damageBooster' | 'rangeBooster' | 'founder';
+
+// The two civilizations of the "Asymmetric Tribes v0.2" redesign. Chosen
+// secretly at the end of the Founding Round (Round 1) — see chooseFaction in
+// game.ts and the reveal-secrecy handling in server/gameManager.ts.
+export type FactionId = 'agrar' | 'temple';
+
+// Bumped whenever the match/save shape changes incompatibly. Saved games,
+// replays and rooms are versioned against this — an old blob is rejected
+// cleanly rather than silently misinterpreted (see assertCompatibleRulesVersion
+// in serializer.ts). Bump this on any future breaking change to GameState.
+export const RULES_VERSION = 2;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -36,6 +47,7 @@ export const UNIT_COSTS: Record<UnitType, number> = {
   healer:       3,
   damageBooster: 3,
   rangeBooster:  3,
+  founder:       2,
 };
 
 // Balance v3 (asymmetric redesign, 2026-08-21): +2 disproportionately
@@ -117,6 +129,15 @@ export interface Player {
    * hard-coding a fixed board coordinate.
    */
   startTempleId?: string;
+  /**
+   * Civilization chosen at the end of the Founding Round — null during Round 1
+   * and while awaiting the opponent's pick. Set once by chooseFaction() and
+   * never changed after (§6). The server never broadcasts this to the
+   * opponent's client until BOTH players have chosen — see
+   * stripHiddenFaction in server/gameManager.ts. This field is the sole
+   * source of truth for "which faction"; there is no separate reveal flag.
+   */
+  faction: FactionId | null;
 }
 
 // ── Multiplayer / N-player support ──

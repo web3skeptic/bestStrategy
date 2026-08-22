@@ -1,15 +1,16 @@
 // Data model for the "Asymmetric Tribes v0.2" redesign (Agrar vs Temple).
 //
-// PHASE 1 STATUS: this module is pure data. It is not yet wired into
-// recruitment, the UI, serialization, or the AI — the live game still runs on
-// the single universal roster in game.ts (UNIT_STATS). Later phases (Founding
-// Round, strategic sites, economy, production, movement/ZOC) will consume
-// these tables to actually replace that roster. Kept here now so the new
-// combat math (combat.ts) can be validated against the real target values
-// before anything else is built on top of it.
+// STATUS: the unit/structure/economy tables here are still mostly inert data
+// — recruitment, tech trees, sites, farms, roads and Command are not wired up
+// yet (later phases). What IS wired up (phase 2): AGRAR_UNITS/TEMPLE_UNITS'
+// warrior/archer entries drive the post-reveal stat conversion in game.ts
+// (applyFactionConversion), and this is the canonical unit-role data other
+// future phases (recruitment, AI, UI) should read from rather than
+// duplicating numbers.
 import type { UnitClass } from './combat';
+import type { FactionId } from './types';
 
-export type FactionId = 'agrar' | 'temple';
+export type { FactionId };
 
 export interface FactionUnitDef {
   id: string;
