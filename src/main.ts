@@ -1,5 +1,5 @@
 import { GameState, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, FARM_SLOTS_PER_CITY, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL } from './factions';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, FARM_SLOTS_PER_CITY, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -52,6 +52,8 @@ import {
   getCityFarms,
   canBuyDevotion,
   buyDevotion,
+  canBuildRoad,
+  buildRoad,
   isFoundingRound,
   isAwaitingFactionReveal,
   chooseFaction,
@@ -1113,18 +1115,26 @@ function updateUI(): void {
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
   // The 3rd slab starts founding for the selected unit (a Builder/Acolyte
   // standing on a neutral/ruined site — §7-10, replaces the old temple-level
-  // slab, there's no more leveling). INVISIBLE unless a unit that can found
-  // right now is selected; when shown it displays the establish cost (gold).
+  // slab, there's no more leveling), OR builds a road (Agrar only, §23-25) if
+  // founding isn't available but a road is — mutually exclusive per-tile
+  // states, see doFound(). INVISIBLE unless one of the two is currently legal;
+  // when shown it displays the relevant aura cost.
   const selUnitForFound = state.selectionMode === 'unit' && state.selectedUnitId
     ? state.units.find(u => u.id === state.selectedUnitId)
     : null;
   const foundCheck = selUnitForFound && myTurn ? canStartFounding(state, selUnitForFound) : null;
+  const roadCheck = !foundCheck && selUnitForFound && myTurn ? canBuildRoad(state, selUnitForFound) : false;
   if (foundCheck) {
     renderer.updateHudButton('found', true);
     renderer.setHudButtonPrice('found', `⚡${SITE_ESTABLISH_COST}`);
     renderer.setHudButtonVisible('found', true);
+  } else if (roadCheck) {
+    const roadCost = state.pillagedRoadHexes.has(hexKey(selUnitForFound!.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+    renderer.updateHudButton('found', true);
+    renderer.setHudButtonPrice('found', `⚡${roadCost}`);
+    renderer.setHudButtonVisible('found', true);
   } else {
-    renderer.setHudButtonVisible('found', false); // no founder selected (or can't found here)
+    renderer.setHudButtonVisible('found', false); // no founder selected (or nothing to do here)
   }
 
   // In spectator mode, hide all action controls
@@ -1191,6 +1201,10 @@ function updateUI(): void {
       if (foundable) {
         captureBtn.style.display = 'block';
         captureBtn.textContent = `⚒ Found ${foundable.targetState === 'city' ? 'City' : 'Temple'} (⚡${SITE_ESTABLISH_COST})`;
+      } else if (canBuildRoad(state, unit)) {
+        const roadCost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+        captureBtn.style.display = 'block';
+        captureBtn.textContent = `🛤 Build Road (⚡${roadCost})`;
       } else {
         captureBtn.style.display = 'none';
       }
@@ -1898,17 +1912,30 @@ techOverlay.addEventListener('click', (e) => {
 // Start founding at the neutral/ruined site the selected unit (a Builder/
 // Acolyte) is standing on. Replaces the old temple-upgrade slab — there's no
 // more leveling (§7-10).
+// The same slab does double duty for the Builder: found a site if it's
+// standing on a neutral/ruined one, otherwise build a road on its current
+// hex if that's available (Agrar only, §23-25) — mutually exclusive per-tile
+// states, so there's no ambiguity about which one fires.
 function doFound(): void {
   if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit) return;
   const check = canStartFounding(state, unit);
-  if (!check) return;
-  sendOrCall({ type: 'action', action: 'found', params: { unitId: unit.id } }, () => {
-    if (startFounding(state, unit.id)) {
-      logCombat(`Began founding a ${check.targetState} at (${unit.pos.q},${unit.pos.r})`);
-    }
-  });
+  if (check) {
+    sendOrCall({ type: 'action', action: 'found', params: { unitId: unit.id } }, () => {
+      if (startFounding(state, unit.id)) {
+        logCombat(`Began founding a ${check.targetState} at (${unit.pos.q},${unit.pos.r})`);
+      }
+    });
+    return;
+  }
+  if (canBuildRoad(state, unit)) {
+    sendOrCall({ type: 'action', action: 'build-road', params: { unitId: unit.id } }, () => {
+      if (buildRoad(state, unit.id)) {
+        logCombat(`Built a road at (${unit.pos.q},${unit.pos.r})`);
+      }
+    });
+  }
 }
 
 // ── Canvas click/tap -> game coordinates (raycast onto the 3D board) ──

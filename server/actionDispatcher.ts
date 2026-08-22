@@ -26,13 +26,14 @@ import {
   researchTech,
   buildTeleportPair,
   resignGame,
-  getEffectiveRange,
+  getEffectiveRange, getEffectiveSpeed,
   getPlayerVisible, isForestUnitRevealed,
   UNIT_STATS, HEALER_HEAL_AMOUNT, DAMAGE_BOOST_AMOUNT, RANGE_BOOST_AMOUNT,
   UNIT_CLASS,
   chooseFaction, isFoundingRound, isAwaitingFactionReveal,
   getOwnedStructures,
   buildFarm, buyDevotion,
+  canBuildRoad, buildRoad,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -46,6 +47,7 @@ import {
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION, UNIT_TRAINING_ROUNDS,
+  ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
 } from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
 
@@ -62,6 +64,7 @@ export type UnifiedActionName =
   | 'build-teleport'
   | 'build-farm'
   | 'buy-devotion'
+  | 'build-road'
   | 'end-turn'
   | 'resign'
   | 'choose-faction';
@@ -77,7 +80,8 @@ export type LegalAction =
   | { type: 'move'; to: HexCoord }
   | { type: 'attack'; targetId: string }
   | { type: 'attack-structure'; targetPos: HexCoord }
-  | { type: 'found'; siteId: string; targetState: 'city' | 'temple' };
+  | { type: 'found'; siteId: string; targetState: 'city' | 'temple' }
+  | { type: 'build-road' };
 
 export type LegalMovesPerPlayer = Record<string /* unitId */, LegalAction[]>;
 
@@ -120,7 +124,7 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
     });
     const reachable = getReachableHexes(
       unit.pos,
-      unit.stats.speed,
+      getEffectiveSpeed(state, unit),
       state.mapRadius,
       [...occupied, ...wallPositions],
       state.hills,
@@ -158,6 +162,9 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   const foundingCheck = canStartFounding(state, unit);
   if (foundingCheck) actions.push({ type: 'found', siteId: foundingCheck.site.id, targetState: foundingCheck.targetState });
 
+  // Build Road action (§23-25, Agrar-only).
+  if (canBuildRoad(state, unit)) actions.push({ type: 'build-road' });
+
   // NOTE: 'destroy' (disband) is deliberately NOT enumerated here — the AI / RL
   // move generation must never consider disbanding its own units.
 
@@ -181,7 +188,7 @@ export function computeUnitMoveHexes(state: GameState, unit: Unit): HexCoord[] {
     const [q, r] = k.split(',').map(Number);
     return { q: q!, r: r! };
   });
-  return getReachableHexes(unit.pos, unit.stats.speed, state.mapRadius, [...occupied, ...wallPositions], state.hills);
+  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills);
 }
 
 export function computeUnitAttackTargets(state: GameState, unit: Unit): Unit[] {
@@ -306,6 +313,15 @@ export function buildRulesPayload(): Record<string, unknown> {
         trainingRounds: UNIT_TRAINING_ROUNDS,
       },
     },
+    roads: {
+      note: 'Agrar-only physical road tiles (phase 7, §23-25). Only a Builder (a "founder"-type unit belonging to an Agrar player) can build one, on the hex it\'s currently standing on — consumes its whole activation, same as founding. Temple has no equivalent way to build one.',
+      costPerHex: ROAD_COST_PER_HEX,
+      movementBonus: { amount: ROAD_MOVEMENT_BONUS, note: 'Applies to WHOEVER is standing on the road, not just its owner\'s units — it\'s a real road, not a faction-locked buff.' },
+      pillage: {
+        note: 'Any unit that ends its move on a road it does NOT own destroys it on arrival — no separate action needed, it just happens as a side effect of "move". A pillaged hex is cheaper to rebuild than to build fresh.',
+        rebuildCost: ROAD_PILLAGE_REBUILD_COST,
+      },
+    },
     terrain: {
       hill: {
         defenseBonusOnHill: HILL_DEFENSE_BONUS,
@@ -363,6 +379,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         'found — { unitId } start founding at the neutral/ruined site the Builder/Acolyte is standing on (same restriction) — see strategicSites above.',
         'build-farm — { templeId (owned City id), pos } build a Farm at a valid hex around that City (same restriction) — Agrar only, see economy above.',
         'buy-devotion — { templeId (owned Temple id) } purchase the next Devotion level on that Temple (same restriction) — Temple faction only, see economy above.',
+        'build-road — { unitId } the unit\'s Builder builds a road on its current hex (same restriction) — Agrar faction only, see roads above.',
         'research — research a tech (same restriction)',
         'build-teleport — build a teleport portal pair (same restriction)',
         'end-turn — end the current player\'s turn (blocked only during the faction-reveal pause)',
@@ -593,6 +610,15 @@ export function executeAction(
         const ok = buyDevotion(state, templeSiteId);
         if (!ok) return fail(state, playerSlot, action, `Cannot buy Devotion for Temple ${templeSiteId}`);
         log.push(`Player ${playerSlot} purchased a Devotion level at Temple ${templeSiteId}`);
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'build-road': {
+        const { unitId } = params as { unitId?: string };
+        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId for road build');
+        const ok = buildRoad(state, unitId);
+        if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a road here (not a Builder, not Agrar, tile occupied by a road/structure, already acted, or insufficient aura)`);
+        log.push(`Player ${playerSlot} built a road with unit ${unitId}`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

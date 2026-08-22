@@ -163,6 +163,8 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
         id: f.id, pos: f.pos, citySiteId: f.citySiteId, ownerId: f.ownerId,
         hp: f.hp, maxHp: f.maxHp, defense: f.defense,
       })),
+      roads: s.roads.map(r => ({ pos: r.pos, ownerId: r.ownerId })),
+      pillagedRoadHexes: s.pillagedRoadHexes,
       teleportBuildings: s.teleportBuildings.map(tp => ({
         id: tp.id,
         pos: tp.pos,

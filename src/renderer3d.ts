@@ -1063,6 +1063,11 @@ export class Renderer3D {
     const attackSet = new Set([...state.attackHexes, ...state.structureAttackHexes].map(h => hexKey(h)));
     const buildSet = new Set(state.buildHexes.map(h => hexKey(h)));
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
+    // §23-25 — roads are persistent world decoration, not a transient
+    // selection highlight, but this pool already redraws every frame from
+    // live state, so a low-priority tan tint (below move/attack/build/
+    // support) is a cheap placeholder pending real road art (§70 policy).
+    const roadSet = new Set(state.roads.map(r => hexKey(r.pos)));
 
     let i = 0;
     const place = (hex: HexCoord, color: number, opacity: number) => {
@@ -1096,6 +1101,7 @@ export class Renderer3D {
       else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
       else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4);
       else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
+      else if (roadSet.has(key)) place(hex, 0xb98c50, 0.3);
     }
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }

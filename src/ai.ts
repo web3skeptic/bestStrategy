@@ -15,6 +15,7 @@ import {
   buildTeleportPair, canBuildTeleportPair, getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples, getTeleportAt,
   canBuildFarm, buildFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
+  canBuildRoad, buildRoad,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
   calculateEncirclement, isForestUnitRevealed, endTurn,
@@ -260,6 +261,15 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
     startFounding(state, unit.id);
     actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI begins founding a ${founding.targetState} at (${unit.pos.q},${unit.pos.r})` });
     return; // founding spends the whole activation
+  }
+
+  // Agrar's Builder pays a road forward wherever it happens to be standing
+  // (hard AI only — a simple baseline, not a network planner; §23-25).
+  if (hard && canBuildRoad(state, unit)) {
+    observe(state, 'build-road', { unitId: unit.id });
+    buildRoad(state, unit.id);
+    actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `Hard AI builds a road at (${unit.pos.q},${unit.pos.r})` });
+    return; // building spends the whole activation
   }
   if (unit.hasAttacked) return;
   if (!select(state, unit)) return;

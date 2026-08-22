@@ -19,7 +19,8 @@ export type FactionId = 'agrar' | 'temple';
 // selectedSiteId, spawnedTempleIds -> spawnedSiteIds, hasCaptured removed,
 // structureAttackHexes added.
 // v5 (phase 6): productionOrders added (Command system's production-slot cooldowns).
-export const RULES_VERSION = 5;
+// v6 (phase 7): roads + pillagedRoadHexes added (Agrar-only physical Roads).
+export const RULES_VERSION = 6;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -362,9 +363,23 @@ export interface GameState {
   // getBusyProductionSlotCount / resolveProductionForPlayer in game.ts) — the
   // unit itself still appears immediately, only the SLOT is on cooldown.
   productionOrders: ProductionOrder[];
+  // §23-25 (phase 7) — Agrar-only physical road tiles. A road grants
+  // ROAD_MOVEMENT_BONUS speed to WHOEVER stands on it (not just its owner's
+  // units — it's a real road, not a magic one), but any unit that ends its
+  // move on a road it does NOT own pillages (destroys) it on arrival — see
+  // moveUnit. Temple has no equivalent way to build one (§25).
+  roads: Road[];
+  // Hexes that once had a road, got pillaged, and are cheaper to rebuild
+  // (ROAD_PILLAGE_REBUILD_COST) than to build fresh (ROAD_COST_PER_HEX).
+  pillagedRoadHexes: Set<string>;
 }
 
 export interface ProductionOrder {
   playerId: number;
   freeAtRound: number; // the round (turnNumber) at which this slot frees up
+}
+
+export interface Road {
+  pos: HexCoord;
+  ownerId: number; // the player who built it (only ever an Agrar player)
 }

@@ -78,6 +78,7 @@ export function legalMicros(state: GameState): Micro[] {
       else if (a.type === 'attack') out.push({ action: 'attack', params: { unitId: unit.id, targetId: a.targetId } });
       else if (a.type === 'attack-structure') out.push({ action: 'attack-structure', params: { unitId: unit.id, targetPos: a.targetPos } });
       else if (a.type === 'found') out.push({ action: 'found', params: { unitId: unit.id } });
+      else if (a.type === 'build-road') out.push({ action: 'build-road', params: { unitId: unit.id } });
     }
   }
 
@@ -150,6 +151,8 @@ export function cloneState(s: GameState): GameState {
     capitals: s.capitals.map(c => ({ ...c })),
     farms: s.farms.map(f => ({ ...f })),
     productionOrders: s.productionOrders.map(o => ({ ...o })),
+    roads: s.roads.map(r => ({ ...r })),
+    pillagedRoadHexes: new Set(s.pillagedRoadHexes),
     hills: s.hills, walls: s.walls, forests: s.forests,
     explored: s.explored.map((e, i) => (i === cur ? new Set(e) : e)),
     currentPlayerIndex: s.currentPlayerIndex,

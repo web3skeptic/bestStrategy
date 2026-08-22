@@ -1,6 +1,6 @@
 import {
   GameState, Unit, UnitStats, UnitType, Player, HexCoord,
-  StrategicSite, StrategicSiteState, FoundingProgress, Capital, Farm,
+  StrategicSite, StrategicSiteState, FoundingProgress, Capital, Farm, Road,
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
@@ -19,6 +19,7 @@ import {
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION, UNIT_TRAINING_ROUNDS,
+  ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
 } from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
@@ -578,6 +579,13 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
   return unit.stats.range + hillBonus + rangeBonus;
 }
 
+// §23-25 — a road grants its movement bonus to WHOEVER is standing on it, not
+// just its owner's units (it's a physical road, not a faction-locked buff).
+export function getEffectiveSpeed(state: GameState, unit: Unit): number {
+  const onRoad = state.roads.some(r => hexEqual(r.pos, unit.pos));
+  return unit.stats.speed + (onRoad ? ROAD_MOVEMENT_BONUS : 0);
+}
+
 // ── Command system (§19-22) ──
 //
 // The population cap is raised ONLY by Command I/II tech, never by
@@ -895,6 +903,8 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     teleportBuildings: [],
     buildHexes: [],
     productionOrders: [],
+    roads: [],
+    pillagedRoadHexes: new Set(),
   };
 
   for (const player of players) {
@@ -1192,6 +1202,53 @@ export function buyDevotion(state: GameState, templeSiteId: string): boolean {
   return true;
 }
 
+// ── Agrar Roads (§23-25) ──
+//
+// Agrar-only physical road tiles, built one hex at a time by the Builder
+// (the 'founder'-type unit, mechanically identical either faction but only
+// Agrar's flavor of it may build roads — Temple's Acolyte has no equivalent,
+// §25). Building consumes the Builder's whole activation, same as founding.
+
+export function getRoadAt(state: GameState, pos: HexCoord): Road | undefined {
+  return state.roads.find(r => hexEqual(r.pos, pos));
+}
+
+export function canBuildRoad(state: GameState, unit: Unit): boolean {
+  if (isMatchSetupRestricted(state)) return false;
+  if (unit.type !== 'founder' || unit.hasMoved || unit.hasAttacked) return false;
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player || player.faction !== 'agrar') return false;
+  if (getRoadAt(state, unit.pos)) return false; // already a road here
+  if (getStructureAt(state, unit.pos)) return false; // no roads under Capital/City/Temple/Farm
+  const cost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+  return player.aura >= cost;
+}
+
+export function buildRoad(state: GameState, unitId: string): boolean {
+  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+  if (!unit || !canBuildRoad(state, unit)) return false;
+  const player = state.players.find(p => p.id === unit.playerId)!;
+  const key = hexKey(unit.pos);
+  const cost = state.pillagedRoadHexes.has(key) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+  player.aura -= cost;
+  state.pillagedRoadHexes.delete(key);
+  state.roads.push({ pos: { ...unit.pos }, ownerId: player.id });
+  unit.hasMoved = true;
+  unit.hasAttacked = true;
+  return true;
+}
+
+// A unit that ends its move on a road it does NOT own tramples it — the
+// road is destroyed (moved to pillagedRoadHexes, cheaper to rebuild than a
+// fresh one). Called from moveUnit right after the position is finalized
+// (including any auto-teleport landing).
+function pillageRoadIfEnemy(state: GameState, unit: Unit): void {
+  const road = getRoadAt(state, unit.pos);
+  if (!road || road.ownerId === unit.playerId) return;
+  state.roads = state.roads.filter(r => r !== road);
+  state.pillagedRoadHexes.add(hexKey(road.pos));
+}
+
 // ── Tech research ──
 
 export function canResearch(state: GameState, techId: TechId): boolean {
@@ -1441,7 +1498,7 @@ function updateHighlights(state: GameState): void {
   if (!unit.hasMoved && !unit.hasAttacked) {
     const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
     const wallPositions = [...state.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
-    state.moveHexes = getReachableHexes(unit.pos, unit.stats.speed, state.mapRadius, [...occupied, ...wallPositions], state.hills);
+    state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills);
   }
 
   const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
@@ -1534,6 +1591,9 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
       }
     }
   }
+
+  // §23-25 — trampling an enemy-owned road pillages it.
+  pillageRoadIfEnemy(state, unit);
 
   revealForPlayer(state, unit.playerId, unit.pos, unit.stats.vision);
   updateHighlights(state);

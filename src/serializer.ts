@@ -10,6 +10,8 @@ export interface SerializedGameState {
   capitals: GameState['capitals'];
   farms: GameState['farms'];
   productionOrders: GameState['productionOrders'];
+  roads: GameState['roads'];
+  pillagedRoadHexes: string[];
   hills: string[];
   walls: string[];
   forests: string[];
@@ -38,6 +40,7 @@ export function serialize(state: GameState): SerializedGameState {
   return {
     ...state,
     rulesVersion:   RULES_VERSION,
+    pillagedRoadHexes: Array.from(state.pillagedRoadHexes),
     hills:          Array.from(state.hills),
     walls:          Array.from(state.walls),
     forests:        Array.from(state.forests),
@@ -76,6 +79,7 @@ export function deserialize(data: SerializedGameState): GameState {
     turnNumber:       data.turnNumber ?? 1,
     // Backwards-compatibility: replays pre-v2.2 always started P0 first.
     firstPlayerIndex: data.firstPlayerIndex ?? 0,
+    pillagedRoadHexes: new Set<string>(data.pillagedRoadHexes),
     hills:            new Set<string>(data.hills),
     walls:            new Set<string>(data.walls),
     forests:          new Set<string>(data.forests),

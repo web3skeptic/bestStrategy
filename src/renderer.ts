@@ -442,6 +442,14 @@ export class Renderer {
       }
     }
 
+    // Roads (§23-25) — a simple tan hex fill, drawn under structures/units.
+    for (const road of state.roads) {
+      const key = hexKey(road.pos);
+      if (!explored.has(key)) continue;
+      const { x, y } = hexToPixel(road.pos, size, cx, cy);
+      this.drawHex(x, y, size, 'rgba(180,140,80,0.55)', '#8a6a3a');
+    }
+
     // Draw Capitals + strategic sites (only if explored)
     for (const capital of state.capitals) {
       if (!explored.has(hexKey(capital.pos))) continue;
