@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import {
   createGameState,
   getPopulationCap, getPopulationCount,
+  getProductionSlots, getBusyProductionSlotCount,
   getEffectiveRange,
   getPlayerVisible, isForestUnitRevealed,
   PlayerConfig,
@@ -139,6 +140,8 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
       faction: (!validViewer || p.id === viewerId || bothFactionsChosen) ? p.faction : null,
       popCap: getPopulationCap(state, p.id),
       currentPop: getPopulationCount(state, p.id),
+      productionSlots: getProductionSlots(state, p.id),
+      busyProductionSlots: getBusyProductionSlotCount(state, p.id),
     })),
     map: {
       radius: s.mapRadius,
@@ -192,6 +195,7 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
       playerId: i,
       researched: pt.researched,
     })),
+    productionOrders: s.productionOrders.map(o => ({ playerId: o.playerId, freeAtRound: o.freeAtRound })),
     winner: s.winner ? { id: s.winner.id, name: s.winner.name } : null,
   };
 

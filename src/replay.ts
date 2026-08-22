@@ -39,6 +39,7 @@ interface SnapshotFarm {
 interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
 }
+interface SnapshotProductionOrder { playerId: number; freeAtRound: number; }
 interface ApiSnapshot {
   /** Absent in replays recorded before the v0.2 redesign — treated as incompatible. */
   rulesVersion?: number;
@@ -57,6 +58,7 @@ interface ApiSnapshot {
   };
   units: SnapshotUnit[];
   tech: { playerId: number; researched: string[] }[];
+  productionOrders?: SnapshotProductionOrder[];
   winner: { id: number; name: string } | null;
 }
 
@@ -172,6 +174,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
 
   return {
     players, units, strategicSites, capitals, farms,
+    productionOrders: (s.productionOrders ?? []).map(o => ({ ...o })),
     hills, walls, forests,
     explored: players.map(() => new Set<string>(fullyExplored)),
     currentPlayerIndex: s.currentPlayer,

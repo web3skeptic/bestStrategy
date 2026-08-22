@@ -36,7 +36,8 @@ export function stateSig(s: GameState): string {
   const tp = s.teleportBuildings.map(b =>
     `${b.builtByPlayerId}:${b.templeId}:${b.pos.q},${b.pos.r}:${b.pairedId ?? ''}`
   ).sort().join('|');
-  return `U[${units}]T[${temples}]P[${players}]R[${tech}]X[${tp}]#${s.phase}`;
+  const prod = s.productionOrders.map(o => `${o.playerId}:${o.freeAtRound}`).sort().join('|');
+  return `U[${units}]T[${temples}]P[${players}]R[${tech}]X[${tp}]Q[${prod}]#${s.phase}`;
 }
 
 // Find the candidate index in `cands` matching an expert micro (by action + ids +

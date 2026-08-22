@@ -18,6 +18,7 @@ import {
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
+  COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION, UNIT_TRAINING_ROUNDS,
 } from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
@@ -577,21 +578,59 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
   return unit.stats.range + hillBonus + rangeBonus;
 }
 
-// ── Population cap ──
+// ── Command system (§19-22) ──
 //
-// PHASE 3 PLACEHOLDER: the old temple-level-scaled cap is gone along with
-// temple leveling. This flat cap stands in for the real Command system
-// (§21 of the brief — 8/10/12, raised only by Command I/II tech, NEVER by
-// territory) which hasn't been built yet; 8 is chosen to match Command's own
-// starting value so this needs no further change once Command lands.
-const INTERIM_POPULATION_CAP = 8;
+// The population cap is raised ONLY by Command I/II tech, never by
+// territory (§21) — 8/10/12, linear, Command II requires Command I.
+export function getPopulationCap(state: GameState, playerId: number): number {
+  const tech = state.playerTech[playerId];
+  if (!tech) return COMMAND_TIERS.start;
+  if (tech.researched.has('command_2')) return COMMAND_TIERS.commandII;
+  if (tech.researched.has('command_1')) return COMMAND_TIERS.commandI;
+  return COMMAND_TIERS.start;
+}
 
-export function getPopulationCap(_state: GameState, _playerId: number): number {
-  return INTERIM_POPULATION_CAP;
+// Population is spent by COMMAND COST, not a flat 1-per-unit — heavier units
+// (cavalry/heavy) cost more of the cap than light ones (§19). Founder/
+// pre-reveal units (no faction-specific def yet) fall back to 1.
+function getUnitCommandCost(type: UnitType, faction: FactionId | null | undefined): number {
+  if (faction && type !== 'founder') {
+    const def = FACTION_UNITS[faction].find(u => u.slot === type);
+    if (def) return def.commandCost;
+  }
+  return 1;
 }
 
 export function getPopulationCount(state: GameState, playerId: number): number {
-  return state.units.filter(u => u.hp > 0 && u.playerId === playerId).length;
+  const faction = state.players.find(p => p.id === playerId)?.faction;
+  let count = 0;
+  for (const u of state.units) {
+    if (u.hp <= 0 || u.playerId !== playerId) continue;
+    count += getUnitCommandCost(u.type, faction);
+  }
+  return count;
+}
+
+// §19-20 — production slots: a limited pool a recruit draws from (Capital
+// gives CAPITAL_PRODUCTION_SLOTS, each owned City/Temple gives +1), NOT an
+// unlimited "any owned structure, any number of times" allowance. A recruit
+// occupies one of the recruiting player's slots for UNIT_TRAINING_ROUNDS
+// rounds (the unit itself still appears immediately — only the slot is on
+// cooldown, mirroring the founding system's "completes next round" timing).
+export function getProductionSlots(state: GameState, playerId: number): number {
+  const expansions = state.strategicSites.filter(s => s.ownerId === playerId && (s.state === 'city' || s.state === 'temple')).length;
+  return CAPITAL_PRODUCTION_SLOTS + expansions * PRODUCTION_SLOTS_PER_EXPANSION;
+}
+
+export function getBusyProductionSlotCount(state: GameState, playerId: number): number {
+  return state.productionOrders.filter(o => o.playerId === playerId && state.turnNumber < o.freeAtRound).length;
+}
+
+// Called once per player, right when it becomes their turn (mirrors
+// resolveFoundingForPlayer) — drops any of their orders that have freed up,
+// so a stale array doesn't grow forever.
+function resolveProductionForPlayer(state: GameState, playerId: number): void {
+  state.productionOrders = state.productionOrders.filter(o => o.playerId !== playerId || state.turnNumber < o.freeAtRound);
 }
 
 // ── Economy (§12-19) ──
@@ -855,6 +894,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     playerTech,
     teleportBuildings: [],
     buildHexes: [],
+    productionOrders: [],
   };
 
   for (const player of players) {
@@ -1204,10 +1244,12 @@ export function researchTech(state: GameState, techId: TechId): boolean {
 export function canAfford(state: GameState, unitType: UnitType): boolean {
   const player = getCurrentPlayer(state);
   if (player.aura < getUnitCost(unitType, player.faction)) return false;
-  // Check population cap
+  // Population cap check — commandCost-weighted (§19), not flat 1-per-unit.
   const cap = getPopulationCap(state, player.id);
   const count = getPopulationCount(state, player.id);
-  if (count >= cap) return false;
+  if (count + getUnitCommandCost(unitType, player.faction) > cap) return false;
+  // §19-20 — production slots: a limited pool, not unlimited.
+  if (getBusyProductionSlotCount(state, player.id) >= getProductionSlots(state, player.id)) return false;
   // Check unit is unlocked (faction early-unlock + tech)
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
   return unlocked.has(unitType);
@@ -1219,18 +1261,24 @@ export function spawnUnit(state: GameState, structureId: string, unitType: UnitT
   const structure = getOwnedStructures(state, player.id).find(s => s.id === structureId);
   if (!structure) return false;
 
-  // A structure may spawn MORE THAN ONE unit per turn — there is no per-turn
-  // spawn gate. Successive spawns are naturally throttled by the tile-occupancy
-  // check below: the freshly spawned unit stands on the structure, so the
-  // player must move it off before that structure can spawn again.
+  // A structure may spawn MORE THAN ONE unit per turn — there is no per-
+  // structure spawn gate. Successive spawns are throttled by (a) the
+  // tile-occupancy check below — the freshly spawned unit stands on the
+  // structure, so the player must move it off before that structure spawns
+  // again — and (b) the player's overall production-slot pool (§19-20),
+  // which is what actually caps total recruits per round now.
 
   const cost = getUnitCost(unitType, player.faction);
   if (player.aura < cost) return false;
 
-  // Population cap check
+  // Population cap check — commandCost-weighted (§19), not flat 1-per-unit.
   const cap = getPopulationCap(state, player.id);
   const count = getPopulationCount(state, player.id);
-  if (count >= cap) return false;
+  const commandCost = getUnitCommandCost(unitType, player.faction);
+  if (count + commandCost > cap) return false;
+
+  // §19-20 — production slots: a limited pool, not unlimited.
+  if (getBusyProductionSlotCount(state, player.id) >= getProductionSlots(state, player.id)) return false;
 
   // Unlock check (faction early-unlock + tech)
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
@@ -1244,6 +1292,7 @@ export function spawnUnit(state: GameState, structureId: string, unitType: UnitT
   unit.hasMoved = false;
   unit.hasAttacked = false;
   state.units.push(unit);
+  state.productionOrders.push({ playerId: player.id, freeAtRound: state.turnNumber + UNIT_TRAINING_ROUNDS });
 
   state.spawnedSiteIds.add(structureId);
 
@@ -1819,6 +1868,10 @@ export function endTurn(state: GameState): void {
   // §6, §8 — resolve any founding this player has due, BEFORE granting income,
   // so a structure that completes right now already contributes this turn.
   resolveFoundingForPlayer(state, newPlayer.id);
+
+  // §19-20 — free up any of this player's production slots whose cooldown has
+  // elapsed (see getProductionSlots/getBusyProductionSlotCount).
+  resolveProductionForPlayer(state, newPlayer.id);
 
   // §12-19 — real economy: flat base + each owned City's Farms / Temple's
   // Devotion. See getPlayerIncome.

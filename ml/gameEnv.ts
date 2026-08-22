@@ -149,6 +149,7 @@ export function cloneState(s: GameState): GameState {
     strategicSites: s.strategicSites.map(site => ({ ...site, founding: site.founding ? { ...site.founding } : null })),
     capitals: s.capitals.map(c => ({ ...c })),
     farms: s.farms.map(f => ({ ...f })),
+    productionOrders: s.productionOrders.map(o => ({ ...o })),
     hills: s.hills, walls: s.walls, forests: s.forests,
     explored: s.explored.map((e, i) => (i === cur ? new Set(e) : e)),
     currentPlayerIndex: s.currentPlayerIndex,

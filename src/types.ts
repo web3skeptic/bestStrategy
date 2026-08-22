@@ -18,7 +18,8 @@ export type FactionId = 'agrar' | 'temple';
 // v3 (phase 3): temples -> strategicSites + capitals, selectedTempleId ->
 // selectedSiteId, spawnedTempleIds -> spawnedSiteIds, hasCaptured removed,
 // structureAttackHexes added.
-export const RULES_VERSION = 4;
+// v5 (phase 6): productionOrders added (Command system's production-slot cooldowns).
+export const RULES_VERSION = 5;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -232,6 +233,8 @@ export type TechId =
   | 'unlock_healer'
   | 'unlock_damagebooster'
   | 'unlock_rangebooster'
+  | 'command_1'
+  | 'command_2'
   ;
 
 export const TECH_COST = 5;
@@ -264,6 +267,10 @@ export const TECH_NODES: TechNode[] = [
   { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'healer' },
   { id: 'unlock_damagebooster',name: 'Damage Booster',    description: 'Unlock Damage Booster — support unit that increases attack of nearby allies.',             cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'damageBooster' },
   { id: 'unlock_rangebooster', name: 'Range Booster',     description: 'Unlock Range Booster — support unit that increases attack range of nearby allies.',        cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'rangeBooster' },
+  // §21 — Command tiers, linear (not a branch): only Command I/II raise the
+  // population cap — territory never does (see COMMAND_TIERS in factions.ts).
+  { id: 'command_1',           name: 'Command I',         description: 'Raise your population cap.',                                                               cost: TECH_COST, prereqs: [] },
+  { id: 'command_2',           name: 'Command II',        description: 'Raise your population cap further.',                                                       cost: TECH_COST, prereqs: ['command_1'] },
 ];
 
 export interface PlayerTech {
@@ -348,4 +355,16 @@ export interface GameState {
   teleportBuildings: TeleportBuilding[];
   /** @uiOnly hexes highlighted during build-placement mode */
   buildHexes: HexCoord[];
+  // §19-22 (phase 6, Command system) — recruiting draws on a limited pool of
+  // production slots (Capital + owned City/Temple expansions), not an
+  // unlimited one. Each recruit occupies ONE of the recruiting player's slots
+  // until the start of that player's next round (see getProductionSlots /
+  // getBusyProductionSlotCount / resolveProductionForPlayer in game.ts) — the
+  // unit itself still appears immediately, only the SLOT is on cooldown.
+  productionOrders: ProductionOrder[];
+}
+
+export interface ProductionOrder {
+  playerId: number;
+  freeAtRound: number; // the round (turnNumber) at which this slot frees up
 }

@@ -31,6 +31,8 @@ import {
   canAfford,
   getPopulationCap,
   getPopulationCount,
+  getProductionSlots,
+  getBusyProductionSlotCount,
   HEALER_HEAL_AMOUNT,
   DAMAGE_BOOST_AMOUNT,
   RANGE_BOOST_AMOUNT,
@@ -1378,10 +1380,13 @@ function updateStatPills(player: Player): void {
 
   const popCap = getPopulationCap(state, player.id);
   const popCount = getPopulationCount(state, player.id);
+  const slots = getProductionSlots(state, player.id);
+  const busySlots = getBusyProductionSlotCount(state, player.id);
   popInfoEl.innerHTML =
     `<span class="pill-icon">👥</span>` +
-    `<span class="pill-value">${popCount}/${popCap}</span>`;
-  popInfoEl.classList.toggle('pop-full', popCount >= popCap);
+    `<span class="pill-value">${popCount}/${popCap}</span>` +
+    `<span class="pill-sub">(🏭${slots - busySlots}/${slots})</span>`;
+  popInfoEl.classList.toggle('pop-full', popCount >= popCap || busySlots >= slots);
 }
 
 // ── Unit build cards ──

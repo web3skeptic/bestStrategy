@@ -45,6 +45,7 @@ import {
   SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS,
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
+  COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION, UNIT_TRAINING_ROUNDS,
 } from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
 
@@ -294,6 +295,17 @@ export function buildRulesPayload(): Record<string, unknown> {
       },
       investmentPersistence: 'A City/Temple reduced to Ruins keeps its Farms/Devotion investment on record. Re-founding it as the SAME investing player restores that investment; a DIFFERENT player founding it wipes the investment (Farms removed, Devotion reset to 0) and starts fresh.',
     },
+    command: {
+      note: 'Population cap and recruiting throughput (phase 6, §19-22). Territory never raises the cap — only Command I/II tech does.',
+      populationCap: { tiers: COMMAND_TIERS, note: 'Starts at COMMAND_TIERS.start; the "command_1"/"command_2" techs (linear, II requires I) raise it to commandI then commandII.' },
+      populationCost: 'Each unit spends its faction def\'s commandCost against the cap (see the `factions` block above) — NOT a flat 1 per unit. Heavier units (cavalry/heavy) cost more of the cap than light ones.',
+      productionSlots: {
+        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit occupies one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds — the unit itself still appears immediately, only the SLOT is on cooldown (frees up at the start of that player\'s next round, same timing convention as founding).',
+        capitalSlots: CAPITAL_PRODUCTION_SLOTS,
+        slotsPerExpansion: PRODUCTION_SLOTS_PER_EXPANSION,
+        trainingRounds: UNIT_TRAINING_ROUNDS,
+      },
+    },
     terrain: {
       hill: {
         defenseBonusOnHill: HILL_DEFENSE_BONUS,
@@ -360,7 +372,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       constraints: [
         'A unit can move then attack, or just attack, or just move — but not attack then move.',
         'Attacking (unit or structure) also sets hasMoved=true.',
-        'A structure may recruit MULTIPLE units per turn — there is no per-structure spawn gate. Successive spawns are throttled only by aura, the population cap, and tile occupancy (a freshly spawned unit stands on the structure and must move off before it can spawn again).',
+        'A structure may recruit MULTIPLE units per turn — there is no per-structure spawn gate. Successive spawns are throttled by aura, the population cap (commandCost-weighted, see command block), the player\'s overall production-slot pool (see command.productionSlots), and tile occupancy (a freshly spawned unit stands on the structure and must move off before it can spawn again).',
         'Founding is a separate action from move/attack — it consumes the founder\'s WHOLE activation (both move and attack) the instant it starts.',
       ],
     },

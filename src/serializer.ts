@@ -9,6 +9,7 @@ export interface SerializedGameState {
   strategicSites: GameState['strategicSites'];
   capitals: GameState['capitals'];
   farms: GameState['farms'];
+  productionOrders: GameState['productionOrders'];
   hills: string[];
   walls: string[];
   forests: string[];
