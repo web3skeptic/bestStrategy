@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, Temple, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
-import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canCaptureTemple } from './game';
+import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
@@ -14,7 +14,7 @@ const MOVE_ANIM_MS = 260;
 const EXPLOSION_MS = 440;
 const UNIT_LAYER = 1; // extra layer lit by unit-only lights so units stay bright
 const HILL_ELEV = 0.18;     // units on a hill sit slightly higher
-const TEMPLE_ELEV = 0.5;    // units on a temple tile perch on its steps, not inside it
+const STRUCTURE_ELEV = 0.5;    // units on a temple tile perch on its steps, not inside it
 const TURN_SPEED = 12;      // unit facing rotation speed (rad/s)
 const FOREST_FADE = 0.45;   // opacity of own units hidden in a forest
 // Explored-but-not-currently-visible tiles keep their real terrain, but every
@@ -254,9 +254,9 @@ export class Renderer3D {
   // sit on a reachable move hex for the selected unit, or a local unit stands on
   // them with a pending capture. Driven in the same pulse block as toMoveTintIds
   // (same phase); the temple model itself is tinted (no floating markers).
-  private templeTintIds = new Set<string>();
+  private structureTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
-  private templeMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
+  private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
   private teleportMeshes = new Map<string, THREE.Object3D>();
   private highlightPool: THREE.Mesh[] = [];
 
@@ -286,8 +286,8 @@ export class Renderer3D {
   private shockwaves: { start: number; mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; geo: THREE.RingGeometry }[] = [];
 
   // Rotating yellow pointer hovering over the currently-selected temple.
-  private templePointer: THREE.Group | null = null;
-  private templePointerBaseY = 0;
+  private structurePointer: THREE.Group | null = null;
+  private structurePointerBaseY = 0;
 
   // Desktop camera-key state (Q/E rotate, WASD pan). main.ts feeds key up/down
   // here; applyCameraKeys() drives smooth continuous motion in the render loop.
@@ -467,7 +467,7 @@ export class Renderer3D {
 
     // Rotating yellow "active temple" pointer (a downward pyramid + cube), hidden
     // until a temple is selected. Spins + bobs in advanceAnimations.
-    this.templePointer = new THREE.Group();
+    this.structurePointer = new THREE.Group();
     const ptrMat = new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0xffb000, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0 });
     const ptrCone = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.24, 0.42, 4), ptrMat);
     ptrCone.rotation.x = Math.PI; // point down at the temple
@@ -475,10 +475,10 @@ export class Renderer3D {
     const ptrCube = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), ptrMat);
     ptrCube.position.y = 0.56;
     ptrCube.rotation.set(Math.PI / 4, Math.PI / 4, 0);
-    this.templePointer.add(ptrCone, ptrCube);
-    this.templePointer.visible = false;
-    this.templePointer.traverse(o => o.layers.enable(UNIT_LAYER)); // keep it bright
-    this.scene.add(this.templePointer);
+    this.structurePointer.add(ptrCone, ptrCube);
+    this.structurePointer.visible = false;
+    this.structurePointer.traverse(o => o.layers.enable(UNIT_LAYER)); // keep it bright
+    this.scene.add(this.structurePointer);
 
     // Shared overlay geometries/materials.
     // Solid dark hex prism (same shape/size as a tile) used to replace a tile
@@ -532,9 +532,9 @@ export class Renderer3D {
     this.boosterAuras.clear();
     this.unitHpBars.clear();
     this.toMoveTintIds.clear();
-    this.templeTintIds.clear();
+    this.structureTintIds.clear();
     this.lastUnitHp.clear();
-    this.templeMeshes.clear();
+    this.structureMeshes.clear();
     this.teleportMeshes.clear();
     this.highlightPool = [];
     this.moveAnims.clear();
@@ -1057,7 +1057,10 @@ export class Renderer3D {
 
   private syncHighlights(state: GameState, explored: Set<string>): void {
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
-    const attackSet = new Set(state.attackHexes.map(h => hexKey(h)));
+    // Unit targets and structure targets (Capital/City/Temple) share the same
+    // "you can attack this" red highlight — attackUnit vs attackStructure is
+    // resolved by what's actually standing on the tile when clicked.
+    const attackSet = new Set([...state.attackHexes, ...state.structureAttackHexes].map(h => hexKey(h)));
     const buildSet = new Set(state.buildHexes.map(h => hexKey(h)));
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
 
@@ -1097,62 +1100,101 @@ export class Renderer3D {
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }
 
+  // Placeholder visual "tier" fed into the reused buildTemple(color, tier)
+  // model — there's no more level system, but the model's tier scaling is a
+  // convenient existing placeholder for "how developed does this look" (§70
+  // asset-fallback policy: reuse an existing model rather than block on new
+  // art). Capitals render at the top tier; a founding/neutral/ruined site at
+  // the bottom; a completed City/Temple in between.
+  private structureVisualTier(kind: 'capital' | 'neutralOrRuins' | 'founding' | 'completed'): number {
+    switch (kind) {
+      case 'capital': return 10;
+      case 'completed': return 5;
+      case 'founding': return 2;
+      case 'neutralOrRuins': default: return 1;
+    }
+  }
+
   private syncStructures(state: GameState, explored: Set<string>, visible: Set<string>, showToMove = false, playerId = -1): void {
-    // Temples the selected unit could step onto (same set / explored gating as the
-    // flat green move highlights in syncHighlights — the temple mesh occludes those
-    // flat tints, which is exactly why we tint the model itself here).
+    // Structures the selected unit could step onto (same set / explored gating
+    // as the flat green move highlights in syncHighlights — the structure mesh
+    // occludes those flat tints, which is exactly why we tint the model itself here).
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
-    for (const temple of state.temples) {
-      const key = hexKey(temple.pos);
-      const owner = temple.ownerId !== null ? state.players.find(p => p.id === temple.ownerId) : null;
-      const colorNum = owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral;
-      let entry = this.templeMeshes.get(temple.id);
+
+    interface StructureVisual { id: string; pos: HexCoord; tier: number; colorNum: number; canPendingFound: boolean; }
+    const structures: StructureVisual[] = [];
+    for (const capital of state.capitals as Capital[]) {
+      const owner = state.players.find(p => p.id === capital.playerId);
+      structures.push({
+        id: capital.id, pos: capital.pos,
+        tier: this.structureVisualTier('capital'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
+        canPendingFound: false,
+      });
+    }
+    for (const site of state.strategicSites as StrategicSite[]) {
+      const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
+      const foundingOwner = site.founding ? state.players.find(p => p.id === site.founding!.playerId) : null;
+      const isCompleted = site.state === 'city' || site.state === 'temple';
+      const isFounding = site.state === 'foundingCity' || site.state === 'foundingTemple';
+      structures.push({
+        id: site.id, pos: site.pos,
+        tier: this.structureVisualTier(isCompleted ? 'completed' : isFounding ? 'founding' : 'neutralOrRuins'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex()
+          : foundingOwner ? new THREE.Color(foundingOwner.color).getHex()
+          : this.P.colors.neutral,
+        canPendingFound: site.state === 'neutral' || site.state === 'ruins',
+      });
+    }
+
+    for (const st of structures) {
+      const key = hexKey(st.pos);
+      let entry = this.structureMeshes.get(st.id);
       let rebuilt = false;
-      if (!entry || entry.color !== colorNum || entry.level !== temple.level) {
+      if (!entry || entry.color !== st.colorNum || entry.level !== st.tier) {
         if (entry) { this.structureGroup.remove(entry.mesh); this.disposeObject(entry.mesh); }
-        const mesh = buildTemple(colorNum, temple.level);
-        const { x, z } = hexToWorld(temple.pos);
+        const mesh = buildTemple(st.colorNum, st.tier);
+        const { x, z } = hexToWorld(st.pos);
         mesh.position.set(x, 0, z);
         this.structureGroup.add(mesh);
-        entry = { mesh, color: colorNum, level: temple.level };
-        this.templeMeshes.set(temple.id, entry);
+        entry = { mesh, color: st.colorNum, level: st.tier };
+        this.structureMeshes.set(st.id, entry);
         rebuilt = true;
       }
-      // Remembered-but-unseen temples dim like the terrain (fading) instead of
-      // staying bright; only currently-visible temples show at full brightness.
+      // Remembered-but-unseen structures dim like the terrain (fading) instead
+      // of staying bright; only currently-visible structures show at full brightness.
       const want = visible.has(key) ? 'lit' : explored.has(key) ? 'dark' : 'hidden';
-      this.applyStructFog(entry.mesh, 'T' + temple.id, want, rebuilt);
+      this.applyStructFog(entry.mesh, 'T' + st.id, want, rebuilt);
 
       // Warm-yellow tint (emissive pulsed in advanceAnimations, same phase as the
       // unit to-move tint):
       //   (a) a reachable move destination for the selected unit — explored-gated
       //       exactly like the flat move highlights.
-      //   (b) a local unit stands on it with a pending capture — gated like the
-      //       unit to-move tint (own unit, viewer's turn). Rare with auto-capture,
-      //       kept for legacy/edge states.
+      //   (b) a local Builder/Acolyte stands on it and could start founding —
+      //       gated like the unit to-move tint (own unit, viewer's turn).
       const tintA = explored.has(key) && moveSet.has(key);
       let tintB = false;
-      if (showToMove) {
-        const u = getUnitAt(state, temple.pos);
-        tintB = !!u && u.playerId === playerId && canCaptureTemple(state, u) !== null;
+      if (showToMove && st.canPendingFound) {
+        const u = getUnitAt(state, st.pos);
+        tintB = !!u && u.playerId === playerId && canStartFounding(state, u) !== null;
       }
-      if (tintA || tintB) this.templeTintIds.add(temple.id);
-      else if (this.templeTintIds.delete(temple.id)) this.setTempleEmissive(entry.mesh, null);
+      if (tintA || tintB) this.structureTintIds.add(st.id);
+      else if (this.structureTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
     }
 
-    // Position the rotating pointer over the selected temple.
-    const selId = state.selectionMode === 'temple' ? state.selectedTempleId : null;
-    const selTemple = selId ? state.temples.find(t => t.id === selId) : null;
-    if (this.templePointer) {
-      if (selTemple) {
-        const { x, z } = hexToWorld(selTemple.pos);
-        const entry = this.templeMeshes.get(selTemple.id);
+    // Position the rotating pointer over the selected structure.
+    const selId = state.selectionMode === 'site' ? state.selectedSiteId : null;
+    const selStructure = selId ? structures.find(s => s.id === selId) : null;
+    if (this.structurePointer) {
+      if (selStructure) {
+        const { x, z } = hexToWorld(selStructure.pos);
+        const entry = this.structureMeshes.get(selStructure.id);
         const topY = entry ? new THREE.Box3().setFromObject(entry.mesh).max.y : 2.4;
-        this.templePointerBaseY = topY + 0.5;
-        this.templePointer.position.set(x, this.templePointerBaseY, z);
-        this.templePointer.visible = true;
+        this.structurePointerBaseY = topY + 0.5;
+        this.structurePointer.position.set(x, this.structurePointerBaseY, z);
+        this.structurePointer.visible = true;
       } else {
-        this.templePointer.visible = false;
+        this.structurePointer.visible = false;
       }
     }
 
@@ -1270,7 +1312,7 @@ export class Renderer3D {
   // setUnitEmissive, but temples ship their own emissive glows (team-tinted
   // niches, cyan magic core), so each material's original emissive is captured
   // on first tint and restored when the tint clears — never left black.
-  private setTempleEmissive(mesh: THREE.Object3D, rgb: [number, number, number] | null): void {
+  private setStructureEmissive(mesh: THREE.Object3D, rgb: [number, number, number] | null): void {
     mesh.traverse(o => {
       const m = o as THREE.Mesh;
       if (!m.isMesh || !m.material) return;
@@ -1406,11 +1448,12 @@ export class Renderer3D {
     }
   }
 
-  // y offset for a unit standing on this tile: lifted on hills, perched on temples.
+  // y offset for a unit standing on this tile: lifted on hills, perched on structures.
   private elevationAt(state: GameState, pos: HexCoord): number {
     const k = hexKey(pos);
     let y = state.hills.has(k) ? HILL_ELEV : 0;
-    if (state.temples.some(t => hexKey(t.pos) === k)) y = Math.max(y, TEMPLE_ELEV);
+    const onStructure = state.capitals.some(c => hexKey(c.pos) === k) || state.strategicSites.some(s => hexKey(s.pos) === k);
+    if (onStructure) y = Math.max(y, STRUCTURE_ELEV);
     return y;
   }
 
@@ -1694,9 +1737,9 @@ export class Renderer3D {
       });
     }
     // Spin + bob the selected-temple pointer.
-    if (this.templePointer && this.templePointer.visible) {
-      this.templePointer.rotation.y = now * 0.0022;
-      this.templePointer.position.y = this.templePointerBaseY + Math.sin(now * 0.004) * 0.12;
+    if (this.structurePointer && this.structurePointer.visible) {
+      this.structurePointer.rotation.y = now * 0.0022;
+      this.structurePointer.position.y = this.structurePointerBaseY + Math.sin(now * 0.004) * 0.12;
     }
     // Billboard HP bars to face the camera.
     if (this.unitHpBars.size > 0) {
@@ -1705,7 +1748,7 @@ export class Renderer3D {
     // Pulse the "still to move" yellow tint: a subtle, uniform emissive breathe
     // on the tinted units' materials (~1.3s period). Kept low so it reads as a
     // faint yellow wash, not a solid recolor.
-    if (this.toMoveTintIds.size > 0 || this.templeTintIds.size > 0) {
+    if (this.toMoveTintIds.size > 0 || this.structureTintIds.size > 0) {
       const osc = 0.5 + 0.5 * Math.sin(now * 0.005); // 0..1, ~1.3s period
       const e = 0.10 + 0.26 * osc;                    // emissive strength
       const rgb: [number, number, number] = [e, e * 0.88, e * 0.20]; // warm yellow
@@ -1714,9 +1757,9 @@ export class Renderer3D {
         if (mesh) this.setUnitEmissive(mesh, rgb);
       }
       // Temples breathe in sync with the units (same phase / rgb).
-      for (const id of this.templeTintIds) {
-        const entry = this.templeMeshes.get(id);
-        if (entry) this.setTempleEmissive(entry.mesh, rgb);
+      for (const id of this.structureTintIds) {
+        const entry = this.structureMeshes.get(id);
+        if (entry) this.setStructureEmissive(entry.mesh, rgb);
       }
     }
     // Booster/healer range rings ripple outward from the unit: each ring scales

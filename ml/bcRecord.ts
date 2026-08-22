@@ -24,9 +24,12 @@ export function copyMicro(m: AIMicro): Micro {
 // Canonical signature of the game-relevant state (order-independent) for equality.
 export function stateSig(s: GameState): string {
   const units = s.units.map(u =>
-    `${u.id}:${u.playerId}:${u.hp}:${u.pos.q},${u.pos.r}:${u.hasMoved ? 1 : 0}${u.hasAttacked ? 1 : 0}${u.hasCaptured ? 1 : 0}`
+    `${u.id}:${u.playerId}:${u.hp}:${u.pos.q},${u.pos.r}:${u.hasMoved ? 1 : 0}${u.hasAttacked ? 1 : 0}`
   ).sort().join('|');
-  const temples = s.temples.map(t => `${t.id}:${t.ownerId}:${t.level}`).sort().join('|');
+  const temples = [
+    ...s.capitals.map(c => `${c.id}:${c.playerId}:${c.hp}`),
+    ...s.strategicSites.map(t => `${t.id}:${t.state}:${t.ownerId}:${t.hp}`),
+  ].sort().join('|');
   const players = s.players.map(p => `${p.id}:${p.aura}`).sort().join('|');
   const tech = s.playerTech.map((pt, i) => `${i}:${[...pt.researched].sort().join(',')}`).join('|');
   const tp = s.teleportBuildings.map(b =>

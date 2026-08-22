@@ -101,7 +101,7 @@ console.log('\n=== Encirclement (§48-49) ===');
   function mkUnit(id: string, playerId: number, q: number, r: number): Unit {
     return {
       id, type: 'warrior', playerId, pos: { q, r }, hp: 15,
-      hasMoved: false, hasAttacked: false, hasCaptured: false,
+      hasMoved: false, hasAttacked: false,
       stats: { maxHp: 15, attack: 10, defense: 5, speed: 1, range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false },
     };
   }

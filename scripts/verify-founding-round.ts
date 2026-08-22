@@ -128,8 +128,8 @@ async function main(): Promise<void> {
   // ── Founding Round restriction: recruit must be rejected ──
   const firstActingSlot = gsA.state.currentPlayerIndex;
   const firstActing = clientBySlot[firstActingSlot]!;
-  const myTemple = gsA.state.temples.find((t: any) => t.ownerId === firstActingSlot);
-  firstActing.send({ type: 'action', action: 'recruit', params: { unitType: 'warrior', templeId: myTemple.id } });
+  const myCapital = gsA.state.capitals.find((c: any) => c.playerId === firstActingSlot);
+  firstActing.send({ type: 'action', action: 'recruit', params: { unitType: 'warrior', templeId: myCapital.id } });
   const recruitErr = await firstActing.next('action_error');
   check('recruit is rejected during the Founding Round', !!recruitErr.message);
 

@@ -1,0 +1,296 @@
+// Phase 3 verification: strategic-site founding state machine + Capital
+// combat/victory (design brief §7-11, §14). Exercises the real engine
+// mutators end-to-end (no forked logic) — createGameState, startFounding,
+// endTurn (which resolves founding at round-start), attackStructure,
+// moveUnit, chooseFaction.
+//
+// Run with: npx tsx scripts/verify-strategic-sites.ts
+import {
+  createGameState, endTurn, chooseFaction, canStartFounding, startFounding,
+  attackStructure, getStructureAt, selectUnit, moveUnit, getPlayerCapital,
+  INTERIM_STRUCTURE_INCOME,
+} from '../src/game';
+import { hexNeighbors, hexEqual } from '../src/hex';
+import type { GameState, StrategicSiteState, FactionId } from '../src/types';
+
+let failures = 0;
+function check(name: string, cond: boolean, detail?: string): void {
+  if (cond) console.log(`  ok   ${name}`);
+  else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
+}
+
+// A fresh 2-player game, fast-forwarded past the Founding Round and faction
+// reveal (Agrar=P0, Temple=P1), with generous aura for testing.
+function setup(): GameState {
+  const state = createGameState();
+  endTurn(state);
+  endTurn(state);
+  chooseFaction(state, 0, 'agrar');
+  chooseFaction(state, 1, 'temple');
+  for (const p of state.players) p.aura = 20;
+  return state;
+}
+
+function founderOf(state: GameState, playerId: number) {
+  return state.units.find(u => u.playerId === playerId && u.type === 'founder')!;
+}
+
+// Places the given player's Founder on site[0] with a fresh activation and
+// makes it that player's turn, ready to call startFounding.
+function primeFounding(state: GameState, playerId: number, siteIndex = 0) {
+  const site = state.strategicSites[siteIndex]!;
+  const founder = founderOf(state, playerId);
+  founder.pos = { ...site.pos };
+  founder.hasMoved = false;
+  founder.hasAttacked = false;
+  state.currentPlayerIndex = playerId;
+  return { site, founder };
+}
+
+// Exactly one full round-trip in a 2-player alternating game — regardless of
+// which player is currently active, this always lands back on the SAME
+// player one round later, with turnNumber incremented by exactly 1. That's
+// precisely "the founding player's next round" (§6), and it's when endTurn's
+// internal resolveFoundingForPlayer fires.
+function advanceOneRound(state: GameState): void {
+  endTurn(state);
+  endTurn(state);
+}
+
+// ── §7-10: full state-machine cycles ──
+console.log('\n=== Site state machine (§7-10) ===');
+for (const faction of ['agrar', 'temple'] as FactionId[]) {
+  for (const fromState of ['neutral', 'ruins'] as const) {
+    const state = setup();
+    const player = state.players.find(p => p.faction === faction)!;
+    const { site, founder } = primeFounding(state, player.id);
+    site.state = fromState;
+    site.ownerId = null;
+    site.founding = null;
+    if (fromState === 'ruins') { site.hp = 0; site.maxHp = 0; site.defense = 0; }
+
+    const startOk = startFounding(state, founder.id);
+    const expectedTarget = faction === 'agrar' ? 'city' : 'temple';
+    const expectedFoundingState: StrategicSiteState = faction === 'agrar' ? 'foundingCity' : 'foundingTemple';
+    const stateAfterStart = site.state as StrategicSiteState;
+    check(`${faction} ${fromState}->founding: startFounding succeeds`, startOk);
+    check(`${faction} ${fromState}->founding: site enters ${expectedFoundingState}`, stateAfterStart === expectedFoundingState, `got ${stateAfterStart}`);
+    check(`${faction} ${fromState}->founding: 4⚡ charged immediately`, player.aura === 16, `aura=${player.aura}`);
+
+    advanceOneRound(state); // uncontested — should complete
+    const stateAfterComplete = site.state as StrategicSiteState;
+    check(`${faction} ${fromState}->${expectedTarget}: completes uncontested`, stateAfterComplete === expectedTarget, `got ${stateAfterComplete}`);
+    check(`${faction} ${fromState}->${expectedTarget}: ownerId set`, site.ownerId === player.id);
+    check(`${faction} ${fromState}->${expectedTarget}: founding cleared`, site.founding === null);
+    check(`${faction} ${fromState}->${expectedTarget}: has real HP/DEF`, site.hp > 0 && site.maxHp > 0 && site.defense > 0);
+  }
+}
+
+// ── §8: interruption conditions ──
+console.log('\n=== Founding interruption (§8) ===');
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  founder.hp = 0; // killed between the two endTurns
+  advanceOneRound(state);
+  check('founder killed -> founding fails', site.state === 'neutral', `got ${site.state}`);
+}
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  founder.pos = { q: founder.pos.q + 50, r: founder.pos.r + 50 }; // walked off the site
+  advanceOneRound(state);
+  check('founder leaves the site -> founding fails', site.state === 'neutral', `got ${site.state}`);
+}
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  const enemy = founderOf(state, 1);
+  enemy.pos = { ...site.pos }; // stands ON the site
+  advanceOneRound(state);
+  check('enemy occupies the site -> founding fails', site.state === 'neutral', `got ${site.state}`);
+}
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  const enemy = founderOf(state, 1);
+  enemy.pos = { ...hexNeighbors(site.pos)[0]! }; // adjacent, not on it
+  advanceOneRound(state);
+  check('enemy adjacent at completion -> founding fails', site.state === 'neutral', `got ${site.state}`);
+}
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  advanceOneRound(state);
+  check('uncontested -> founding succeeds', site.state === 'city', `got ${site.state}`);
+}
+{
+  const state = setup();
+  const player = state.players[0]!;
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  const auraAfterCharge = player.aura; // 16 — the 4⚡ establish cost, already spent
+  founder.hp = 0;
+  advanceOneRound(state); // also grants one normal turn-start income tick (Capital only) — not a refund
+  const expectedAura = auraAfterCharge + INTERIM_STRUCTURE_INCOME;
+  check('failed founding does NOT refund the 4⚡ (only normal turn income is added)', player.aura === expectedAura, `aura=${player.aura} expected=${expectedAura}`);
+}
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  site.state = 'neutral';
+  startFounding(state, founder.id);
+  founder.hp = 0;
+  advanceOneRound(state);
+  check('failed founding on a NEUTRAL site returns to NEUTRAL', site.state === 'neutral', `got ${site.state}`);
+}
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  site.state = 'ruins'; site.hp = 0; site.maxHp = 0; site.defense = 0;
+  startFounding(state, founder.id);
+  founder.hp = 0;
+  advanceOneRound(state);
+  check('failed founding on a RUINED site returns to RUINS', site.state === 'ruins', `got ${site.state}`);
+}
+
+// ── Ownership / founder restrictions ──
+console.log('\n=== Ownership (§7) ===');
+{
+  // Standing on a neutral site (without founding) never auto-captures it.
+  const state = setup();
+  const site = state.strategicSites[0]!;
+  const warrior = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const approach = hexNeighbors(site.pos)[0]!;
+  warrior.pos = approach;
+  warrior.hasMoved = false; warrior.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  selectUnit(state, warrior.id);
+  const moved = moveUnit(state, site.pos);
+  check('a non-founder can walk onto a neutral site', moved.moved === true || state.moveHexes.length === 0, 'move result');
+  check('walking onto a site never auto-changes its owner', site.ownerId === null && site.state === 'neutral');
+}
+{
+  const state = setup();
+  const site = state.strategicSites[0]!;
+  const horserider = state.units.find(u => u.playerId === 0)!; // any non-founder
+  horserider.pos = { ...site.pos };
+  horserider.hasMoved = false; horserider.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  const check1 = horserider.type === 'founder' ? null : canStartFounding(state, horserider);
+  check('a non-Founder unit cannot found (e.g. warrior/horserider)', check1 === null, `type=${horserider.type}`);
+}
+{
+  const state = setup();
+  const { founder } = primeFounding(state, 0);
+  const agrarCheck = canStartFounding(state, founder);
+  check('Agrar founder targets City, never Temple', agrarCheck?.targetState === 'city', `got ${agrarCheck?.targetState}`);
+}
+{
+  const state = setup();
+  const { founder } = primeFounding(state, 1);
+  const templeCheck = canStartFounding(state, founder);
+  check('Temple founder targets Temple, never City', templeCheck?.targetState === 'temple', `got ${templeCheck?.targetState}`);
+}
+
+// ── Capital combat + victory (§4-5, §11) ──
+console.log('\n=== Capital combat + victory (§4-5, §11) ===');
+{
+  const state = setup();
+  const attacker = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const defCapital = getPlayerCapital(state, 1)!;
+  attacker.pos = { ...hexNeighbors(defCapital.pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  selectUnit(state, attacker.id);
+  const beforeHp = defCapital.hp;
+  const beforeAttackerHp = attacker.hp;
+  const result = attackStructure(state, defCapital.pos);
+  check('attackStructure succeeds against an enemy Capital in range', result !== null);
+  check('attack reduces Capital HP', !!result && defCapital.hp < beforeHp, `hp ${beforeHp}->${defCapital.hp}`);
+  check('DEF applies (damage < raw attack)', !!result && result.damageDealt <= attacker.stats.attack, `dmg=${result?.damageDealt}`);
+  check('Capital does not revenge — attacker takes no damage', attacker.hp === beforeAttackerHp, `attacker hp ${beforeAttackerHp}->${attacker.hp}`);
+  check('Capital ownership never changes from combat', defCapital.playerId === 1);
+  check('attacker does not step onto the Capital tile', !hexEqual(attacker.pos, defCapital.pos));
+}
+{
+  // HP > 0 -> game continues.
+  const state = setup();
+  const attacker = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const defCapital = getPlayerCapital(state, 1)!;
+  attacker.pos = { ...hexNeighbors(defCapital.pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  selectUnit(state, attacker.id);
+  attackStructure(state, defCapital.pos);
+  check('Capital HP > 0 -> match continues', state.phase === 'playing', `hp=${defCapital.hp} phase=${state.phase}`);
+}
+{
+  // HP <= 0 -> immediate victory, and the Capital is never Ruins.
+  const state = setup();
+  const attacker = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const defCapital = getPlayerCapital(state, 1)!;
+  defCapital.hp = 1; // one hit from killing
+  attacker.pos = { ...hexNeighbors(defCapital.pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  selectUnit(state, attacker.id);
+  const result = attackStructure(state, defCapital.pos);
+  check('Capital HP <= 0 -> immediate game over', state.phase === 'gameOver', `phase=${state.phase}`);
+  check('the destroyer wins', state.winner?.id === 0, `winner=${state.winner?.id}`);
+  check('attackStructure reports gameOver:true', !!result && result.gameOver === true);
+  check('Capital HP clamped at 0, never negative', defCapital.hp === 0, `hp=${defCapital.hp}`);
+  check('Capital is never Ruins — it has no "state" field at all (structural)', !('state' in defCapital));
+}
+
+// ── City/Temple destruction -> Ruins ──
+console.log('\n=== City/Temple destruction (§11) ===');
+{
+  const state = setup();
+  const { site, founder } = primeFounding(state, 0);
+  startFounding(state, founder.id);
+  advanceOneRound(state); // completes -> city, owned by P0
+  const attacker = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  attacker.pos = { ...hexNeighbors(site.pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  selectUnit(state, attacker.id);
+  // Hammer it down (deterministic combat — a fixed number of hits always finishes it).
+  for (let i = 0; i < 30 && site.state === 'city'; i++) {
+    attacker.hasMoved = false; attacker.hasAttacked = false;
+    selectUnit(state, attacker.id);
+    attackStructure(state, site.pos);
+  }
+  check('a City reduced to 0 HP becomes Ruins', site.state === 'ruins', `got ${site.state}`);
+  check('Ruins has no owner', site.ownerId === null);
+  check('game is NOT over from a City/Temple falling (only Capital ends it)', state.phase === 'playing');
+}
+
+// ── Legacy removal ──
+console.log('\n=== Legacy removal ===');
+{
+  const state = setup();
+  for (let i = 0; i < state.strategicSites.length; i++) {
+    const { founder } = primeFounding(state, 0, i);
+    startFounding(state, founder.id);
+    advanceOneRound(state);
+    // re-fetch founder each loop since primeFounding always grabs the same unit
+  }
+  const allOwned = state.strategicSites.every(s => s.ownerId === 0);
+  check('owning every neutral site does NOT end the game', state.phase === 'playing', `allOwned=${allOwned} phase=${state.phase}`);
+}
+{
+  const state = setup();
+  // No GameState.temples field exists at all any more — enforced at compile
+  // time (this file wouldn't build if it did). Sanity-check the replacement
+  // shape directly.
+  check('GameState has strategicSites + capitals, not temples', Array.isArray(state.strategicSites) && Array.isArray(state.capitals) && !('temples' in state));
+}
+
+console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);
+process.exit(failures === 0 ? 0 : 1);

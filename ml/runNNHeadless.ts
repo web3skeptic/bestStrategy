@@ -4,7 +4,7 @@
 import { GameState } from '../src/types';
 import { legalMicros, applyMicro, cloneState, reset, isAlive } from './gameEnv';
 import { runHardAITurn } from '../src/ai';
-import { endTurn, getPopulationCap, getPopulationCount } from '../src/game';
+import { endTurn, getPopulationCap, getPopulationCount, getOwnedStructures } from '../src/game';
 import { featurize } from './features';
 import { loadNet } from './mlpIO';
 
@@ -15,12 +15,13 @@ const net = loadNet(path);
 
 function summary(s: GameState, pid: number): string {
   const u = s.units.filter(x => x.hp > 0 && x.playerId === pid);
-  const t = s.temples.filter(x => x.ownerId === pid);
+  const t = getOwnedStructures(s, pid);
+  const capitalHp = s.capitals.find(c => c.playerId === pid)?.hp ?? 0;
   const tech = s.playerTech[pid]!.researched.size;
   const byType: Record<string, number> = {};
   for (const x of u) byType[x.type] = (byType[x.type] ?? 0) + 1;
   const comp = Object.entries(byType).map(([k, v]) => `${v}${k.slice(0, 3)}`).join(',');
-  return `aura=${s.players[pid]!.aura} units=${u.length}(${comp}) temples=${t.length}[lv ${t.map(x => x.level).join('/')}] pop=${getPopulationCount(s, pid)}/${getPopulationCap(s, pid)} tech=${tech}`;
+  return `aura=${s.players[pid]!.aura} units=${u.length}(${comp}) structures=${t.length} capitalHp=${capitalHp} pop=${getPopulationCount(s, pid)}/${getPopulationCap(s, pid)} tech=${tech}`;
 }
 
 // NN turn with per-action logging.
@@ -44,9 +45,9 @@ function nnTurn(s: GameState): string[] {
     const p = m.params as Record<string, unknown>;
     acts.push(m.action === 'recruit' ? `recruit ${p.unitType}`
       : m.action === 'research' ? `research ${p.techId}`
-        : m.action === 'upgrade-temple' ? `upgrade-temple`
-          : m.action === 'build-teleport' ? 'build-teleport'
-            : m.action === 'capture' ? 'capture'
+        : m.action === 'build-teleport' ? 'build-teleport'
+          : m.action === 'found' ? 'found'
+            : m.action === 'attack-structure' ? 'attack-structure'
               : m.action);
   }
   return acts;

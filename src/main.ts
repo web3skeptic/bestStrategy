@@ -1,18 +1,23 @@
-import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
+import { GameState, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
+import { SITE_ESTABLISH_COST } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
   createGameState,
   getCurrentPlayer,
   getUnitAt,
-  getTempleAt,
+  getStrategicSiteAt,
   selectUnit,
-  selectTemple,
+  selectSite,
   deselectAll,
   moveUnit,
   attackUnit,
-  canCaptureTemple,
-  captureTemple,
+  canStartFounding,
+  startFounding,
+  attackStructure,
+  getStructureAt,
+  getOwnedStructures,
+  getPlayerCapital,
   canDestroyUnit,
   destroyUnit,
   spawnUnit,
@@ -24,13 +29,12 @@ import {
   getCurrentPlayerVisible,
   getPlayerVisible,
   canAfford,
-  upgradeTemple,
-  canUpgradeTemple,
   getPopulationCap,
   getPopulationCount,
   HEALER_HEAL_AMOUNT,
   DAMAGE_BOOST_AMOUNT,
   RANGE_BOOST_AMOUNT,
+  INTERIM_STRUCTURE_INCOME,
   getUnlockedUnits,
   canResearch,
   researchTech,
@@ -129,13 +133,13 @@ renderer.init(state.mapRadius);
 (window as any).__tinted = () => renderer.tintedUnitCount();
 (window as any).__sel = () => ({
   mode: state.selectionMode,
-  templeId: state.selectedTempleId,
+  siteId: state.selectedSiteId,
   unitId: state.selectedUnitId,
 });
 (window as any).__own = () => {
   const myId = state.players[myPlayerSlot]?.id;
   return {
-    temples: state.temples.filter(t => t.ownerId === myId).map(t => ({ id: t.id, ...renderer.projectHex(t.pos) })),
+    structures: getOwnedStructures(state, myId ?? -1).map(s => ({ id: s.id, ...renderer.projectHex(s.pos) })),
     units: state.units.filter(u => u.playerId === myId).map(u => ({ id: u.id, ...renderer.projectHex(u.pos) })),
   };
 };
@@ -144,7 +148,7 @@ renderer.init(state.mapRadius);
 renderer.setHudButtons([
   { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
   { id: 'research', label: 'Research', icon: 'flask' },
-  { id: 'temple', label: 'Level Up Temple', icon: 'temple', price: true },
+  { id: 'found', label: 'Found', icon: 'temple', price: true },
   // Contextual: shown only when a living own unit is selected on your turn. The
   // 'price' strip doubles as the two-tap "Sure?" confirm label.
   { id: 'destroy', label: 'Destroy', icon: 'skull', price: true },
@@ -226,39 +230,38 @@ function showToast(msg: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): v
   }, 3500);
 }
 
-// Temple ownership snapshot, diffed each render() so a capture (which can happen
-// silently on auto-capture, on any player's turn, locally or via a server state
-// update) always raises a toast from the local viewer's perspective.
-let prevTempleOwners = new Map<string, number | null>();
-function snapshotTempleOwners(): void {
-  prevTempleOwners = new Map(state.temples.map(t => [t.id, t.ownerId]));
+// Strategic-site state snapshot, diffed each render() so founding completion/
+// failure/destruction (which can happen silently — resolved at the start of
+// the founding player's round, or via combat, on any player's turn, locally
+// or via a server state update) always raises a toast from the local
+// viewer's perspective. Replaces the old instant-capture toast (§7-11).
+let prevSiteStates = new Map<string, string>();
+function snapshotSiteStates(): void {
+  prevSiteStates = new Map(state.strategicSites.map(s => [s.id, s.state]));
 }
 function checkTempleCaptureToasts(): void {
-  // Treat a changed temple set (new game / first render) as a silent (re)init.
-  const sameBoard = prevTempleOwners.size === state.temples.length
-    && state.temples.every(t => prevTempleOwners.has(t.id));
-  if (!sameBoard) { snapshotTempleOwners(); return; }
+  // Treat a changed site set (new game / first render) as a silent (re)init.
+  const sameBoard = prevSiteStates.size === state.strategicSites.length
+    && state.strategicSites.every(s => prevSiteStates.has(s.id));
+  if (!sameBoard) { snapshotSiteStates(); return; }
 
   const viewer = viewerPlayerSlot();
   const nameOf = (id: number | null): string =>
     id === null ? 'Neutral' : (state.players[id]?.name ?? `Player ${id + 1}`);
 
-  for (const t of state.temples) {
-    const prev = prevTempleOwners.get(t.id)!;
-    if (prev === t.ownerId) continue;
-    const now = t.ownerId;
-    const wasNeutral = prev === null;
-    if (viewer !== null && now === viewer) {
-      showToast(wasNeutral ? 'You captured a neutral temple' : 'You captured a temple', 'good');
-    } else if (viewer !== null && prev === viewer) {
-      showToast(now === null ? 'Your temple was neutralized' : 'An opponent captured your temple', 'bad');
-    } else if (now === null) {
-      showToast(`${nameOf(prev)}'s temple went neutral`);
-    } else {
-      showToast(`${nameOf(now)} captured ${wasNeutral ? 'a neutral temple' : 'a temple'}`);
+  for (const s of state.strategicSites) {
+    const prev = prevSiteStates.get(s.id)!;
+    if (prev === s.state) continue;
+    if (s.state === 'city' || s.state === 'temple') {
+      const isMine = viewer !== null && s.ownerId === viewer;
+      showToast(isMine ? `You founded a ${s.state}` : `${nameOf(s.ownerId)} founded a ${s.state}`, isMine ? 'good' : undefined);
+    } else if (s.state === 'ruins' && (prev === 'city' || prev === 'temple')) {
+      showToast('A structure was reduced to Ruins');
+    } else if ((s.state === 'neutral' || s.state === 'ruins') && (prev === 'foundingCity' || prev === 'foundingTemple')) {
+      showToast('A founding attempt failed', 'bad');
     }
   }
-  snapshotTempleOwners();
+  snapshotSiteStates();
 }
 const myPlayerBadge = document.getElementById('myPlayerBadge')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
@@ -328,11 +331,11 @@ function sendOrCall(action: object, localFn: () => void): void {
 // Also nudges the server's selection so a follow-up move validates against it.
 function maybeAutoSelectSpawned(): void {
   if (!pendingSpawnSelectTempleId || !multiplayerMode || spectatorMode) { pendingSpawnSelectTempleId = null; return; }
-  const templeId = pendingSpawnSelectTempleId;
+  const structureId = pendingSpawnSelectTempleId;
   pendingSpawnSelectTempleId = null;
   if (state.currentPlayerIndex !== myPlayerSlot) return;   // not my turn anymore
-  const temple = state.temples.find(t => t.id === templeId);
-  const unit = temple ? getUnitAt(state, temple.pos) : null;
+  const structure = getOwnedStructures(state, myPlayerSlot).find(s => s.id === structureId);
+  const unit = structure ? getUnitAt(state, structure.pos) : null;
   if (unit && unit.playerId === myPlayerSlot && state.selectedUnitId !== unit.id) {
     selectUnit(state, unit.id);                                     // local: instant range
     mpClient?.sendAction({ type: 'action_select_unit', unitId: unit.id }); // keep server in sync
@@ -442,7 +445,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       multiplayerMode = true;
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
-      snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+      snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
@@ -515,7 +518,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       multiplayerMode = true;
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
-      snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+      snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
@@ -730,7 +733,7 @@ function restoreGame(): void {
   buildingTeleport = null;
   handoffPending = false;
   state = deserialize(save.state);
-  snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+  snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
@@ -771,7 +774,7 @@ function startLocalGame(kinds: ControllerKind[]): void {
     color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
   }));
   state = createGameState(players);
-  snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+  snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
@@ -786,8 +789,8 @@ function startLocalGame(kinds: ControllerKind[]): void {
   // zoom-in, instead of the default board-center framing.
   const humanSeat = controllers.findIndex(k => k === 'human');
   if (humanSeat >= 0) {
-    const homeTemple = state.temples.find(t => t.id === state.players[humanSeat]?.startTempleId);
-    if (homeTemple) renderer.focusOnHex(homeTemple.pos);
+    const homeCapital = getPlayerCapital(state, humanSeat);
+    if (homeCapital) renderer.focusOnHex(homeCapital.pos);
   }
   render();
   maybeRunAITurn();     // if an AI won the coin flip, let it take its first turn
@@ -984,10 +987,13 @@ function setTurnTitle(text: string, color: string): void {
     `linear-gradient(180deg, #ffe0bd 0%, ${color} 55%, ${color} 100%)`;
 }
 
-// True while a player still has at least one unit or temple.
+// True while a player's Capital still stands (§11 — permanent until
+// destroyed, and destruction already ends the match), so this is always true
+// pre-gameOver. Kept as a real check rather than a hardcoded `true` in case a
+// future mechanic changes that.
 function isPlayerAlive(p: Player): boolean {
-  return state.units.some(u => u.playerId === p.id && u.hp > 0)
-    || state.temples.some(t => t.ownerId === p.id);
+  const capital = getPlayerCapital(state, p.id);
+  return !!capital && capital.hp > 0;
 }
 
 // Dev/testing switch: reveal EVERY player's economy in the HUD (aura · pop/cap).
@@ -1090,20 +1096,20 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
-  // The 3rd slab levels up the selected temple. It is INVISIBLE unless one of my
-  // own temples is selected and can still be levelled up; when shown it displays
-  // the aura price (gold). Enabled/clickable only when I can afford it, greyed
-  // (but still visible, so the price stays readable) when I can't.
-  const selTempleId = state.selectionMode === 'temple' ? state.selectedTempleId : null;
-  const selTemple = selTempleId ? state.temples.find(t => t.id === selTempleId) : null;
-  const myTemple = !!selTemple && myTurn && selTemple.ownerId === getCurrentPlayer(state).id;
-  const upgradeCost = myTemple ? templeUpgradeCost(selTemple!.level) : null; // null when maxed
-  if (upgradeCost !== null) {
-    renderer.updateHudButton('temple', canUpgradeTemple(state, selTempleId!) !== null); // affordable?
-    renderer.setHudButtonPrice('temple', `⚡${upgradeCost}`);
-    renderer.setHudButtonVisible('temple', true);
+  // The 3rd slab starts founding for the selected unit (a Builder/Acolyte
+  // standing on a neutral/ruined site — §7-10, replaces the old temple-level
+  // slab, there's no more leveling). INVISIBLE unless a unit that can found
+  // right now is selected; when shown it displays the establish cost (gold).
+  const selUnitForFound = state.selectionMode === 'unit' && state.selectedUnitId
+    ? state.units.find(u => u.id === state.selectedUnitId)
+    : null;
+  const foundCheck = selUnitForFound && myTurn ? canStartFounding(state, selUnitForFound) : null;
+  if (foundCheck) {
+    renderer.updateHudButton('found', true);
+    renderer.setHudButtonPrice('found', `⚡${SITE_ESTABLISH_COST}`);
+    renderer.setHudButtonVisible('found', true);
   } else {
-    renderer.setHudButtonVisible('temple', false); // no temple selected (or maxed / not mine)
+    renderer.setHudButtonVisible('found', false); // no founder selected (or can't found here)
   }
 
   // In spectator mode, hide all action controls
@@ -1141,11 +1147,6 @@ function updateUI(): void {
     restartBtn.style.display = 'none';
   }
 
-  // The selected temple (if any) — looked up once and reused below.
-  const selectedTemple = state.selectionMode === 'temple' && state.selectedTempleId
-    ? state.temples.find(t => t.id === state.selectedTempleId)
-    : undefined;
-
   // Selected unit info
   if (state.selectionMode === 'unit' && state.selectedUnitId) {
     const unit = state.units.find(u => u.id === state.selectedUnitId);
@@ -1171,10 +1172,10 @@ function updateUI(): void {
       if (unit.type === 'rangeBooster') supportNote = ` | +${RANGE_BOOST_AMOUNT}RNG (r1)`;
       unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${supportNote}`;
 
-      const capturable = canCaptureTemple(state, unit);
-      if (capturable) {
+      const foundable = canStartFounding(state, unit);
+      if (foundable) {
         captureBtn.style.display = 'block';
-        captureBtn.textContent = `⚔ Capture Temple`;
+        captureBtn.textContent = `⚒ Found ${foundable.targetState === 'city' ? 'City' : 'Temple'} (⚡${SITE_ESTABLISH_COST})`;
       } else {
         captureBtn.style.display = 'none';
       }
@@ -1191,36 +1192,32 @@ function updateUI(): void {
 
       buildTeleportBtn.style.display = 'none';
     }
-  } else if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    const temple = selectedTemple;
-    if (temple) {
-      const unitOnTemple = getUnitAt(state, temple.pos);
-      const income = temple.level * TEMPLE_AURA_PER_LEVEL;
-      // Count existing portals for this temple
-      const existingPortals = state.teleportBuildings.filter(t => t.templeId === temple.id).length;
+  } else if (state.selectionMode === 'site' && state.selectedSiteId) {
+    const siteId = state.selectedSiteId;
+    const capital = state.capitals.find(c => c.id === siteId);
+    const site = capital ? undefined : state.strategicSites.find(s => s.id === siteId);
+    const structurePos = capital?.pos ?? site?.pos;
+    if (structurePos) {
+      const unitOnStructure = getUnitAt(state, structurePos);
+      const label = capital
+        ? `Capital HP ${capital.hp}/${capital.maxHp}`
+        : `${site!.state === 'city' ? 'City' : 'Temple'} HP ${site!.hp}/${site!.maxHp}`;
+      const existingPortals = state.teleportBuildings.filter(t => t.templeId === siteId).length;
       const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
-      // Temple level-up is now driven by the 3rd HUD slab button. Surface the
-      // cost / max-level state here so the player still sees what it takes.
-      const upgradeCost = templeUpgradeCost(temple.level);
-      const upgradeNote = upgradeCost === null
-        ? ` | ⛩ Max level`
-        : ` | ⛩ Level up: ⚡${upgradeCost}`;
-      if (unitOnTemple) {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied — clear tile to spawn) — ⚡${income}/turn${portalNote}${upgradeNote}`;
-      } else {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} — ⚡${income}/turn — Spawn unit${portalNote}${upgradeNote}`;
-      }
+      unitInfoEl.textContent = unitOnStructure
+        ? `${label} (occupied — clear tile to spawn)${portalNote}`
+        : `${label} — Spawn unit${portalNote}`;
 
       // Build teleport button
-      if (canBuildTeleportPair(state, temple.id)) {
+      if (canBuildTeleportPair(state, siteId)) {
         buildTeleportBtn.style.display = 'block';
-        buildTeleportBtn.classList.toggle('active', buildingTeleport?.templeId === temple.id);
-        buildTeleportBtn.textContent = buildingTeleport?.templeId === temple.id
-          ? (buildingTeleport.phase === 1 ? '⬡ Pick hex near this temple…' : '⬡ Pick hex near another temple…')
+        buildTeleportBtn.classList.toggle('active', buildingTeleport?.templeId === siteId);
+        buildTeleportBtn.textContent = buildingTeleport?.templeId === siteId
+          ? (buildingTeleport.phase === 1 ? '⬡ Pick hex near this structure…' : '⬡ Pick hex near another structure…')
           : `⬡ Build Portal Pair (${TELEPORT_BUILD_COST}⚡)`;
       } else {
         buildTeleportBtn.style.display = 'none';
-        if (buildingTeleport?.templeId === temple.id) clearBuildTeleport();
+        if (buildingTeleport?.templeId === siteId) clearBuildTeleport();
       }
     }
     captureBtn.style.display = 'none';
@@ -1238,7 +1235,7 @@ function updateUI(): void {
   // Spawn bar — shown whenever an owned temple is selected. When a unit occupies
   // the temple tile the cards are greyed/disabled (spawn is blocked until the
   // tile is cleared) rather than hidden, so the player sees why they can't spawn.
-  if (state.selectionMode === 'temple' && state.selectedTempleId) {
+  if (state.selectionMode === 'site' && state.selectedSiteId) {
     setSpawnBarVisible(true);
     updateUnitCards();
   } else {
@@ -1249,20 +1246,17 @@ function updateUI(): void {
   updateMyPlayerBadge();
 }
 
-// True once the LOCAL online player has been eliminated (no units, no temples)
-// while the game is still running. In an N-player (>2) online game the turn
-// rotation skips this player forever, so `currentPlayerIndex` never equals their
-// slot again — without this guard they'd be stuck behind the opponent-turn
-// curtain indefinitely. Instead they should watch the rest of the game like a
-// spectator. (2-player games can't hit this: losing all units/temples there ends
-// the game, so phase is already 'gameOver'.)
+// §11 — a player's Capital is permanent and can't be captured, only
+// destroyed, and destruction already ends the match (checkWinCondition). So
+// there's no more "eliminated but game continues" state to detect here —
+// this is now always false pre-gameOver. Kept as a real check (rather than a
+// hardcoded false) in case a future mechanic changes that.
 function localPlayerEliminated(): boolean {
   if (!multiplayerMode || spectatorMode || !gameStarted || state.phase !== 'playing') return false;
   const me = state.players[myPlayerSlot];
   if (!me) return false;
-  const hasUnits = state.units.some(u => u.playerId === me.id && u.hp > 0);
-  const hasTemples = state.temples.some(t => t.ownerId === me.id);
-  return !hasUnits && !hasTemples;
+  const capital = getPlayerCapital(state, me.id);
+  return !capital || capital.hp <= 0;
 }
 
 // True while the active turn belongs to someone other than the local human:
@@ -1328,8 +1322,7 @@ function updateMyPlayerBadge(): void {
 
 // ── Stat pills (aura income + population) ──
 function updateStatPills(player: Player): void {
-  const ownedTemples = state.temples.filter(t => t.ownerId === player.id);
-  const income = ownedTemples.reduce((sum, t) => sum + t.level * TEMPLE_AURA_PER_LEVEL, 0);
+  const income = getOwnedStructures(state, player.id).length * INTERIM_STRUCTURE_INCOME;
   auraInfoEl.innerHTML =
     `<span class="pill-icon gem-icon"></span>` +
     `<span class="pill-value">${player.aura}</span>` +
@@ -1432,12 +1425,12 @@ window.addEventListener('resize', () => {
 function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
-  // A unit standing on the selected temple's tile blocks spawning (can't stack
-  // onto an occupied spawn tile) — grey every card while occupied.
-  const selTemple = state.selectionMode === 'temple' && state.selectedTempleId
-    ? state.temples.find(t => t.id === state.selectedTempleId)
+  // A unit standing on the selected structure's tile blocks spawning (can't
+  // stack onto an occupied spawn tile) — grey every card while occupied.
+  const selStructure = state.selectionMode === 'site' && state.selectedSiteId
+    ? getOwnedStructures(state, player.id).find(s => s.id === state.selectedSiteId)
     : undefined;
-  const templeOccupied = selTemple ? !!getUnitAt(state, selTemple.pos) : false;
+  const templeOccupied = selStructure ? !!getUnitAt(state, selStructure.pos) : false;
   for (const type of UNIT_CARD_ORDER) {
     const card = unitCards.get(type)!;
     // Match the old build menu: locked units are hidden entirely.
@@ -1506,9 +1499,9 @@ function cancelBuildTeleport(): void {
 buildTeleportBtn.addEventListener('click', () => {
   if (buildingTeleport) {
     cancelBuildTeleport();
-  } else if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    if (canBuildTeleportPair(state, state.selectedTempleId)) {
-      enterBuildTeleport(state.selectedTempleId);
+  } else if (state.selectionMode === 'site' && state.selectedSiteId) {
+    if (canBuildTeleportPair(state, state.selectedSiteId)) {
+      enterBuildTeleport(state.selectedSiteId);
     }
   }
 });
@@ -1799,16 +1792,18 @@ techOverlay.addEventListener('click', (e) => {
 // ── Temple level-up (3rd HUD slab) ──
 // Upgrades the currently-selected temple — same action as the old upgrade
 // button. The slab is greyed out by updateUI() unless the upgrade is valid.
-function doUpgradeTemple(): void {
-  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
-  const templeId = state.selectedTempleId;
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple) return;
-  if (canUpgradeTemple(state, templeId) === null) return;
-  const prevLevel = temple.level;
-  sendOrCall({ type: 'action_upgrade_temple', templeId }, () => {
-    if (upgradeTemple(state, templeId)) {
-      logCombat(`Temple upgraded Lv.${prevLevel}→${temple.level}!`);
+// Start founding at the neutral/ruined site the selected unit (a Builder/
+// Acolyte) is standing on. Replaces the old temple-upgrade slab — there's no
+// more leveling (§7-10).
+function doFound(): void {
+  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
+  const unit = state.units.find(u => u.id === state.selectedUnitId);
+  if (!unit) return;
+  const check = canStartFounding(state, unit);
+  if (!check) return;
+  sendOrCall({ type: 'action', action: 'found', params: { unitId: unit.id } }, () => {
+    if (startFounding(state, unit.id)) {
+      logCombat(`Began founding a ${check.targetState} at (${unit.pos.q},${unit.pos.r})`);
     }
   });
 }
@@ -1856,6 +1851,20 @@ function handleHexClick(clientX: number, clientY: number): void {
     return;
   }
 
+  // ── Unit mode: try structure attack (Capital/City/Temple) ──
+  if (state.selectionMode === 'unit' && state.structureAttackHexes.some(h => hexEqual(h, hex))) {
+    const attackerId = state.selectedUnitId;
+    if (attackerId) renderer.faceUnitToward(attackerId, hex);
+    sendOrCall({ type: 'action', action: 'attack-structure', params: { unitId: attackerId, targetPos: hex } }, () => {
+      const result = attackStructure(state, hex);
+      if (result) {
+        logCombat(`Struck a structure! Dealt ${result.damageDealt} dmg${result.destroyed ? ' (DESTROYED!)' : ''}${result.gameOver ? ' — CAPITAL DOWN, GAME OVER!' : ''}`);
+      }
+      render();
+    });
+    return;
+  }
+
   // ── Build teleport mode: place portals (UI is always local, only final action is sent) ──
   if (buildingTeleport) {
     const bt = buildingTeleport;
@@ -1890,9 +1899,9 @@ function handleHexClick(clientX: number, clientY: number): void {
       if (movingUnit) renderer.startMoveAnimation(movingUnit.id, movingUnit.pos);
       const moveResult = moveUnit(state, hex);
       if (moveResult.moved) {
-        const temple = getTempleAt(state, hex);
-        if (temple && temple.ownerId !== currentPlayer.id) {
-          logCombat(`Moved onto temple at (${hex.q},${hex.r}) — capture next turn!`);
+        const site = getStrategicSiteAt(state, hex);
+        if (movingUnit?.type === 'founder' && site && (site.state === 'neutral' || site.state === 'ruins')) {
+          logCombat(`Moved onto a foundable site at (${hex.q},${hex.r}) — Found available!`);
         } else {
           logCombat(`Moved to (${hex.q}, ${hex.r})`);
         }
@@ -1901,21 +1910,23 @@ function handleHexClick(clientX: number, clientY: number): void {
     return;
   }
 
-  // ── Select unit or temple ──
+  // ── Select unit or structure ──
   const unit = getUnitAt(state, hex);
-  const temple = getTempleAt(state, hex);
+  const structureRef = getStructureAt(state, hex);
+  const structureId = structureRef ? (structureRef.kind === 'capital' ? structureRef.capital.id : structureRef.site.id) : undefined;
+  const structureOwner = structureRef ? (structureRef.kind === 'capital' ? structureRef.capital.playerId : structureRef.site.ownerId) : null;
   const myUnitHere = unit && unit.playerId === currentPlayer.id;
-  const myTempleHere = temple && temple.ownerId === currentPlayer.id;
+  const myStructureHere = !!structureId && structureOwner === currentPlayer.id;
 
-  // Own temple with a friendly unit standing on it: tapping toggles temple ⇄ unit
-  // so the temple's Level-Up stays reachable even while occupied. First tap
-  // surfaces the temple (Level-Up / status); tap again to control the unit.
-  if (myTempleHere && myUnitHere) {
-    const templeSelected = state.selectionMode === 'temple' && state.selectedTempleId === temple!.id;
-    if (templeSelected) {
+  // Own structure with a friendly unit standing on it: tapping toggles
+  // structure ⇄ unit so the structure's recruit tray stays reachable even
+  // while occupied. First tap surfaces the structure; tap again controls the unit.
+  if (myStructureHere && myUnitHere) {
+    const structureSelected = state.selectionMode === 'site' && state.selectedSiteId === structureId;
+    if (structureSelected) {
       sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
     } else {
-      sendOrCall({ type: 'action_select_temple', templeId: temple!.id }, () => selectTemple(state, temple!.id));
+      sendOrCall({ type: 'action_select_temple', templeId: structureId! }, () => selectSite(state, structureId!));
     }
     return;
   }
@@ -1925,8 +1936,8 @@ function handleHexClick(clientX: number, clientY: number): void {
     return;
   }
 
-  if (myTempleHere) {
-    sendOrCall({ type: 'action_select_temple', templeId: temple!.id }, () => selectTemple(state, temple!.id));
+  if (myStructureHere) {
+    sendOrCall({ type: 'action_select_temple', templeId: structureId! }, () => selectSite(state, structureId!));
     return;
   }
 
@@ -1938,25 +1949,25 @@ function handleHexClick(clientX: number, clientY: number): void {
 // ── Spawn buttons ──
 function handleSpawnBtn(type: UnitType): void {
   if (!localHasTurn()) return; // no recruiting on an opponent's turn (online)
-  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
+  if (state.selectionMode !== 'site' || !state.selectedSiteId) return;
   if (!canAfford(state, type)) return;
-  const templeId = state.selectedTempleId;
-  // Block spawning onto an occupied temple tile, with feedback.
-  const selTemple = state.temples.find(t => t.id === templeId);
-  if (selTemple && getUnitAt(state, selTemple.pos)) {
-    logCombat('Cannot spawn: a unit is standing on the temple');
+  const structureId = state.selectedSiteId;
+  // Block spawning onto an occupied structure tile, with feedback.
+  const selStructure = getOwnedStructures(state, getCurrentPlayer(state).id).find(s => s.id === structureId);
+  if (selStructure && getUnitAt(state, selStructure.pos)) {
+    logCombat('Cannot spawn: a unit is standing on the structure');
     return;
   }
-  // MP: no local mutation runs, so flag the temple for auto-select once the
+  // MP: no local mutation runs, so flag the structure for auto-select once the
   // server echoes back the spawned unit (see the state_update handler).
-  if (multiplayerMode) pendingSpawnSelectTempleId = templeId;
-  sendOrCall({ type: 'action_spawn', templeId, unitType: type }, () => {
+  if (multiplayerMode) pendingSpawnSelectTempleId = structureId;
+  sendOrCall({ type: 'action_spawn', templeId: structureId, unitType: type }, () => {
     try {
-      if (spawnUnit(state, templeId, type)) {
+      if (spawnUnit(state, structureId, type)) {
         logCombat(`Spawned ${type} for ${UNIT_COSTS[type]} aura`);
-        const temple = state.temples.find(t => t.id === templeId);
-        if (temple) {
-          const newUnit = getUnitAt(state, temple.pos);
+        const structure = getOwnedStructures(state, getCurrentPlayer(state).id).find(s => s.id === structureId);
+        if (structure) {
+          const newUnit = getUnitAt(state, structure.pos);
           if (newUnit) selectUnit(state, newUnit.id);   // show its move range at once
         }
       }
@@ -1969,19 +1980,8 @@ function handleSpawnBtn(type: UnitType): void {
 // Build the unit-card tray once; clicks are wired per-card to handleSpawnBtn.
 buildUnitCards();
 
-// ── Capture button ──
-captureBtn.addEventListener('click', () => {
-  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
-  const unit = state.units.find(u => u.id === state.selectedUnitId);
-  if (!unit) return;
-  const temple = canCaptureTemple(state, unit);
-  if (!temple) return;
-  const pos = temple.pos;
-  sendOrCall({ type: 'action_capture' }, () => {
-    captureTemple(state, unit, temple);
-    logCombat(`Captured temple at (${pos.q},${pos.r})!`);
-  });
-});
+// ── Found button (2D fallback for the 3D HUD "found" slab) ──
+captureBtn.addEventListener('click', () => doFound());
 
 
 // ── Tap-to-select ──
@@ -2022,7 +2022,7 @@ canvas.addEventListener('pointerup', (e) => {
 function handleHudClick(id: string): void {
   if (id === 'endTurn') { if (state.phase !== 'gameOver') doEndTurn(); }
   else if (id === 'research') openTechTree();
-  else if (id === 'temple') doUpgradeTemple();
+  else if (id === 'found') doFound();
   else if (id === 'destroy') doDestroyUnit();
 }
 
@@ -2163,9 +2163,9 @@ function autoSelectTemple(): void {
   if (state.phase === 'gameOver') return;
   if (isAISlot(state.currentPlayerIndex)) return;
   const me = getCurrentPlayer(state);
-  const owned = state.temples.filter(t => t.ownerId === me.id);
-  const target = owned.find(t => !getUnitAt(state, t.pos)) ?? owned[0];
-  if (target) selectTemple(state, target.id);
+  const owned = getOwnedStructures(state, me.id);
+  const target = owned.find(s => !getUnitAt(state, s.pos)) ?? owned[0];
+  if (target) selectSite(state, target.id);
 }
 
 // Schedule the AI's turn when it's the AI's move (also handles AI winning the

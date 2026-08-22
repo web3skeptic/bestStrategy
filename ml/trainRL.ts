@@ -78,7 +78,7 @@
 import { MLP } from './mlp';
 import { GameState } from '../src/types';
 import { reset, cloneState, legalMicros, applyMicro, isAlive, Micro } from './gameEnv';
-import { endTurn } from '../src/game';
+import { endTurn, getOwnedStructures } from '../src/game';
 import { featurize } from './features';
 import { actionFeatures, buildActionCtx, ACTION_DIM } from './actionFeatures';
 import { POLICY_IN, STATE_DIM } from './policy';
@@ -131,7 +131,7 @@ function softmax(logits: Float64Array): Float64Array {
   return p;
 }
 function ownedTemples(s: GameState, pid: number): number {
-  let n = 0; for (const t of s.temples) if (t.ownerId === pid) n++; return n;
+  return getOwnedStructures(s, pid).length;
 }
 
 // ── PLUGGABLE shaping potential Φ: State×pid → ℝ (A50 STEP-1 refinement) ──────
@@ -159,9 +159,9 @@ const phiEarly: PhiFn = (s, pid) => {
   const R = s.mapRadius;
   const myUnits = s.units.filter(u => u.hp > 0 && u.playerId === pid);
   const enemyUnits = s.units.filter(u => u.hp > 0 && u.playerId !== pid);
-  const myTemples = s.temples.filter(t => t.ownerId === pid);
-  const enemyTemples = s.temples.filter(t => t.ownerId !== null && t.ownerId !== pid);
-  const capturable = s.temples.filter(t => t.ownerId !== pid);
+  const myTemples = getOwnedStructures(s, pid);
+  const enemyTemples = s.players.filter(p => p.id !== pid).flatMap(p => getOwnedStructures(s, p.id));
+  const capturable = s.strategicSites.filter(t => t.ownerId !== pid);
   const myHp = myUnits.reduce((a, u) => a + u.hp, 0);
   const themHp = enemyUnits.reduce((a, u) => a + u.hp, 0);
   const targets = enemyTemples.length ? enemyTemples : capturable;

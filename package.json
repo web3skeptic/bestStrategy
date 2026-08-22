@@ -11,7 +11,8 @@
     "server:dev": "tsx watch server/server.ts",
     "test:combat": "tsx scripts/verify-combat-v3.ts",
     "test:founding-round": "tsx scripts/verify-founding-round.ts",
-    "test": "npm run test:combat && npm run test:founding-round",
+    "test:strategic-sites": "tsx scripts/verify-strategic-sites.ts",
+    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites",
     "build:root": "vite build"
   },
   "keywords": [],

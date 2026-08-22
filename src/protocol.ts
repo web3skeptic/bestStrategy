@@ -8,10 +8,10 @@ import { SerializedGameState } from './serializer';
 export type UnifiedActionName =
   | 'move'
   | 'attack'
+  | 'attack-structure'
   | 'recruit'
-  | 'capture'
+  | 'found'
   | 'destroy'
-  | 'upgrade-temple'
   | 'research'
   | 'build-teleport'
   | 'end-turn'
@@ -31,23 +31,25 @@ export type ClientMessage =
   | { type: 'list_games' }
   | { type: 'spectate';             gameId: string }
   | { type: 'action_select_unit';   unitId: string }
+  // Select an owned structure (Capital or completed City/Temple) — legacy
+  // message name, templeId is now a generic structure id.
   | { type: 'action_select_temple'; templeId: string }
   | { type: 'action_deselect' }
   | { type: 'action_move';          dest: HexCoord }
   | { type: 'action_attack';        targetPos: HexCoord }
   | { type: 'action_spawn';         templeId: string; unitType: UnitType }
-  | { type: 'action_capture' }
-  // Disband an owned unit. Carries unitId explicitly (unlike capture, which
-  // relies on server-side selection) so the remote destroys the SAME unit.
+  // Disband an owned unit. Carries unitId explicitly so the remote destroys
+  // the SAME unit.
   | { type: 'action_destroy';       unitId: string }
-  | { type: 'action_upgrade_temple'; templeId: string }
   | { type: 'action_research';      techId: TechId }
   | { type: 'action_build_teleport'; templeIdA: string; posA: HexCoord; posB: HexCoord }
   | { type: 'action_end_turn' }
   | { type: 'action_resign' }
   // Unified action shape — accepted by the server alongside the legacy
   // `action_*` family. Bots / agents should prefer this since it uses the
-  // same vocabulary as the REST headless API.
+  // same vocabulary as the REST headless API. Structure attacks, founding and
+  // faction choice are ONLY available through this unified shape — no legacy
+  // action_* message for those (added post-redesign).
   | { type: 'action';               action: UnifiedActionName; params?: Record<string, unknown> }
   // Read-only queries for agent ergonomics.
   | { type: 'request_legal_moves';  unitId?: string }   // omit unitId → all units

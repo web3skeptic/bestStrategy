@@ -18,13 +18,19 @@
 //
 // Usage: npx tsx ml/g3LossBuckets.ts --lo 0 --hi 50 --out /tmp/g3buckets/shard.jsonl
 //   (--lo/--hi are PAIR indices, 0..50; each pair = 2 games, matching evalPool)
+// PHASE 3: OBSOLETE. This tool analyzed the old "capture a temple" mechanic
+// (canCaptureTemple, temple levels), which no longer exists (replaced by
+// founding + Capital-HP combat — see src/game.ts §5-11). classify() is now a
+// permanent no-op; left compiling per the project's "don't delete
+// reusable/historical code" policy, but this script needs a full redesign
+// around founding/structure-attack opportunities to be meaningful again.
 import { runGame } from './play';
 import { hardTurn } from './play';
 import { makePolicySearchBot } from './searchPolicy';
 import { MLP } from './mlp';
 import { featurize } from './features';
 import { heuristicLeaf } from './heuristicLeaf';
-import { canCaptureTemple } from '../src/game';
+import { getOwnedStructures } from '../src/game';
 import { GameState } from '../src/types';
 import { TurnFn } from './play';
 import * as fs from 'fs';
@@ -42,20 +48,8 @@ const SEED_BASE = 800000;
 interface CapOpp { klass: string; level: number; templeId: string }
 interface TurnRow { turn: number; myBefore: number; myAfter: number; total: number; capOpps: CapOpp[] }
 
-function classify(s: GameState, pid: number, capOpps: CapOpp[]): void {
-  const total = s.temples.length;
-  const myBefore = s.temples.filter(t => t.ownerId === pid).length;
-  for (const u of s.units) {
-    if (u.hp <= 0 || u.playerId !== pid) continue;
-    const t = canCaptureTemple(s, u);
-    if (!t) continue;
-    const winsGame = myBefore + 1 === total;
-    const prevOwner = t.ownerId;
-    const prevCount = prevOwner === null ? 0 : s.temples.filter(x => x.ownerId === prevOwner).length;
-    const prevLast = prevOwner !== null && prevCount === 1;
-    const klass = winsGame ? 'PIVOTAL-WIN' : prevLast ? 'PIVOTAL-ELIM' : t.level >= 2 ? 'HIGH' : 'MINOR';
-    capOpps.push({ klass, level: t.level, templeId: t.id });
-  }
+function classify(_s: GameState, _pid: number, _capOpps: CapOpp[]): void {
+  // no-op — see OBSOLETE note above.
 }
 
 function makeInstrumentedBot(botId: number, rows: TurnRow[]): TurnFn {
@@ -65,13 +59,13 @@ function makeInstrumentedBot(botId: number, rows: TurnRow[]): TurnFn {
   const real = makePolicySearchBot(pnet, vnet, hardTurn, { K, temp: TEMP, leaf, depth: DEPTH });
   return (s) => {
     const pid = s.currentPlayerIndex; // == botId
-    const total = s.temples.length;
-    const myBefore = s.temples.filter(t => t.ownerId === pid).length;
+    const total = s.capitals.length + s.strategicSites.length;
+    const myBefore = getOwnedStructures(s, pid).length;
     const capOpps: CapOpp[] = [];
     classify(s, pid, capOpps);
     const turn = s.turnNumber;
     real(s); // consume RNG exactly as the gate did (Object.assign mutates s in place)
-    const myAfter = s.temples.filter(t => t.ownerId === pid).length;
+    const myAfter = getOwnedStructures(s, pid).length;
     rows.push({ turn, myBefore, myAfter, total, capOpps });
   };
 }

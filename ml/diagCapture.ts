@@ -59,7 +59,10 @@ function topK(logits: Float64Array, k: number): number[] {
     const gt = micro.action;
     const pt = perType.get(gt) ?? { top1: 0, top3: 0, n: 0 };
     pt.top1 += hit1; pt.top3 += hit3; pt.n += 1; perType.set(gt, pt);
-    if (gt === 'capture') {
+    // 'capture' no longer exists as an action (phase 3 — replaced by 'found');
+    // this diagnostic's original subject is gone, kept compiling against the
+    // closest analog rather than deleted.
+    if (gt === 'found') {
       const picked = cands[top[0]!]!.action;
       captureConfusion.set(picked, (captureConfusion.get(picked) ?? 0) + 1);
     }

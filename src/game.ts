@@ -1,12 +1,11 @@
 import {
-  GameState, Unit, UnitStats, UnitType, Player, HexCoord, Temple,
+  GameState, Unit, UnitStats, UnitType, Player, HexCoord,
+  StrategicSite, StrategicSiteState, FoundingProgress, Capital,
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
-  TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, templeUpgradeCost,
-  templeEconomyLevel,
   SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
   TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
-  PLAYER_COLORS, mapRadiusForPlayers, templeCountForPlayers,
+  PLAYER_COLORS, mapRadiusForPlayers, neutralSiteCountForPlayers,
   FactionId,
 } from './types';
 import {
@@ -14,7 +13,7 @@ import {
   hexKey, generateHexMap, DIRECTIONS, OPPOSING_PAIRS, hexLineDraw,
 } from './hex';
 import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
-import { FACTION_UNITS, FactionUnitDef } from './factions';
+import { FACTION_UNITS, FactionUnitDef, STRUCTURES, SITE_ESTABLISH_COST } from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
 // (see ./combat.ts). The faction-specific v0.2 roster will assign its own
@@ -200,20 +199,20 @@ function rebuildUnitStats(unit: Unit, tech: PlayerTech, faction?: FactionId | nu
 // ── Factories ──
 
 let unitIdCounter = 0;
-let templeIdCounter = 0;
+let siteIdCounter = 0;
 
 // Called by server after deserializing saved state to prevent ID collisions
-export function resetCounters(unitMax: number, templeMax: number, tpMax: number): void {
+export function resetCounters(unitMax: number, siteMax: number, tpMax: number): void {
   unitIdCounter = unitMax;
-  templeIdCounter = templeMax;
+  siteIdCounter = siteMax;
   teleportIdCounter = tpMax;
 }
 
 // Additive: snapshot the global ID counters. Used only by the ML fidelity test
-// (ml/bcRecord.ts) to replay a turn producing the SAME unit/temple/teleport ids
+// (ml/bcRecord.ts) to replay a turn producing the SAME unit/site/teleport ids
 // as the original. No behavior change; nothing in the game paths reads this.
 export function getCounters(): [number, number, number] {
-  return [unitIdCounter, templeIdCounter, teleportIdCounter];
+  return [unitIdCounter, siteIdCounter, teleportIdCounter];
 }
 
 function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech, faction?: FactionId | null): Unit {
@@ -228,16 +227,33 @@ function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: Play
     pos: { ...pos },
     hasMoved: false,
     hasAttacked: false,
-    hasCaptured: false,
   };
 }
 
-function createTemple(pos: HexCoord, ownerId: number | null): Temple {
+// A freshly-placed strategic site is always neutral — nobody owns it and no
+// founding is in progress (§7-9). Combat stats are 0 until it's actually
+// founded into a City/Temple (see completeFounding / isAttackableStructure).
+function createStrategicSite(pos: HexCoord): StrategicSite {
   return {
-    id: `temple_${templeIdCounter++}`,
+    id: `site_${siteIdCounter++}`,
     pos: { ...pos },
-    ownerId,
-    level: 1,
+    state: 'neutral',
+    ownerId: null,
+    founding: null,
+    hp: 0, maxHp: 0, defense: 0,
+  };
+}
+
+// One Capital per player, permanent ownership, deterministic id (never
+// recreated/rebuilt, so no shared counter needed — see §11).
+function createCapital(playerId: number, pos: HexCoord): Capital {
+  return {
+    id: `capital_${playerId}`,
+    playerId,
+    pos: { ...pos },
+    hp: STRUCTURES.capital.hp,
+    maxHp: STRUCTURES.capital.hp,
+    defense: STRUCTURES.capital.defense,
   };
 }
 
@@ -300,14 +316,31 @@ function revealForPlayer(state: GameState, playerId: number, pos: HexCoord, visi
   }
 }
 
+// Capital + owned completed (city/temple) strategic sites — the "owned
+// structures" a player gets vision/recruiting/income from. Neutral, ruined
+// or still-founding sites are NOT included (§10 — a founding site provides
+// nothing until it completes).
+export function getOwnedStructures(state: GameState, playerId: number): { id: string; pos: HexCoord }[] {
+  const out: { id: string; pos: HexCoord }[] = [];
+  const capital = state.capitals.find(c => c.playerId === playerId);
+  if (capital) out.push(capital);
+  for (const site of state.strategicSites) {
+    if ((site.state === 'city' || site.state === 'temple') && site.ownerId === playerId) out.push(site);
+  }
+  return out;
+}
+
+export function getPlayerCapital(state: GameState, playerId: number): Capital | undefined {
+  return state.capitals.find(c => c.playerId === playerId);
+}
+
 export function updateVisibility(state: GameState, playerId: number): void {
   const units = state.units.filter(u => u.hp > 0 && u.playerId === playerId);
   for (const unit of units) {
     revealForPlayer(state, playerId, unit.pos, unit.stats.vision);
   }
-  const temples = state.temples.filter(t => t.ownerId === playerId);
-  for (const temple of temples) {
-    revealForPlayer(state, playerId, temple.pos, 2);
+  for (const structure of getOwnedStructures(state, playerId)) {
+    revealForPlayer(state, playerId, structure.pos, 2);
   }
 }
 
@@ -318,9 +351,8 @@ export function isForestUnitRevealed(state: GameState, unitPos: HexCoord, observ
   for (const f of friendlies) {
     if (hexDistance(f.pos, unitPos) <= 1) return true;
   }
-  const ownedTemples = state.temples.filter(t => t.ownerId === observerPlayerId);
-  for (const t of ownedTemples) {
-    if (hexDistance(t.pos, unitPos) <= 1) return true;
+  for (const structure of getOwnedStructures(state, observerPlayerId)) {
+    if (hexDistance(structure.pos, unitPos) <= 1) return true;
   }
   return false;
 }
@@ -333,9 +365,8 @@ export function getPlayerVisible(state: GameState, playerId: number): Set<string
       visible.add(hexKey(hex));
     }
   }
-  const temples = state.temples.filter(t => t.ownerId === playerId);
-  for (const temple of temples) {
-    for (const hex of getVisibleHexes(temple.pos, 2, state.mapRadius, state.forests, state.hills)) {
+  for (const structure of getOwnedStructures(state, playerId)) {
+    for (const hex of getVisibleHexes(structure.pos, 2, state.mapRadius, state.forests, state.hills)) {
       visible.add(hexKey(hex));
     }
   }
@@ -491,11 +522,22 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
 }
 
 // ── Population cap ──
+//
+// PHASE 3 PLACEHOLDER: the old temple-level-scaled cap is gone along with
+// temple leveling. This flat cap stands in for the real Command system
+// (§21 of the brief — 8/10/12, raised only by Command I/II tech, NEVER by
+// territory) which hasn't been built yet; 8 is chosen to match Command's own
+// starting value so this needs no further change once Command lands.
+const INTERIM_POPULATION_CAP = 8;
 
-export function getPopulationCap(state: GameState, playerId: number): number {
-  return state.temples
-    .filter(t => t.ownerId === playerId)
-    .reduce((sum, t) => sum + templeEconomyLevel(t.level) * TEMPLE_POP_CAP_PER_LEVEL, 0);
+// PHASE 3 PLACEHOLDER: flat aura income per owned structure (Capital or a
+// completed City/Temple), replacing the old temple-level formula now that
+// leveling is gone. Matches the old level-1 default so day-one balance isn't
+// wildly different; phase 4 replaces this with real Farm/Devotion numbers.
+export const INTERIM_STRUCTURE_INCOME = 2;
+
+export function getPopulationCap(_state: GameState, _playerId: number): number {
+  return INTERIM_POPULATION_CAP;
 }
 
 export function getPopulationCount(state: GameState, playerId: number): number {
@@ -537,21 +579,21 @@ function shuffle<T>(arr: T[]): T[] {
   return arr;
 }
 
-interface TempleLayout {
-  starts: HexCoord[];            // one start temple per player (index === player id)
-  neutrals: HexCoord[];          // shared neutral temples
+interface SiteLayout {
+  starts: HexCoord[];            // one Capital position per player (index === player id)
+  neutrals: HexCoord[];          // neutral strategic site positions
   unitPositions: HexCoord[][];   // per-player starting-unit positions
 }
 
-// Randomly place N start temples + M neutral temples so that:
-//  • no two temples are closer than MIN_TEMPLE_SEPARATION (hex distance),
-//  • player starts are spread out (prefer a larger separation, backing off until
+// Randomly place N Capitals + M neutral strategic sites so that:
+//  • no two sites are closer than MIN_TEMPLE_SEPARATION (hex distance),
+//  • player Capitals are spread out (prefer a larger separation, backing off until
 //    a layout is found) and never adjacent to each other,
-//  • each start temple has room for its starting units on free neighbour tiles,
-//  • temples MAY sit on the map border (edge hexes are eligible).
+//  • each Capital has room for its starting units on free neighbour tiles,
+//  • sites MAY sit on the map border (edge hexes are eligible).
 // Never hangs / crashes: the separation is relaxed down to MIN_TEMPLE_SEPARATION,
 // and a guaranteed best-effort fallback runs if the constraints can't be met.
-function placeTemples(mapRadius: number, numPlayers: number, numNeutral: number): TempleLayout {
+function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): SiteLayout {
   const all = generateHexMap(mapRadius);
   // Prefer starts spread even wider than the global floor, backing off toward it
   // if the map is too tight to honour the wider gap.
@@ -623,7 +665,7 @@ function placeTemples(mapRadius: number, numPlayers: number, numNeutral: number)
 
   // Build several complete layouts and keep the most spread-out one (largest
   // minimum pairwise temple distance).
-  let bestLayout: TempleLayout | null = null;
+  let bestLayout: SiteLayout | null = null;
   let bestSpread = -Infinity;
   for (let attempt = 0; attempt < TEMPLE_LAYOUT_ATTEMPTS; attempt++) {
     // Starts first, as wide as the map allows (back off toward the floor).
@@ -647,7 +689,7 @@ function placeTemples(mapRadius: number, numPlayers: number, numNeutral: number)
 
   // Guaranteed fallback: place greedily with the loosest separation we can,
   // returning fewer neutral temples / units rather than ever failing or hanging.
-  console.warn(`[placeTemples] spread placement failed (radius=${mapRadius} players=${numPlayers} neutral=${numNeutral}); using relaxed greedy fallback`);
+  console.warn(`[placeSites] spread placement failed (radius=${mapRadius} players=${numPlayers} neutral=${numNeutral}); using relaxed greedy fallback`);
   const greedy = (count: number, minSep: number, existing: HexCoord[]): HexCoord[] => {
     const out: HexCoord[] = [];
     for (let sep = minSep; sep >= 0 && out.length < count; sep--) {
@@ -679,7 +721,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const configs = playerConfigs || DEFAULT_PLAYERS;
   const numPlayers = configs.length;
   const mapRadius = mapRadiusForPlayers(numPlayers);
-  const numNeutral = templeCountForPlayers(numPlayers) - numPlayers;
+  const numNeutral = neutralSiteCountForPlayers(numPlayers);
 
   // Balance v2.2 (2026-05-17): Symmetric starting aura. The proper fix for the
   // first-mover gap is randomizing who acts first (see `firstPlayer` below) so
@@ -694,26 +736,22 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
 
   const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>() }));
 
-  // Change #5: randomized temple placement each game (starts + neutrals), with a
-  // minimum separation. Temples may sit on the border.
-  const layout = placeTemples(mapRadius, numPlayers, numNeutral);
+  // Randomized site placement each game (Capitals + neutrals), with a minimum
+  // separation. Sites may sit on the border.
+  const layout = placeSites(mapRadius, numPlayers, numNeutral);
 
-  const temples: Temple[] = [];
-  layout.starts.forEach((pos, i) => {
-    const t = createTemple(pos, i);
-    temples.push(t);
-    players[i]!.startTempleId = t.id; // durable "home temple" signal for the AI
-  });
-  for (const pos of layout.neutrals) temples.push(createTemple(pos, null));
+  // §7, §11 — one permanent Capital per player, plus shared neutral strategic
+  // sites (foundable into a City or a Temple — see chooseFaction/§7-10).
+  const capitals: Capital[] = layout.starts.map((pos, i) => createCapital(i, pos));
+  const strategicSites: StrategicSite[] = layout.neutrals.map(pos => createStrategicSite(pos));
 
+  const allSitePositions = [...layout.starts, ...layout.neutrals];
   const allUnitPositions = layout.unitPositions.flat();
-  const { hills, walls, forests } = generateTerrain(mapRadius, temples.map(t => t.pos), allUnitPositions);
+  const { hills, walls, forests } = generateTerrain(mapRadius, allSitePositions, allUnitPositions);
 
   // §5 Founding Round: each player starts with a neutral Warrior + Archer +
   // Founder already on the board (not recruited) — genuinely faction-agnostic
-  // until the reveal (chooseFaction converts them in place). A player is
-  // eliminated only once they have no living units AND no owned temples (see
-  // checkWinCondition), so losing all three early is dangerous but not instant.
+  // until the reveal (chooseFaction converts them in place).
   const units: Unit[] = [];
   const FOUNDING_LOADOUT: UnitType[] = ['warrior', 'archer', 'founder'];
   layout.unitPositions.forEach((positions, playerIdx) => {
@@ -730,14 +768,14 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const firstPlayer = Math.floor(Math.random() * numPlayers);
 
   const state: GameState = {
-    players, units, temples, hills, walls, forests, explored,
+    players, units, strategicSites, capitals, hills, walls, forests, explored,
     currentPlayerIndex: firstPlayer, firstPlayerIndex: firstPlayer,
     phase: 'playing', mapRadius,
     winner: null,
     turnNumber: 1,
-    selectedUnitId: null, selectedTempleId: null, selectionMode: null,
-    moveHexes: [], attackHexes: [], supportHexes: [],
-    spawnedTempleIds: new Set(),
+    selectedUnitId: null, selectedSiteId: null, selectionMode: null,
+    moveHexes: [], attackHexes: [], structureAttackHexes: [], supportHexes: [],
+    spawnedSiteIds: new Set(),
     playerTech,
     teleportBuildings: [],
     buildHexes: [],
@@ -834,61 +872,123 @@ export function getUnitAt(state: GameState, pos: HexCoord): Unit | undefined {
   return state.units.find(u => hexEqual(u.pos, pos) && u.hp > 0);
 }
 
-export function getTempleAt(state: GameState, pos: HexCoord): Temple | undefined {
-  return state.temples.find(t => hexEqual(t.pos, pos));
+export function getStrategicSiteAt(state: GameState, pos: HexCoord): StrategicSite | undefined {
+  return state.strategicSites.find(s => hexEqual(s.pos, pos));
 }
 
-// ── Temple capture ──
+// ── Strategic site founding (§7-10) ──
+//
+// Replaces the old instant-capture-by-presence system entirely. There is no
+// "capture" any more — a neutral or ruined site becomes a City (Agrar) or an
+// actual Temple (Temple faction) only through a multi-turn founding process
+// that the opponent has a real window to interrupt.
 
-export function canCaptureTemple(state: GameState, unit: Unit): Temple | null {
-  // No capture during the Founding Round or the faction-reveal pause (§5).
+function isFounderUnit(unit: Unit): boolean {
+  return unit.type === 'founder';
+}
+
+export interface FoundingCheck {
+  site: StrategicSite;
+  targetState: 'city' | 'temple';
+}
+
+// §7 — everything that must hold true to START founding.
+export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | null {
   if (isMatchSetupRestricted(state)) return null;
-  // Capture is a separate action from move/attack: it does NOT consume
-  // hasMoved/hasAttacked. A unit that already moved this turn (or is standing
-  // on a temple from a previous turn without having acted yet) can still
-  // capture — but only once per turn.
-  if (unit.hasCaptured) return null;
-  const temple = getTempleAt(state, unit.pos);
-  if (!temple) return null;
-  if (temple.ownerId === unit.playerId) return null;
-  return temple;
+  if (unit.playerId !== getCurrentPlayer(state).id) return null;
+  if (unit.hasMoved || unit.hasAttacked) return null; // needs an unused activation
+  if (!isFounderUnit(unit)) return null; // only the Builder/Acolyte
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player || !player.faction) return null;
+  const site = getStrategicSiteAt(state, unit.pos);
+  if (!site) return null;
+  if (site.state !== 'neutral' && site.state !== 'ruins') return null;
+  if (site.founding) return null;
+  const enemyOnSite = state.units.some(u => u.hp > 0 && u.id !== unit.id && u.playerId !== unit.playerId && hexEqual(u.pos, site.pos));
+  if (enemyOnSite) return null;
+  if (player.aura < SITE_ESTABLISH_COST) return null;
+  const targetState: 'city' | 'temple' = player.faction === 'agrar' ? 'city' : 'temple';
+  return { site, targetState };
 }
 
-export function captureTemple(state: GameState, unit: Unit, temple: Temple): void {
-  temple.ownerId = unit.playerId;
-  unit.hasCaptured = true;
-  updateVisibility(state, unit.playerId);
-  checkWinCondition(state);
-}
+// Begin founding: charges 4⚡ immediately (§7 — "do not wait until completion
+// to charge it, otherwise the player can start construction without actually
+// committing resources") and consumes the founder's whole activation.
+// Resolves automatically at the start of the founder's next round — see
+// resolveFoundingForPlayer, called from endTurn().
+export function startFounding(state: GameState, unitId: string): boolean {
+  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+  if (!unit) return false;
+  const check = canStartFounding(state, unit);
+  if (!check) return false;
 
-// Auto-capture a temple the unit is now standing on (once per turn via the
-// hasCaptured guard inside canCaptureTemple/captureTemple). Called from every
-// path that changes a unit's position so capture is deterministic across local
-// play, AI, multiplayer, and replays.
-function autoCapture(state: GameState, unit: Unit): void {
-  const t = canCaptureTemple(state, unit);
-  if (t) captureTemple(state, unit, t);
-}
+  const player = state.players.find(p => p.id === unit.playerId)!;
+  player.aura -= SITE_ESTABLISH_COST;
 
-// ── Temple upgrade ──
-
-export function canUpgradeTemple(state: GameState, templeId: string): number | null {
-  if (isMatchSetupRestricted(state)) return null;
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return null;
-  const cost = templeUpgradeCost(temple.level);
-  if (cost === null) return null;
-  if (getCurrentPlayer(state).aura < cost) return null;
-  return cost;
-}
-
-export function upgradeTemple(state: GameState, templeId: string): boolean {
-  const cost = canUpgradeTemple(state, templeId);
-  if (cost === null) return false;
-  const temple = state.temples.find(t => t.id === templeId)!;
-  getCurrentPlayer(state).aura -= cost;
-  temple.level++;
+  const fromState = check.site.state as 'neutral' | 'ruins'; // canStartFounding already restricted this to neutral|ruins
+  check.site.state = check.targetState === 'city' ? 'foundingCity' : 'foundingTemple';
+  check.site.founding = {
+    playerId: unit.playerId,
+    unitId: unit.id,
+    targetState: check.targetState,
+    fromState,
+    startedRound: state.turnNumber,
+    completesRound: state.turnNumber + 1,
+  };
+  unit.hasMoved = true;
+  unit.hasAttacked = true;
+  updateHighlights(state);
   return true;
+}
+
+function completeFounding(site: StrategicSite): void {
+  const founding = site.founding!;
+  site.ownerId = founding.playerId;
+  site.state = founding.targetState;
+  const stats = founding.targetState === 'city' ? STRUCTURES.city : STRUCTURES.temple;
+  site.hp = stats.hp;
+  site.maxHp = stats.hp;
+  site.defense = stats.defense;
+  site.founding = null;
+}
+
+// §9 — failure returns the site to whatever it was before, cleanly, with NO
+// refund of the 4⚡ already spent. No permanent "half-built" state.
+function failFounding(site: StrategicSite): void {
+  site.state = site.founding!.fromState;
+  site.ownerId = null;
+  site.founding = null;
+}
+
+// §8 — called once per player, right when it becomes their turn (see
+// endTurn()), for every site they have founding in progress that is now due.
+// A founding resolves successfully only if, at this exact moment: the
+// founder is alive AND still standing on the site AND no enemy unit occupies
+// the site AND no enemy unit is adjacent to it. Any one of those failing
+// (founder killed, founder moved off — structurally the founder can never
+// move before this check since starting founding spends its whole
+// activation and this resolves before the founder's next one — enemy moved
+// onto or next to the site) fails the founding. This gives the opponent a
+// real interrupt window without needing a ZOC system.
+function resolveFoundingForPlayer(state: GameState, playerId: number): void {
+  for (const site of state.strategicSites) {
+    if (site.state !== 'foundingCity' && site.state !== 'foundingTemple') continue;
+    const founding = site.founding;
+    if (!founding || founding.playerId !== playerId) continue;
+    if (state.turnNumber < founding.completesRound) continue;
+
+    const founder = state.units.find(u => u.id === founding.unitId && u.hp > 0);
+    const founderStillHere = !!founder && hexEqual(founder.pos, site.pos);
+    const enemyOnSite = state.units.some(u => u.hp > 0 && u.playerId !== playerId && hexEqual(u.pos, site.pos));
+    const enemyAdjacent = state.units.some(u => u.hp > 0 && u.playerId !== playerId && hexDistance(u.pos, site.pos) === 1);
+
+    if (founderStillHere && !enemyOnSite && !enemyAdjacent) {
+      completeFounding(site);
+    } else {
+      failFounding(site);
+    }
+  }
+  for (const p of state.players) if (p.id === playerId) updateVisibility(state, playerId);
 }
 
 // ── Tech research ──
@@ -952,17 +1052,17 @@ export function canAfford(state: GameState, unitType: UnitType): boolean {
   return unlocked.has(unitType);
 }
 
-export function spawnUnit(state: GameState, templeId: string, unitType: UnitType): boolean {
+export function spawnUnit(state: GameState, structureId: string, unitType: UnitType): boolean {
   if (isMatchSetupRestricted(state)) return false;
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return false;
-
-  // A temple may spawn MORE THAN ONE unit per turn — there is no per-turn spawn
-  // gate. Successive spawns are naturally throttled by the tile-occupancy check
-  // below: the freshly spawned unit stands on the temple, so the player must
-  // move it off before the temple can spawn the next unit.
-
   const player = getCurrentPlayer(state);
+  const structure = getOwnedStructures(state, player.id).find(s => s.id === structureId);
+  if (!structure) return false;
+
+  // A structure may spawn MORE THAN ONE unit per turn — there is no per-turn
+  // spawn gate. Successive spawns are naturally throttled by the tile-occupancy
+  // check below: the freshly spawned unit stands on the structure, so the
+  // player must move it off before that structure can spawn again.
+
   const cost = UNIT_COSTS[unitType];
   if (player.aura < cost) return false;
 
@@ -975,16 +1075,16 @@ export function spawnUnit(state: GameState, templeId: string, unitType: UnitType
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
   if (!unlocked.has(unitType)) return false;
 
-  if (getUnitAt(state, temple.pos)) return false;
+  if (getUnitAt(state, structure.pos)) return false;
 
   player.aura -= cost;
-  const unit = createUnit(unitType, player.id, temple.pos, state.playerTech[player.id], player.faction);
+  const unit = createUnit(unitType, player.id, structure.pos, state.playerTech[player.id], player.faction);
   // Unit may move and attack on the turn it is spawned
   unit.hasMoved = false;
   unit.hasAttacked = false;
   state.units.push(unit);
 
-  state.spawnedTempleIds.add(templeId);
+  state.spawnedSiteIds.add(structureId);
 
   revealForPlayer(state, player.id, unit.pos, unit.stats.vision);
 
@@ -1106,9 +1206,10 @@ const SUPPORT_UNIT_TYPES: Set<UnitType> = new Set(['healer', 'damageBooster', 'r
 function updateHighlights(state: GameState): void {
   state.moveHexes = [];
   state.attackHexes = [];
+  state.structureAttackHexes = [];
   state.supportHexes = [];
 
-  if (state.selectionMode === 'temple') return;
+  if (state.selectionMode === 'site') return;
 
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit) return;
@@ -1143,6 +1244,16 @@ function updateHighlights(state: GameState): void {
       .filter(e => visible.has(hexKey(e.pos)))
       .filter(e => isForestUnitRevealed(state, e.pos, unit.playerId))
       .map(e => e.pos);
+
+    const enemyStructures: HexCoord[] = [];
+    for (const capital of state.capitals) {
+      if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) enemyStructures.push(capital.pos);
+    }
+    for (const site of state.strategicSites) {
+      if ((site.state === 'city' || site.state === 'temple') && site.ownerId !== unit.playerId
+        && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
+    }
+    state.structureAttackHexes = enemyStructures;
   }
 }
 
@@ -1150,26 +1261,29 @@ export function selectUnit(state: GameState, unitId: string): void {
   const unit = state.units.find(u => u.id === unitId);
   if (!unit || unit.playerId !== getCurrentPlayer(state).id) return;
   state.selectedUnitId = unitId;
-  state.selectedTempleId = null;
+  state.selectedSiteId = null;
   state.selectionMode = 'unit';
   updateHighlights(state);
 }
 
-export function selectTemple(state: GameState, templeId: string): void {
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple || temple.ownerId !== getCurrentPlayer(state).id) return;
-  state.selectedTempleId = templeId;
+// Select an owned structure (Capital or a completed City/Temple) — used for
+// recruiting. Neutral/founding/ruined sites aren't selectable this way.
+export function selectSite(state: GameState, siteId: string): void {
+  const owned = getOwnedStructures(state, getCurrentPlayer(state).id);
+  if (!owned.some(s => s.id === siteId)) return;
+  state.selectedSiteId = siteId;
   state.selectedUnitId = null;
-  state.selectionMode = 'temple';
+  state.selectionMode = 'site';
   updateHighlights(state);
 }
 
 export function deselectAll(state: GameState): void {
   state.selectedUnitId = null;
-  state.selectedTempleId = null;
+  state.selectedSiteId = null;
   state.selectionMode = null;
   state.moveHexes = [];
   state.attackHexes = [];
+  state.structureAttackHexes = [];
   state.supportHexes = [];
 }
 
@@ -1209,7 +1323,6 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
   }
 
   revealForPlayer(state, unit.playerId, unit.pos, unit.stats.vision);
-  autoCapture(state, unit);
   updateHighlights(state);
 
   return { moved: true };
@@ -1324,11 +1437,11 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
     }
   }
 
-  // Melee unit steps onto killed unit's tile
+  // Melee unit steps onto killed unit's tile. Purely tactical positioning now
+  // (§5 — no capture-by-presence any more, on a site or a Capital).
   if (targetKilled && !attackerKilled && attacker.stats.range === 1) {
     attacker.pos = { ...targetPos };
     revealForPlayer(state, attacker.playerId, attacker.pos, attacker.stats.vision);
-    autoCapture(state, attacker);
   }
 
   attacker.hasAttacked = true;
@@ -1339,60 +1452,123 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   return { damageDealt, damageReceived, targetKilled, attackerKilled, targetEncirclement, attackerEncirclement, splashHits, typeBonus };
 }
 
-// ── Win condition ──
+// ── Structure combat (§11, §4 of the phase-3 spec) ──
+//
+// A shared path for attacking ANY structure (Capital, City or Temple) —
+// there is no Capital-only special case. Structures never revenge
+// (structureCanRevenge = false), never grant melee follow-through (the
+// match is already over if a Capital falls, and a City/Temple isn't
+// "captured" by stepping onto it), and use the 'siege beats structure' 1.30x
+// entry from the shared soft-counter matrix (combat.ts) like any other
+// matchup — no separate formula.
 
-function checkWinCondition(state: GameState): void {
-  if (state.temples.length > 0) {
-    for (const player of state.players) {
-      if (state.temples.every(t => t.ownerId === player.id)) {
-        state.phase = 'gameOver';
-        state.winner = player;
-        return;
-      }
+export type StructureRef =
+  | { kind: 'capital'; capital: Capital }
+  | { kind: 'site'; site: StrategicSite };
+
+// Only a completed City/Temple or a Capital is a valid combat target —
+// neutral, founding and ruined sites have no HP and can't be attacked.
+export function getStructureAt(state: GameState, pos: HexCoord): StructureRef | null {
+  const capital = state.capitals.find(c => hexEqual(c.pos, pos));
+  if (capital) return { kind: 'capital', capital };
+  const site = state.strategicSites.find(s => hexEqual(s.pos, pos) && (s.state === 'city' || s.state === 'temple'));
+  if (site) return { kind: 'site', site };
+  return null;
+}
+
+function structureOwnerId(ref: StructureRef): number {
+  return ref.kind === 'capital' ? ref.capital.playerId : ref.site.ownerId!;
+}
+
+function structureDefense(ref: StructureRef): number {
+  return ref.kind === 'capital' ? ref.capital.defense : ref.site.defense;
+}
+
+export interface StructureCombatResult {
+  damageDealt: number;
+  destroyed: boolean;
+  gameOver: boolean;
+}
+
+export function attackStructure(state: GameState, targetPos: HexCoord): StructureCombatResult | null {
+  if (isMatchSetupRestricted(state)) return null;
+  const attacker = state.units.find(u => u.id === state.selectedUnitId);
+  if (!attacker || attacker.hasAttacked) return null;
+  if (attacker.stats.cantShootAfterMove && attacker.hasMoved) return null;
+
+  const isValid = state.structureAttackHexes.some(h => hexEqual(h, targetPos));
+  if (!isValid) return null;
+
+  const ref = getStructureAt(state, targetPos);
+  if (!ref) return null;
+  if (structureOwnerId(ref) === attacker.playerId) return null;
+
+  const typeMult = getTypeMultiplier(UNIT_CLASS[attacker.type], 'structure');
+  const attackerHpFrac = attacker.hp / attacker.stats.maxHp;
+  // Structures don't participate in encirclement (they don't move or form
+  // groups) — no bonus multiplier either way, just the base 1.0x.
+  let damageDealt = calculateDamage(getEffectiveAttack(state, attacker), structureDefense(ref), 1, typeMult, attackerHpFrac);
+  if (damageDealt < 1) damageDealt = 1;
+
+  let destroyed = false;
+  let gameOver = false;
+  if (ref.kind === 'capital') {
+    ref.capital.hp -= damageDealt;
+    destroyed = ref.capital.hp <= 0;
+    if (destroyed) ref.capital.hp = 0;
+  } else {
+    ref.site.hp -= damageDealt;
+    destroyed = ref.site.hp <= 0;
+    if (destroyed) {
+      ref.site.hp = 0;
+      // §11 — City/Temple destruction goes to Ruins, not a game-over: clear
+      // active ownership/production/founding state, keep the site itself.
+      ref.site.state = 'ruins';
+      ref.site.ownerId = null;
+      ref.site.founding = null;
+      ref.site.maxHp = 0;
+      ref.site.defense = 0;
     }
   }
+  // structureCanRevenge = false — no counter-damage, ever (§4).
 
-  const alivePlayers = state.players.filter(p =>
-    state.units.some(u => u.playerId === p.id && u.hp > 0) ||
-    state.temples.some(t => t.ownerId === p.id)
-  );
-  if (alivePlayers.length === 1) {
-    state.phase = 'gameOver';
-    state.winner = alivePlayers[0]!;
-  } else if (alivePlayers.length === 0) {
-    state.phase = 'gameOver';
-    state.winner = null;
-  }
+  attacker.hasAttacked = true;
+  attacker.hasMoved = true;
+  updateHighlights(state);
+  checkWinCondition(state);
+  gameOver = state.phase === 'gameOver';
+
+  return { damageDealt, destroyed, gameOver };
+}
+
+// ── Win condition ──
+
+// §5, §11: the ONLY normal victory condition is a Capital reaching 0 HP.
+// There is no more "own every site" check, no elimination-by-attrition
+// fallback — a Capital is permanent and indestructible except by combat, so
+// as long as it stands the game continues no matter what else happens on
+// the board.
+function checkWinCondition(state: GameState): void {
+  const destroyedCapital = state.capitals.find(c => c.hp <= 0);
+  if (!destroyedCapital) return;
+  state.phase = 'gameOver';
+  state.winner = state.players.find(p => p.id !== destroyedCapital.playerId) ?? null;
 }
 
 // ── Resign ──
 
 /**
- * Resigns the game on behalf of the given player. Sets phase = 'gameOver' and
- * declares the opposing player the winner. Idempotent / no-op if the game has
- * already ended.
+ * Resigns the game on behalf of the given player. Ends the match immediately
+ * and declares the opposing player the winner. Idempotent / no-op if the
+ * game has already ended.
  *
  * Returns true if the resignation took effect.
  */
 export function resignGame(state: GameState, playerId: number): boolean {
   if (state.phase === 'gameOver') return false;
   if (!state.players.some(p => p.id === playerId)) return false;
-  // Eliminate the resigner: their units die and their temples go neutral. With
-  // 2 players this immediately leaves one player standing (win). With N players
-  // the game continues until only one remains — checkWinCondition handles both.
-  for (const u of state.units) {
-    if (u.playerId === playerId) u.hp = 0;
-  }
-  for (const t of state.temples) {
-    if (t.ownerId === playerId) t.ownerId = null;
-  }
-  checkWinCondition(state);
-  // If the resigner was the active player and the game isn't over, advance past
-  // them to the next surviving player. (Cast avoids a literal-type narrowing
-  // false-positive: checkWinCondition may have set phase to 'gameOver'.)
-  if ((state.phase as string) !== 'gameOver' && state.currentPlayerIndex === playerId) {
-    endTurn(state);
-  }
+  state.phase = 'gameOver';
+  state.winner = state.players.find(p => p.id !== playerId) ?? null;
   return true;
 }
 
@@ -1440,19 +1616,16 @@ export function endTurn(state: GameState): void {
     if (u.playerId === getCurrentPlayer(state).id) {
       u.hasMoved = false;
       u.hasAttacked = false;
-      u.hasCaptured = false;
     }
   });
-  state.spawnedTempleIds.clear();
+  state.spawnedSiteIds.clear();
 
   const prevIndex = state.currentPlayerIndex;
-  let next = (state.currentPlayerIndex + 1) % state.players.length;
-  while (next !== state.currentPlayerIndex) {
-    const hasUnits = state.units.some(u => u.playerId === state.players[next]!.id && u.hp > 0);
-    const hasTemples = state.temples.some(t => t.ownerId === state.players[next]!.id);
-    if (hasUnits || hasTemples) break;
-    next = (next + 1) % state.players.length;
-  }
+  // No more skip-eliminated-player loop: a Capital is permanent and
+  // indestructible except by combat (§11), and Capital destruction already
+  // ends the game via checkWinCondition — so by the time we get here every
+  // remaining player necessarily still has one. Plain rotation.
+  const next = (state.currentPlayerIndex + 1) % state.players.length;
   state.currentPlayerIndex = next;
   // Bump turn counter when active player wraps back to the player who started
   // the game (full round complete). Pre-v2.2 this was hard-coded to slot 0;
@@ -1461,13 +1634,17 @@ export function endTurn(state: GameState): void {
     state.turnNumber++;
   }
 
-  // Grant aura income: effective-level × TEMPLE_AURA_PER_LEVEL per owned temple
-  // (plateaus at TEMPLE_ECONOMY_CAP_LEVEL, no depletion)
   const newPlayer = getCurrentPlayer(state);
-  const ownedTemples = state.temples.filter(t => t.ownerId === newPlayer.id);
-  for (const temple of ownedTemples) {
-    newPlayer.aura += templeEconomyLevel(temple.level) * TEMPLE_AURA_PER_LEVEL;
-  }
+
+  // §6, §8 — resolve any founding this player has due, BEFORE granting income,
+  // so a structure that completes right now already contributes this turn.
+  resolveFoundingForPlayer(state, newPlayer.id);
+
+  // PHASE 3 PLACEHOLDER economy: flat income per owned structure (Capital +
+  // each completed City/Temple). Replaces the old temple-level-scaled income;
+  // real Farm/Devotion numbers are phase 4 — see INTERIM_STRUCTURE_INCOME.
+  const owned = getOwnedStructures(state, newPlayer.id);
+  newPlayer.aura += owned.length * INTERIM_STRUCTURE_INCOME;
 
   // Healer: restore HP to allies at start of their turn, with distance falloff —
   // full heal within radius 1, half at radius 2, nothing beyond (SUPPORT_RANGE).
@@ -1495,91 +1672,89 @@ export function getTeleportAt(state: GameState, pos: HexCoord): TeleportBuilding
 
 // Single source of truth for teleport-portal placement validity. A portal may sit
 // on any reachable terrain (plains, hills, forests) within TELEPORT_RADIUS of the
-// owning temple, but NOT on:
+// owning structure (Capital or completed City/Temple), but NOT on:
 //   • walls (the impassable rock mountains — a unit could never step on the portal)
-//   • the temple tile itself
+//   • the structure's own tile
 //   • a tile that already holds a portal
 //   • a tile occupied by a unit
 //   • off-map tiles
 // The placement highlight (main.ts buildHexes) and the actual placement rule
 // (buildTeleportPair) BOTH go through this predicate so the highlighted set is
 // exactly the placeable set.
-export function isValidTeleportHex(state: GameState, temple: Temple, hex: HexCoord): boolean {
-  if (hexDistance(temple.pos, hex) > TELEPORT_RADIUS) return false;
+export function isValidTeleportHex(state: GameState, anchor: { pos: HexCoord }, hex: HexCoord): boolean {
+  if (hexDistance(anchor.pos, hex) > TELEPORT_RADIUS) return false;
   if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return false;
   const key = hexKey(hex);
-  if (state.walls.has(key)) return false;      // mountains — impassable
-  if (hexEqual(hex, temple.pos)) return false; // not on the temple itself
-  if (getTeleportAt(state, hex)) return false; // already has a portal
-  if (getUnitAt(state, hex)) return false;     // occupied by a unit
+  if (state.walls.has(key)) return false;       // mountains — impassable
+  if (hexEqual(hex, anchor.pos)) return false;   // not on the structure's own tile
+  if (getTeleportAt(state, hex)) return false;   // already has a portal
+  if (getUnitAt(state, hex)) return false;       // occupied by a unit
   return true;
 }
 
-export function getValidTeleportHexes(state: GameState, templeId: string): HexCoord[] {
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple) return [];
+export function getValidTeleportHexes(state: GameState, anchorId: string): HexCoord[] {
+  const anchor = getOwnedStructures(state, getCurrentPlayer(state).id).find(s => s.id === anchorId);
+  if (!anchor) return [];
   const result: HexCoord[] = [];
   for (let dq = -TELEPORT_RADIUS; dq <= TELEPORT_RADIUS; dq++) {
     for (let dr = Math.max(-TELEPORT_RADIUS, -dq - TELEPORT_RADIUS); dr <= Math.min(TELEPORT_RADIUS, -dq + TELEPORT_RADIUS); dr++) {
-      const hex: HexCoord = { q: temple.pos.q + dq, r: temple.pos.r + dr };
-      if (isValidTeleportHex(state, temple, hex)) result.push(hex);
+      const hex: HexCoord = { q: anchor.pos.q + dq, r: anchor.pos.r + dr };
+      if (isValidTeleportHex(state, anchor, hex)) result.push(hex);
     }
   }
   return result;
 }
 
-// Valid hexes for the second portal: near any other owned temple that doesn't yet have a portal.
-export function getValidTeleportHexesForOtherTemples(state: GameState, excludeTempleId: string): HexCoord[] {
+// Valid hexes for the second portal: near any other owned structure that doesn't yet have a portal.
+export function getValidTeleportHexesForOtherTemples(state: GameState, excludeAnchorId: string): HexCoord[] {
   const player = getCurrentPlayer(state);
   const result: HexCoord[] = [];
-  for (const temple of state.temples) {
-    if (temple.ownerId !== player.id) continue;
-    if (temple.id === excludeTempleId) continue;
-    const existing = state.teleportBuildings.filter(b => b.templeId === temple.id);
+  for (const anchor of getOwnedStructures(state, player.id)) {
+    if (anchor.id === excludeAnchorId) continue;
+    const existing = state.teleportBuildings.filter(b => b.templeId === anchor.id);
     if (existing.length >= TELEPORT_MAX_PER_TEMPLE) continue;
-    result.push(...getValidTeleportHexes(state, temple.id));
+    result.push(...getValidTeleportHexes(state, anchor.id));
   }
   return result;
 }
 
-export function canBuildTeleportPair(state: GameState, templeId: string): boolean {
+export function canBuildTeleportPair(state: GameState, anchorId: string): boolean {
   if (isMatchSetupRestricted(state)) return false;
   const player = getCurrentPlayer(state);
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple || temple.ownerId !== player.id) return false;
+  const anchor = getOwnedStructures(state, player.id).find(s => s.id === anchorId);
+  if (!anchor) return false;
   if (!state.playerTech[player.id]?.researched.has('teleports')) return false;
-  const existing = state.teleportBuildings.filter(t => t.templeId === templeId);
+  const existing = state.teleportBuildings.filter(t => t.templeId === anchorId);
   if (existing.length >= TELEPORT_MAX_PER_TEMPLE) return false;
   if (player.aura < TELEPORT_BUILD_COST) return false;
-  if (getValidTeleportHexes(state, templeId).length < 1) return false;
-  return getValidTeleportHexesForOtherTemples(state, templeId).length >= 1;
+  if (getValidTeleportHexes(state, anchorId).length < 1) return false;
+  return getValidTeleportHexesForOtherTemples(state, anchorId).length >= 1;
 }
 
 export function buildTeleportPair(
   state: GameState,
-  templeIdA: string,
+  anchorIdA: string,
   posA: HexCoord,
   posB: HexCoord,
 ): boolean {
-  if (!canBuildTeleportPair(state, templeIdA)) return false;
-  const validHexesA = getValidTeleportHexes(state, templeIdA);
+  if (!canBuildTeleportPair(state, anchorIdA)) return false;
+  const validHexesA = getValidTeleportHexes(state, anchorIdA);
   if (!validHexesA.some(h => hexEqual(h, posA))) return false;
-  const validHexesB = getValidTeleportHexesForOtherTemples(state, templeIdA);
+  const validHexesB = getValidTeleportHexesForOtherTemples(state, anchorIdA);
   if (!validHexesB.some(h => hexEqual(h, posB))) return false;
   if (hexEqual(posA, posB)) return false;
-  // Determine which temple posB belongs to
+  // Determine which owned structure posB belongs to
   const player = getCurrentPlayer(state);
-  const templeB = state.temples.find(t =>
-    t.ownerId === player.id &&
-    t.id !== templeIdA &&
-    state.teleportBuildings.filter(b => b.templeId === t.id).length < TELEPORT_MAX_PER_TEMPLE &&
-    isValidTeleportHex(state, t, posB),
+  const anchorB = getOwnedStructures(state, player.id).find(a =>
+    a.id !== anchorIdA &&
+    state.teleportBuildings.filter(b => b.templeId === a.id).length < TELEPORT_MAX_PER_TEMPLE &&
+    isValidTeleportHex(state, a, posB),
   );
-  if (!templeB) return false;
+  if (!anchorB) return false;
   player.aura -= TELEPORT_BUILD_COST;
   const idA = `tp_${teleportIdCounter++}`;
   const idB = `tp_${teleportIdCounter++}`;
-  state.teleportBuildings.push({ id: idA, pos: { ...posA }, builtByPlayerId: player.id, templeId: templeIdA, pairedId: idB });
-  state.teleportBuildings.push({ id: idB, pos: { ...posB }, builtByPlayerId: player.id, templeId: templeB.id, pairedId: idA });
+  state.teleportBuildings.push({ id: idA, pos: { ...posA }, builtByPlayerId: player.id, templeId: anchorIdA, pairedId: idB });
+  state.teleportBuildings.push({ id: idB, pos: { ...posB }, builtByPlayerId: player.id, templeId: anchorB.id, pairedId: idA });
   return true;
 }

@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import {
   createGameState,
-  canCaptureTemple,
   getPopulationCap, getPopulationCount,
   getEffectiveRange,
   getPlayerVisible, isForestUnitRevealed,
@@ -30,14 +29,15 @@ import {
 export type HeadlessAction =
   | { action: 'move';            params: { unitId: string; to: HexCoord } }
   | { action: 'attack';          params: { unitId: string; targetId: string } }
+  | { action: 'attack-structure'; params: { unitId: string; targetPos: HexCoord } }
   | { action: 'recruit';         params: { unitType: UnitType; templeId: string } }
-  | { action: 'capture';         params: { unitId: string } }
+  | { action: 'found';           params: { unitId: string } }
   | { action: 'destroy';         params: { unitId: string } }
-  | { action: 'upgrade-temple';  params: { templeId: string } }
   | { action: 'research';        params: { techId: TechId } }
   | { action: 'build-teleport';  params: { templeId: string; pos: HexCoord; targetPos: HexCoord } }
   | { action: 'end-turn';        params?: Record<string, never> }
   | { action: 'resign';          params?: Record<string, never> }
+  | { action: 'choose-faction';  params: { faction: 'agrar' | 'temple' } }
   ;
 
 export type HeadlessActionType = HeadlessAction['action'];
@@ -92,8 +92,8 @@ function generateGameId(): string {
 
 // ── State serialization for API responses ──
 // Note: explicitly strips all UI-only fields (see @uiOnly in src/types.ts):
-// selectedUnitId, selectedTempleId, selectionMode, moveHexes, attackHexes,
-// supportHexes, buildHexes — these never appear in REST responses.
+// selectedUnitId, selectedSiteId, selectionMode, moveHexes, attackHexes,
+// structureAttackHexes, supportHexes, buildHexes — these never appear in REST responses.
 
 export function serializeStateForApi(session: HeadlessSession, viewerId?: number): Record<string, unknown> {
   const state = session.gameState;
@@ -143,11 +143,16 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
     map: {
       radius: s.mapRadius,
       terrain,
-      temples: s.temples.map(t => ({
-        id: t.id,
-        pos: t.pos,
-        ownerId: t.ownerId,
-        level: t.level,
+      capitals: s.capitals.map(c => ({
+        id: c.id, pos: c.pos, playerId: c.playerId, hp: c.hp, maxHp: c.maxHp, defense: c.defense,
+      })),
+      strategicSites: s.strategicSites.map(site => ({
+        id: site.id,
+        pos: site.pos,
+        state: site.state,
+        ownerId: site.ownerId,
+        founding: site.founding,
+        hp: site.hp, maxHp: site.maxHp, defense: site.defense,
       })),
       teleportBuildings: s.teleportBuildings.map(tp => ({
         id: tp.id,
@@ -166,7 +171,6 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
       maxHp: u.stats.maxHp,
       hasMoved: u.hasMoved,
       hasAttacked: u.hasAttacked,
-      hasCaptured: u.hasCaptured,
       stats: {
         atk: u.stats.attack,
         def: u.stats.defense,
@@ -303,7 +307,8 @@ headlessRouter.get('/:gameId/state', (req: Request, res: Response) => {
 // Returns legal destinations and attack targets for a unit. Uses the shared
 // dispatcher's `computeUnitActions` so the action shape exactly matches what
 // POST /action accepts: { type: 'move', to: HexCoord } / { type: 'attack',
-// targetId: string } / { type: 'capture', templeId: string }.
+// targetId: string } / { type: 'attack-structure', targetPos: HexCoord } /
+// { type: 'found', siteId: string, targetState: 'city' | 'temple' }.
 //
 // `moveHexes` and `attackHexes` (string "q,r" arrays) are kept for backwards
 // compatibility with callers that just want hex keys, but new agents should
@@ -330,14 +335,16 @@ headlessRouter.get('/:gameId/legal-moves', (req: Request, res: Response) => {
   const actions = computeUnitActions(state, unit);
   const moveHexes: string[] = [];
   const attackHexes: string[] = [];
-  let captureTempleId: string | null = null;
+  let foundableSiteId: string | null = null;
   for (const a of actions) {
     if (a.type === 'move') moveHexes.push(hexKey(a.to));
     else if (a.type === 'attack') {
       const target = state.units.find(u => u.id === a.targetId);
       if (target) attackHexes.push(hexKey(target.pos));
-    } else if (a.type === 'capture') {
-      captureTempleId = a.templeId;
+    } else if (a.type === 'attack-structure') {
+      attackHexes.push(hexKey(a.targetPos));
+    } else if (a.type === 'found') {
+      foundableSiteId = a.siteId;
     }
   }
 
@@ -346,8 +353,8 @@ headlessRouter.get('/:gameId/legal-moves', (req: Request, res: Response) => {
     unitId,
     moveHexes,
     attackHexes,
-    canCapture: captureTempleId !== null,
-    captureTempleId,
+    canFound: foundableSiteId !== null,
+    foundableSiteId,
     actions,
   });
 });
@@ -485,7 +492,7 @@ headlessRouter.post('/:gameId/action', (req: Request, res: Response) => {
 // Wires the SAME src/ai.ts the interactive game uses into the headless transport
 // so headless games actually play well. The AI mutates state through the exact
 // src/game.ts engine mutators the action dispatcher uses (selectUnit → moveUnit/
-// attackUnit, spawnUnit, captureTemple, upgradeTemple, researchTech,
+// attackUnit/attackStructure, spawnUnit, startFounding, researchTech,
 // buildTeleportPair) — no forked logic — and the turn is advanced via the shared
 // executeAction('end-turn') dispatcher, so rules are identical to real play.
 
@@ -544,9 +551,9 @@ headlessRouter.post('/:gameId/auto-play', (req: Request, res: Response) => {
     name: p.name,
     aura: p.aura,
     units: state.units.filter(u => u.hp > 0 && u.playerId === p.id).length,
-    temples: state.temples.filter(t => t.ownerId === p.id).length,
+    sites: state.strategicSites.filter(s => (s.state === 'city' || s.state === 'temple') && s.ownerId === p.id).length,
+    capitalHp: state.capitals.find(c => c.playerId === p.id)?.hp ?? 0,
     tech: state.playerTech[p.id]!.researched.size,
-    alive: state.units.some(u => u.hp > 0 && u.playerId === p.id) || state.temples.some(t => t.ownerId === p.id),
   }));
   addLog(session, -1, 'auto-play', { maxHalfTurns: cap }, `Auto-played ${half} half-turns; phase=${state.phase}`);
   res.json({

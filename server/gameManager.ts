@@ -6,7 +6,7 @@ import {
   getRoomById, saveGameState, loadGameState,
 } from './db';
 import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from '../src/serializer';
-import { createGameState, selectUnit, selectTemple, deselectAll } from '../src/game';
+import { createGameState, selectUnit, selectSite, deselectAll } from '../src/game';
 import { GameState, HexCoord, UnitType, TechId, PLAYER_COLORS } from '../src/types';
 import { headlessSessions, setHeadlessSpectatorPush } from './headlessApi';
 import { resyncCounters } from './stateUtils';
@@ -78,10 +78,11 @@ function stripSelectionState(s: ReturnType<typeof serialize>): ReturnType<typeof
   return {
     ...s,
     selectedUnitId: null,
-    selectedTempleId: null,
+    selectedSiteId: null,
     selectionMode: null,
     moveHexes: [],
     attackHexes: [],
+    structureAttackHexes: [],
     supportHexes: [],
     buildHexes: [],
   };
@@ -592,16 +593,10 @@ function legacyToUnified(
       if (typeof msg.unitType !== 'string') return { error: 'Invalid spawn: missing unitType' };
       if (typeof msg.templeId !== 'string') return { error: 'Invalid spawn: missing templeId' };
       return { action: 'recruit', params: { unitType: msg.unitType, templeId: msg.templeId } };
-    case 'action_capture':
-      // Uses current selection; dispatcher will fall back to state.selectedUnitId.
-      return { action: 'capture', params: {} };
     case 'action_destroy':
       // Disband carries unitId explicitly (no selection fallback).
       if (typeof msg.unitId !== 'string') return { error: 'Invalid destroy: missing unitId' };
       return { action: 'destroy', params: { unitId: msg.unitId } };
-    case 'action_upgrade_temple':
-      if (typeof msg.templeId !== 'string') return { error: 'Invalid upgrade: missing templeId' };
-      return { action: 'upgrade-temple', params: { templeId: msg.templeId } };
     case 'action_research':
       if (typeof msg.techId !== 'string') return { error: 'Invalid research: missing techId' };
       return { action: 'research', params: { techId: msg.techId } };
@@ -650,7 +645,7 @@ function handleAction(sess: ClientSession, msg: ClientMessage): void {
       send(sess.ws, { type: 'action_error', message: 'Not your turn' });
       return;
     }
-    selectTemple(state, msg.templeId);
+    selectSite(state, msg.templeId);
     pushStateUpdate(room, msg.type, sess.playerSlot, false);
     return;
   }

@@ -15,7 +15,10 @@ export type FactionId = 'agrar' | 'temple';
 // replays and rooms are versioned against this — an old blob is rejected
 // cleanly rather than silently misinterpreted (see assertCompatibleRulesVersion
 // in serializer.ts). Bump this on any future breaking change to GameState.
-export const RULES_VERSION = 2;
+// v3 (phase 3): temples -> strategicSites + capitals, selectedTempleId ->
+// selectedSiteId, spawnedTempleIds -> spawnedSiteIds, hasCaptured removed,
+// structureAttackHexes added.
+export const RULES_VERSION = 3;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -66,12 +69,6 @@ export interface Unit {
   pos: HexCoord;
   hasMoved: boolean;
   hasAttacked: boolean;
-  /**
-   * True if this unit has already captured a temple this turn. Capture is a
-   * separate action from move/attack — a unit can capture even after moving,
-   * but only once per turn. Reset to false on the owner's `endTurn`.
-   */
-  hasCaptured: boolean;
 }
 
 // A unit "still needs to move" this turn while it has neither moved nor attacked.
@@ -83,38 +80,62 @@ export function unitYetToMove(unit: Unit): boolean {
   return unit.hp > 0 && !unit.hasMoved && !unit.hasAttacked;
 }
 
-// ── Temple level system ──
-export const TEMPLE_AURA_PER_LEVEL = 2;    // aura income = effective-level × this, per turn
-export const TEMPLE_MAX_LEVEL = 10;
-export const TEMPLE_POP_CAP_PER_LEVEL = 2; // population cap += effective-level × this per owned temple
+// ── Strategic sites (phase 3 of the "Asymmetric Tribes v0.2" redesign) ──
+//
+// Replaces the old "Temple" domain type, which was overloaded to mean
+// starting objective + neutral objective + capturable structure + the win
+// condition all at once. That's gone: a StrategicSite is a neutral map
+// objective that a Builder/Acolyte can found into a City (Agrar) or an
+// actual Temple (Temple faction) — it is never instantly captured by
+// standing on it. The player's permanent home base is a separate `Capital`
+// entity (see below), not a StrategicSite state.
+export type StrategicSiteState =
+  | 'neutral'        // unclaimed — foundable by either faction
+  | 'foundingCity'    // Agrar Builder founding; 0 income/production until complete
+  | 'foundingTemple'  // Temple Acolyte founding; 0 income/production until complete
+  | 'city'            // completed Agrar structure
+  | 'temple'          // completed Temple-faction structure
+  | 'ruins';          // a destroyed city/temple — refoundable by either faction
 
-// Economy (aura income + pop cap) plateaus at this level: levels 6-10 are
-// purely visual/prestige upgrades and grant no further income or pop cap.
-export const TEMPLE_ECONOMY_CAP_LEVEL = 5;
-
-// The level used for economy calcs — clamped to the plateau so a level-10 temple
-// yields the same aura/pop as a level-5 one (10 aura/turn, +10 pop).
-export function templeEconomyLevel(level: number): number {
-  return Math.min(level, TEMPLE_ECONOMY_CAP_LEVEL);
+// In-progress founding, tracked with explicit round numbers rather than a
+// loose "turn count" (§6 of the brief): founding completes at the START of
+// the founding player's NEXT round, giving the opponent the rest of the
+// current round to respond.
+export interface FoundingProgress {
+  playerId: number;
+  unitId: string;               // the Builder/Acolyte performing the founding
+  targetState: 'city' | 'temple';
+  fromState: 'neutral' | 'ruins'; // what to revert to if founding fails (§9 — no half-built garbage states)
+  startedRound: number;
+  completesRound: number;       // startedRound + 1 — see resolveFoundingForPlayer in game.ts
 }
 
-// Aura cost to upgrade FROM currentLevel to currentLevel+1 (index = currentLevel;
-// index 0 unused since temples start at level 1). Gentle ~quadratic curve so the
-// top levels are expensive but reachable (old curve was 2^level → 512 at 9→10).
-const TEMPLE_UPGRADE_COSTS: readonly number[] = [
-  0, 2, 3, 5, 7, 10, 14, 19, 25, 32, // 1→2, 2→3, … 9→10
-];
-
-export function templeUpgradeCost(currentLevel: number): number | null {
-  if (currentLevel >= TEMPLE_MAX_LEVEL) return null;
-  return TEMPLE_UPGRADE_COSTS[currentLevel] ?? null;
-}
-
-export interface Temple {
+export interface StrategicSite {
   id: string;
   pos: HexCoord;
-  ownerId: number | null; // null = neutral
-  level: number;          // 1..TEMPLE_MAX_LEVEL
+  state: StrategicSiteState;
+  // Only meaningful (non-null) once state is 'city' or 'temple'. A ruined or
+  // founding site has no owner — do not read this as "who's founding it",
+  // use `founding.playerId` for that.
+  ownerId: number | null;
+  founding: FoundingProgress | null;
+  // Combat stats — 0 while neutral/founding/ruins (not a valid attack
+  // target in those states; see getStructureAt/isAttackableStructure).
+  hp: number;
+  maxHp: number;
+  defense: number;
+}
+
+// The player's permanent home base. Cannot be captured, cannot become
+// Ruins, cannot change owner — destroyed only by reducing HP to 0, which
+// ends the match immediately (§11).
+export interface Capital {
+  id: string;
+  playerId: number;
+  pos: HexCoord;
+  hp: number;
+  maxHp: number;
+  defense: number;
 }
 
 export interface Player {
@@ -122,13 +143,6 @@ export interface Player {
   name: string;
   color: string;
   aura: number;
-  /**
-   * Id of the temple this player started on. Set once by createGameState and
-   * carried through serialization. Gives the AI (and anything else) a durable
-   * "home temple" signal that survives randomized temple placement, instead of
-   * hard-coding a fixed board coordinate.
-   */
-  startTempleId?: string;
   /**
    * Civilization chosen at the end of the Founding Round — null during Round 1
    * and while awaiting the opponent's pick. Set once by chooseFaction() and
@@ -165,15 +179,17 @@ export function mapRadiusForPlayers(numPlayers: number): number {
   return numPlayers <= 2 ? 5 : 6 + Math.max(0, numPlayers - 2);
 }
 
-// Total temple count: one starting temple per player plus one neutral temple
-// per player (2p → 4 temples, matching the classic layout).
-export function templeCountForPlayers(numPlayers: number): number {
-  return numPlayers * 2;
+// One neutral strategic site per player (2p → 1 Capital each + 2 neutral
+// sites, matching §7 of the redesign brief: "2 Capitals, 2 neutral
+// strategic sites"). Capitals themselves are just `players.length`, one each
+// — this function is only about the neutral sites.
+export function neutralSiteCountForPlayers(numPlayers: number): number {
+  return numPlayers;
 }
 
 export type GamePhase = 'playing' | 'gameOver';
 
-export type SelectionMode = 'unit' | 'temple' | null;
+export type SelectionMode = 'unit' | 'site' | null;
 
 // ── Tech tree ──
 
@@ -229,23 +245,31 @@ export interface PlayerTech {
 }
 
 // ── Teleport buildings ──
-
+//
+// Dormant in the v0.2 ruleset (kept — not deleted — per the redesign brief's
+// asset/code-reuse policy; the 'teleports' tech is still live for now since
+// phase 3 doesn't touch the tech tree, but Agrar Roads/Phase 6 movement work
+// will likely replace or remove this). `templeId` is a legacy field name —
+// it anchors to any OWNED structure id now (Capital or a completed
+// city/temple StrategicSite), not the old Temple type.
 export const TELEPORT_BUILD_COST = 5;
-export const TELEPORT_RADIUS = 2;      // max dist from owning temple
-export const TELEPORT_MAX_PER_TEMPLE = 1; // one portal per temple (pairs connect two different temples)
+export const TELEPORT_RADIUS = 2;      // max dist from owning structure
+export const TELEPORT_MAX_PER_TEMPLE = 1; // one portal per structure (pairs connect two different structures)
 
 export interface TeleportBuilding {
   id: string;
   pos: HexCoord;
   builtByPlayerId: number;
-  templeId: string;        // which temple this was built under (for quota)
+  /** @legacyName anchoring structure id — Capital or StrategicSite, not a Temple */
+  templeId: string;
   pairedId: string | null; // id of the partner portal (null until pair is complete)
 }
 
 export interface GameState {
   players: Player[];
   units: Unit[];
-  temples: Temple[];
+  strategicSites: StrategicSite[];
+  capitals: Capital[];
   hills: Set<string>;       // hex keys of hill tiles
   walls: Set<string>;       // hex keys of impassable tiles
   forests: Set<string>;     // hex keys of forest tiles
@@ -280,17 +304,19 @@ export interface GameState {
    */
   selectedUnitId: string | null;
   /** @uiOnly see above */
-  selectedTempleId: string | null;
+  selectedSiteId: string | null;
   /** @uiOnly see above */
   selectionMode: SelectionMode;
   /** @uiOnly see above */
   moveHexes: HexCoord[];
   /** @uiOnly see above */
   attackHexes: HexCoord[];
+  /** @uiOnly enemy STRUCTURES (Capital/City/Temple) the selected unit can attack this turn — separate from attackHexes (enemy units) since structure combat is a distinct action (attackStructure). */
+  structureAttackHexes: HexCoord[];
   /** @uiOnly see above */
   supportHexes: HexCoord[];
   // ── End UI-only fields ────────────────────────────────────────────────────
-  spawnedTempleIds: Set<string>;   // temples that have already spawned a unit this turn
+  spawnedSiteIds: Set<string>;     // structures that have already spawned a unit this turn
   playerTech: PlayerTech[];        // per-player tech research state
   teleportBuildings: TeleportBuilding[];
   /** @uiOnly hexes highlighted during build-placement mode */

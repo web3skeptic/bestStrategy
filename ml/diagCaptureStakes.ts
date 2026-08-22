@@ -1,16 +1,13 @@
-// Pivotal-capture / frequency-vs-leverage diagnostic (G3 report fold). diagCapture
-// showed captures are only 0.57% of decisions — but FREQUENCY ≠ LEVERAGE. Captures
-// here are TEMPLE captures (the win condition: own ALL temples → win). This tool
-// replays the SAME fixed hard-vs-hard games as diagCapture (seed 900k, n=5) and, at
-// each EXPERT capture decision, classifies the target temple by STAKES:
-//   • PIVOTAL-WIN  — capturer would then own every temple → game-winning
-//   • PIVOTAL-ELIM — target is the prior owner's LAST temple → drops them to 0 temples
-//   • HIGH         — high-level temple (level>=2, large economy swing), non-pivotal
-//   • MINOR        — neutral / level-1 grab, non-pivotal
-// No policy net needed — stakes are a property of the STATE + expert action, identical
-// across proposers. Usage: npx tsx ml/diagCaptureStakes.ts [--n 5] [--seed 900000]
+// Pivotal-capture / frequency-vs-leverage diagnostic (G3 report fold).
+//
+// PHASE 3: OBSOLETE. This tool analyzed the old "own ALL temples → win"
+// capture mechanic, which no longer exists (replaced by founding + Capital-HP
+// combat — see src/game.ts §5-11). Left compiling (onMicro is now a
+// permanent no-op — 'capture' can never match) rather than deleted, per the
+// project's "don't delete reusable/historical code" policy, but this script
+// produces empty output and would need a full redesign around the new
+// founding/structure-attack mechanics to be meaningful again.
 import { GameState } from '../src/types';
-import { getTempleAt } from '../src/game';
 import { Micro } from './gameEnv';
 import { streamHardDecisions } from './bcRecord';
 
@@ -26,21 +23,8 @@ function arg(name: string, def?: string): string | undefined {
     myBefore: number; total: number; winsGame: boolean; prevLastTemple: boolean; klass: string };
   const rows: Row[] = [];
 
-  const onMicro = (st: GameState, m: Micro, pid: number) => {
-    if (m.action !== 'capture') return;
-    const unit = st.units.find(u => u.id === (m.params as { unitId?: string }).unitId);
-    if (!unit) return;
-    const temple = getTempleAt(st, unit.pos);
-    if (!temple) return;
-    const total = st.temples.length;
-    const myBefore = st.temples.filter(t => t.ownerId === pid).length;
-    const prevOwner = temple.ownerId;
-    const winsGame = myBefore + 1 === total;                                   // owns all after
-    const prevCount = prevOwner === null ? 0 : st.temples.filter(t => t.ownerId === prevOwner).length;
-    const prevLastTemple = prevOwner !== null && prevCount === 1;              // their last temple
-    const klass = winsGame ? 'PIVOTAL-WIN' : prevLastTemple ? 'PIVOTAL-ELIM'
-      : temple.level >= 2 ? 'HIGH' : 'MINOR';
-    rows.push({ game: 0, pid, level: temple.level, prevOwner, myBefore, total, winsGame, prevLastTemple, klass });
+  const onMicro = (_st: GameState, _m: Micro, _pid: number) => {
+    // no-op — see OBSOLETE note above.
   };
 
   for (let g = 0; g < nGames; g++) {

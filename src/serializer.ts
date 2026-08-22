@@ -6,7 +6,8 @@ export interface SerializedGameState {
   rulesVersion: number;
   players: GameState['players'];
   units: GameState['units'];
-  temples: GameState['temples'];
+  strategicSites: GameState['strategicSites'];
+  capitals: GameState['capitals'];
   hills: string[];
   walls: string[];
   forests: string[];
@@ -19,12 +20,13 @@ export interface SerializedGameState {
   winner: GameState['winner'];
   turnNumber: number;
   selectedUnitId: string | null;
-  selectedTempleId: string | null;
+  selectedSiteId: string | null;
   selectionMode: GameState['selectionMode'];
   moveHexes: GameState['moveHexes'];
   attackHexes: GameState['attackHexes'];
+  structureAttackHexes: GameState['structureAttackHexes'];
   supportHexes: GameState['supportHexes'];
-  spawnedTempleIds: string[];
+  spawnedSiteIds: string[];
   playerTech: { researched: string[] }[];
   teleportBuildings: GameState['teleportBuildings'];
   buildHexes: GameState['buildHexes'];
@@ -33,13 +35,13 @@ export interface SerializedGameState {
 export function serialize(state: GameState): SerializedGameState {
   return {
     ...state,
-    rulesVersion:     RULES_VERSION,
-    hills:            Array.from(state.hills),
-    walls:            Array.from(state.walls),
-    forests:          Array.from(state.forests),
-    explored:         state.explored.map(s => Array.from(s)),
-    spawnedTempleIds: Array.from(state.spawnedTempleIds),
-    playerTech:       state.playerTech.map(pt => ({ researched: Array.from(pt.researched) })),
+    rulesVersion:   RULES_VERSION,
+    hills:          Array.from(state.hills),
+    walls:          Array.from(state.walls),
+    forests:        Array.from(state.forests),
+    explored:       state.explored.map(s => Array.from(s)),
+    spawnedSiteIds: Array.from(state.spawnedSiteIds),
+    playerTech:     state.playerTech.map(pt => ({ researched: Array.from(pt.researched) })),
   };
 }
 
@@ -76,10 +78,9 @@ export function deserialize(data: SerializedGameState): GameState {
     walls:            new Set<string>(data.walls),
     forests:          new Set<string>(data.forests),
     explored:         data.explored.map(arr => new Set<string>(arr)),
-    spawnedTempleIds: new Set<string>(data.spawnedTempleIds),
+    spawnedSiteIds:   new Set<string>(data.spawnedSiteIds),
     playerTech:       data.playerTech.map(pt => ({ researched: new Set<TechId>(pt.researched as TechId[]) })),
-    // Backwards-compatibility: units saved before `hasCaptured` existed default to false.
-    units:            data.units.map(u => ({ ...u, hasCaptured: u.hasCaptured ?? false })),
+    units:            data.units,
     // Live multiplayer is authoritative for selection: the server sends the
     // acting player their current selection + highlight hexes in every
     // state_update (and strips them for the opponent/spectators). Honour
@@ -87,10 +88,11 @@ export function deserialize(data: SerializedGameState): GameState {
     // actually usable — defaulting to safe empties for older payloads that
     // pre-date these fields.
     selectedUnitId:   data.selectedUnitId ?? null,
-    selectedTempleId: data.selectedTempleId ?? null,
+    selectedSiteId:   data.selectedSiteId ?? null,
     selectionMode:    data.selectionMode ?? null,
     moveHexes:        data.moveHexes ?? [],
     attackHexes:      data.attackHexes ?? [],
+    structureAttackHexes: data.structureAttackHexes ?? [],
     supportHexes:     data.supportHexes ?? [],
     buildHexes:       data.buildHexes ?? [],
   };

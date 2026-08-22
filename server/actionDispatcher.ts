@@ -19,10 +19,11 @@ import { GameState, Unit, UnitType, TechId, HexCoord } from '../src/types';
 import {
   selectUnit, deselectAll,
   moveUnit, attackUnit,
-  canCaptureTemple, captureTemple,
+  canStartFounding, startFounding,
+  attackStructure, getStructureAt,
   canDestroyUnit, destroyUnit,
   spawnUnit, endTurn,
-  upgradeTemple, researchTech,
+  researchTech,
   buildTeleportPair,
   resignGame,
   getEffectiveRange,
@@ -30,16 +31,16 @@ import {
   UNIT_STATS, HEALER_HEAL_AMOUNT, DAMAGE_BOOST_AMOUNT, RANGE_BOOST_AMOUNT,
   UNIT_CLASS,
   chooseFaction, isFoundingRound, isAwaitingFactionReveal,
+  getOwnedStructures,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
-  TEMPLE_AURA_PER_LEVEL, TEMPLE_MAX_LEVEL, TEMPLE_POP_CAP_PER_LEVEL, TEMPLE_ECONOMY_CAP_LEVEL,
-  templeUpgradeCost,
-  mapRadiusForPlayers, templeCountForPlayers,
+  mapRadiusForPlayers, neutralSiteCountForPlayers,
   HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE,
   TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
 } from '../src/types';
+import { SITE_ESTABLISH_COST, STRUCTURES } from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
 
 // ── Unified action vocabulary ──
@@ -47,10 +48,10 @@ import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
 export type UnifiedActionName =
   | 'move'
   | 'attack'
+  | 'attack-structure'
   | 'recruit'
-  | 'capture'
+  | 'found'
   | 'destroy'
-  | 'upgrade-temple'
   | 'research'
   | 'build-teleport'
   | 'end-turn'
@@ -67,7 +68,8 @@ export interface UnifiedAction {
 export type LegalAction =
   | { type: 'move'; to: HexCoord }
   | { type: 'attack'; targetId: string }
-  | { type: 'capture'; templeId: string };
+  | { type: 'attack-structure'; targetPos: HexCoord }
+  | { type: 'found'; siteId: string; targetState: 'city' | 'temple' };
 
 export type LegalMovesPerPlayer = Record<string /* unitId */, LegalAction[]>;
 
@@ -130,11 +132,23 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
       .filter(e => visible.has(hexKey(e.pos)))
       .filter(e => isForestUnitRevealed(state, e.pos, unit.playerId));
     for (const e of targets) actions.push({ type: 'attack', targetId: e.id });
+
+    for (const capital of state.capitals) {
+      if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) {
+        actions.push({ type: 'attack-structure', targetPos: capital.pos });
+      }
+    }
+    for (const site of state.strategicSites) {
+      if ((site.state === 'city' || site.state === 'temple') && site.ownerId !== unit.playerId
+        && hexDistance(unit.pos, site.pos) <= effectiveRange) {
+        actions.push({ type: 'attack-structure', targetPos: site.pos });
+      }
+    }
   }
 
-  // Capture action.
-  const capturableTemple = canCaptureTemple(state, unit);
-  if (capturableTemple) actions.push({ type: 'capture', templeId: capturableTemple.id });
+  // Founding action (§7).
+  const foundingCheck = canStartFounding(state, unit);
+  if (foundingCheck) actions.push({ type: 'found', siteId: foundingCheck.site.id, targetState: foundingCheck.targetState });
 
   // NOTE: 'destroy' (disband) is deliberately NOT enumerated here — the AI / RL
   // move generation must never consider disbanding its own units.
@@ -211,19 +225,23 @@ export function buildRulesPayload(): Record<string, unknown> {
   return {
     units: unitTypes,
     techTree,
-    templeMechanics: {
-      auraPerLevel: TEMPLE_AURA_PER_LEVEL,
-      popCapPerLevel: TEMPLE_POP_CAP_PER_LEVEL,
-      maxLevel: TEMPLE_MAX_LEVEL,
-      upgradeCosts: {
-        '1_to_2': templeUpgradeCost(1),
-        '2_to_3': templeUpgradeCost(2),
-        '3_to_4': templeUpgradeCost(3),
-        '4_to_5': templeUpgradeCost(4),
-      },
-      economyCapLevel: TEMPLE_ECONOMY_CAP_LEVEL,
-      incomeFormula: 'min(level, economyCapLevel) * TEMPLE_AURA_PER_LEVEL per owned temple per turn (economy plateaus at economyCapLevel; higher levels are cosmetic)',
-      popCapFormula: 'min(level, economyCapLevel) * TEMPLE_POP_CAP_PER_LEVEL per owned temple',
+    strategicSites: {
+      note: 'Replaces the old instant-capture temple system entirely (phase 3). A neutral or ruined site is founded by a Builder/Acolyte into a City (Agrar) or an actual Temple (Temple faction) over a multi-turn process — see the "found" action and the foundingRound/structures blocks below.',
+      establishCost: SITE_ESTABLISH_COST,
+      states: ['neutral', 'foundingCity', 'foundingTemple', 'city', 'temple', 'ruins'],
+      foundingRules: [
+        'Only a Builder/Acolyte (unit type "founder") standing on a neutral or ruined site, with an unused activation, no enemy on the site, and >= establishCost aura may start founding.',
+        'Starting founding charges establishCost immediately and consumes the founder\'s whole activation — no waiting until completion to pay.',
+        'Founding resolves automatically at the start of the founding player\'s NEXT round: succeeds only if the founder is still alive and on the site, no enemy unit is on the site, and no enemy unit is adjacent to it. Otherwise it fails.',
+        'Failure returns the site to its prior state (neutral or ruins) with NO refund of the aura spent.',
+        'A founding (or completed) site provides zero income/production while in a foundingCity/foundingTemple state.',
+      ],
+    },
+    structures: {
+      note: 'Shared combat model for Capital/City/Temple — see the "attack-structure" action. Structures never revenge (no counter-damage) and are never captured by melee follow-through or by standing on them.',
+      capital: { hp: STRUCTURES.capital.hp, defense: STRUCTURES.capital.defense, note: 'One per player, permanent, cannot become Ruins or change owner. Reaching 0 HP ends the match immediately.' },
+      city: { hp: STRUCTURES.city.hp, defense: STRUCTURES.city.defense, note: 'Agrar founding result. Reaching 0 HP becomes Ruins (refoundable by either faction).' },
+      temple: { hp: STRUCTURES.temple.hp, defense: STRUCTURES.temple.defense, note: 'Temple-faction founding result. Reaching 0 HP becomes Ruins (refoundable by either faction).' },
     },
     terrain: {
       hill: {
@@ -233,7 +251,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         note: 'Range bonus applies to ranged units only (range > 1). Moving onto/off a hill costs full movement budget.',
       },
       forest: {
-        note: 'Reduces vision to 1 when standing inside. Units inside are hidden unless an adjacent enemy unit or owned temple is within 1 hex.',
+        note: 'Reduces vision to 1 when standing inside. Units inside are hidden unless an adjacent enemy unit or owned structure is within 1 hex.',
       },
       wall: { note: 'Impassable.' },
     },
@@ -248,7 +266,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       buildCost: TELEPORT_BUILD_COST,
       radius: TELEPORT_RADIUS,
       maxPerTemple: TELEPORT_MAX_PER_TEMPLE,
-      note: 'Requires "teleports" tech. Each portal must be within radius of a different owned temple. Unit stepping on portal teleports to free neighbour of partner portal.',
+      note: 'Requires "teleports" tech. Each portal must be within radius of a different owned structure (Capital or completed City/Temple). Unit stepping on portal teleports to free neighbour of partner portal.',
     },
     combat: {
       deterministic: true,
@@ -270,15 +288,16 @@ export function buildRulesPayload(): Record<string, unknown> {
     },
     turnStructure: {
       startOfTurn: [
-        'Receive aura income from owned temples (level * 2 per temple)',
+        'Receive aura income: INTERIM flat amount per owned structure (Capital + each completed City/Temple) — placeholder for phase 4 Farm/Devotion economy.',
+        'Resolve any founding this player has due (§6) — succeeds or fails before income is granted, so a structure completing this turn already counts.',
         'Healers restore HP to nearby allies (within support range)',
       ],
       availableActions: [
-        'move — move a unit to a reachable hex (does NOT auto-capture; use a separate capture action)',
+        'move — move a unit to a reachable hex',
         'attack — attack an enemy unit within range (blocked during the Founding Round)',
-        'recruit — spawn a unit at an owned temple (blocked during Founding Round / faction-reveal pause)',
-        'capture — capture the enemy/neutral temple the unit is currently standing on (same restriction)',
-        'upgrade-temple — upgrade an owned temple level (same restriction)',
+        'attack-structure — { unitId, targetPos } attack an enemy Capital/City/Temple within range (same restriction). Structures never revenge.',
+        'recruit — spawn a unit at an owned structure (blocked during Founding Round / faction-reveal pause)',
+        'found — { unitId } start founding at the neutral/ruined site the Builder/Acolyte is standing on (same restriction) — see strategicSites above.',
         'research — research a tech (same restriction)',
         'build-teleport — build a teleport portal pair (same restriction)',
         'end-turn — end the current player\'s turn (blocked only during the faction-reveal pause)',
@@ -287,9 +306,9 @@ export function buildRulesPayload(): Record<string, unknown> {
       ],
       constraints: [
         'A unit can move then attack, or just attack, or just move — but not attack then move.',
-        'Attacking also sets hasMoved=true.',
-        'A temple may recruit MULTIPLE units per turn — there is no per-temple spawn gate. Successive spawns are throttled only by aura, the population cap, and tile occupancy (a freshly spawned unit stands on the temple and must move off before that temple can spawn again).',
-        'Capture is a separate action — it does NOT consume hasMoved/hasAttacked, but each unit can capture at most once per turn (hasCaptured).',
+        'Attacking (unit or structure) also sets hasMoved=true.',
+        'A structure may recruit MULTIPLE units per turn — there is no per-structure spawn gate. Successive spawns are throttled only by aura, the population cap, and tile occupancy (a freshly spawned unit stands on the structure and must move off before it can spawn again).',
+        'Founding is a separate action from move/attack — it consumes the founder\'s WHOLE activation (both move and attack) the instant it starts.',
       ],
     },
     foundingRound: {
@@ -297,17 +316,16 @@ export function buildRulesPayload(): Record<string, unknown> {
       factions: ['agrar', 'temple'],
     },
     winConditions: [
-      'Own ALL temples → win',
-      'All other players have no units AND no temples → win (N-player: last player standing)',
+      'Destroy the enemy Capital (hp <= 0) → immediate win. This is the ONLY normal victory condition — there is no more "own every site" check and no elimination-by-attrition fallback; a Capital is permanent until destroyed.',
     ],
     startingConditions: {
       startingAura: 2,
-      startingUnits: '1 Warrior + 1 Archer + 1 Founder per player, placed near their home temple (Founding Round loadout — see foundingRound above). Faction-flavored recruiting begins only after the faction reveal.',
-      templeLayout: 'N owned temples (one per player) + N neutral temples = 2N total, placed randomly each game with a minimum separation and maximized spread',
+      startingUnits: '1 Warrior + 1 Archer + 1 Founder per player, placed near their Capital (Founding Round loadout — see foundingRound above). Faction-flavored recruiting begins only after the faction reveal.',
+      siteLayout: 'One permanent Capital per player + neutralSiteCountForPlayers(N) shared neutral strategic sites (2p → 2 Capitals + 2 neutral sites), placed randomly each game with a minimum separation and maximized spread.',
       mapScalesWithPlayers: true,
       mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2); 1v1 (the only supported online match size) is a fixed radius 5',
       mapRadiusExamples: { '2p': mapRadiusForPlayers(2), '3p': mapRadiusForPlayers(3), '4p': mapRadiusForPlayers(4) },
-      templeCountFormula: 'templeCountForPlayers(N) = 2N',
+      neutralSiteCountFormula: 'neutralSiteCountForPlayers(N) = N',
       note: 'Online rooms are 1v1 only. N-player (3-6) game creation still works in this engine/headless API for tooling but is not an online-lobby-facing feature.',
     },
   };
@@ -408,24 +426,44 @@ export function executeAction(
         return { ok: true, action, log, broadcastToBoth: true };
       }
 
-      case 'capture': {
-        // unitId is optional — if omitted, the dispatcher uses state.selectedUnitId
-        // (legacy WS path: the FE has already selected the unit via action_select_unit).
-        const { unitId: unitIdParam } = params as { unitId?: string };
-        const unitId = unitIdParam ?? state.selectedUnitId ?? null;
-        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId (and no current selection)');
+      case 'attack-structure': {
+        const { unitId, targetPos } = params as { unitId?: string; targetPos?: HexCoord };
+        if (!unitId || !targetPos) return fail(state, playerSlot, action, 'Missing unitId or targetPos');
+
+        const ref = getStructureAt(state, targetPos);
+        if (!ref) return fail(state, playerSlot, action, `No attackable structure at (${targetPos.q},${targetPos.r})`);
+
+        selectUnit(state, unitId);
+        if (state.selectedUnitId !== unitId) {
+          return fail(state, playerSlot, action, `Cannot select unit ${unitId}`);
+        }
+
+        const combat = attackStructure(state, targetPos);
+        if (!combat) {
+          deselectAll(state);
+          return fail(state, playerSlot, action, `Invalid structure attack from ${unitId} to (${targetPos.q},${targetPos.r})`);
+        }
+        const kind = ref.kind === 'capital' ? 'Capital' : ref.site.state === 'ruins' ? 'structure' : 'structure';
+        log.push(`Unit ${unitId} attacked ${kind} at (${targetPos.q},${targetPos.r}): ${combat.damageDealt} dmg dealt`);
+        if (combat.destroyed) log.push(ref.kind === 'capital' ? 'Capital destroyed!' : 'Structure destroyed — reduced to Ruins');
+        if (combat.gameOver) log.push(`Game over — player ${playerSlot} wins`);
+        deselectAll(state);
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'found': {
+        const { unitId } = params as { unitId?: string };
+        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId');
 
         const unit = state.units.find(u => u.id === unitId && u.hp > 0);
         if (!unit) return fail(state, playerSlot, action, `Unit ${unitId} not found or dead`);
         if (unit.playerId !== playerSlot) return fail(state, playerSlot, action, `Unit ${unitId} is not owned by player ${playerSlot}`);
 
-        const temple = canCaptureTemple(state, unit);
-        if (!temple) {
-          return fail(state, playerSlot, action, `Unit ${unitId} cannot capture (no enemy/neutral temple on tile, or already captured this turn)`);
+        const ok = startFounding(state, unitId);
+        if (!ok) {
+          return fail(state, playerSlot, action, `Unit ${unitId} cannot start founding here (not a Builder/Acolyte, site not neutral/ruins, enemy present, already used this turn, or insufficient aura)`);
         }
-        captureTemple(state, unit, temple);
-        log.push(`Unit ${unitId} captured temple ${temple.id}`);
-        // Capture doesn't manipulate selection; leave it as-is.
+        log.push(`Unit ${unitId} began founding at (${unit.pos.q},${unit.pos.r})`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 
@@ -446,16 +484,6 @@ export function executeAction(
         return { ok: true, action, log, broadcastToBoth: true };
       }
 
-      case 'upgrade-temple': {
-        const { templeId } = params as { templeId?: string };
-        if (!templeId) return fail(state, playerSlot, action, 'Missing templeId');
-        const ok = upgradeTemple(state, templeId);
-        if (!ok) return fail(state, playerSlot, action, `Cannot upgrade temple ${templeId} (not owned, max level, or insufficient aura)`);
-        const temple = state.temples.find(t => t.id === templeId);
-        log.push(`Temple ${templeId} upgraded to level ${temple?.level}`);
-        return { ok: true, action, log, broadcastToBoth: true };
-      }
-
       case 'research': {
         const { techId } = params as { techId?: TechId };
         if (!techId) return fail(state, playerSlot, action, 'Missing techId');
@@ -466,20 +494,22 @@ export function executeAction(
       }
 
       case 'recruit': {
-        const { unitType, templeId } = params as { unitType?: UnitType; templeId?: string };
-        if (!unitType || !templeId) return fail(state, playerSlot, action, 'Missing unitType or templeId');
-        const ok = spawnUnit(state, templeId, unitType);
-        if (!ok) return fail(state, playerSlot, action, `Cannot recruit ${unitType} at temple ${templeId} (not owned, can't afford, pop cap, tile occupied, or unit locked)`);
-        log.push(`Player ${playerSlot} recruited ${unitType} at temple ${templeId}`);
+        // templeId is a legacy wire-param name — it's actually any owned
+        // structure id (Capital or completed City/Temple).
+        const { unitType, templeId: structureId } = params as { unitType?: UnitType; templeId?: string };
+        if (!unitType || !structureId) return fail(state, playerSlot, action, 'Missing unitType or templeId');
+        const ok = spawnUnit(state, structureId, unitType);
+        if (!ok) return fail(state, playerSlot, action, `Cannot recruit ${unitType} at structure ${structureId} (not owned, can't afford, pop cap, tile occupied, or unit locked)`);
+        log.push(`Player ${playerSlot} recruited ${unitType} at structure ${structureId}`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 
       case 'build-teleport': {
-        const { templeId, pos, targetPos } = params as { templeId?: string; pos?: HexCoord; targetPos?: HexCoord };
-        if (!templeId || !pos || !targetPos) return fail(state, playerSlot, action, 'Missing templeId, pos, or targetPos for teleport build');
-        const ok = buildTeleportPair(state, templeId, pos, targetPos);
-        if (!ok) return fail(state, playerSlot, action, `Cannot build teleport pair from temple ${templeId}`);
-        log.push(`Player ${playerSlot} built teleport pair near temple ${templeId}`);
+        const { templeId: anchorId, pos, targetPos } = params as { templeId?: string; pos?: HexCoord; targetPos?: HexCoord };
+        if (!anchorId || !pos || !targetPos) return fail(state, playerSlot, action, 'Missing templeId, pos, or targetPos for teleport build');
+        const ok = buildTeleportPair(state, anchorId, pos, targetPos);
+        if (!ok) return fail(state, playerSlot, action, `Cannot build teleport pair from structure ${anchorId}`);
+        log.push(`Player ${playerSlot} built teleport pair near structure ${anchorId}`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

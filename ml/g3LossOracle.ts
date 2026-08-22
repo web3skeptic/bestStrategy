@@ -19,13 +19,19 @@
 // Determinism: wrapper only READS state (no Math.random) and calls the real search
 // TurnFn once per turn → RNG stream bit-identical to the gate. Reads losingGameIds
 // from /tmp/g3buckets/ref-winners.json (the ground-truth anchored to the gate headline).
+// PHASE 3: OBSOLETE. This tool analyzed the old "capture a temple" mechanic
+// (canCaptureTemple, temple levels, hasCaptured), which no longer exists
+// (replaced by founding + Capital-HP combat — see src/game.ts §5-11).
+// reachableCaptures()/brinkScan() are now permanent no-ops; left compiling
+// per the project's "don't delete reusable/historical code" policy, but this
+// script needs a full redesign around founding/structure-attack
+// opportunities to be meaningful again.
 import { runGame, hardTurn, TurnFn } from './play';
 import { makePolicySearchBot } from './searchPolicy';
 import { MLP } from './mlp';
 import { featurize } from './features';
 import { heuristicLeaf } from './heuristicLeaf';
-import { canCaptureTemple, getEffectiveRange } from '../src/game';
-import { getReachableHexes, hexEqual, hexKey, hexDistance } from '../src/hex';
+import { getOwnedStructures } from '../src/game';
 import { GameState, HexCoord } from '../src/types';
 import * as fs from 'fs';
 
@@ -50,53 +56,12 @@ interface OracleTurn {
   brink: Brink[];                // populated only when myBefore == total-1
 }
 
-function reachableCaptures(s: GameState, pid: number): Reach[] {
-  const out: Reach[] = [];
-  const total = s.temples.length;
-  const myBefore = s.temples.filter(t => t.ownerId === pid).length;
-  const myUnits = s.units.filter(u => u.hp > 0 && u.playerId === pid && !u.hasCaptured);
-  const wallPos: HexCoord[] = [...s.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
-  for (const t of s.temples) {
-    if (t.ownerId === pid) continue;
-    let reachable = false;
-    for (const u of myUnits) {
-      if (hexEqual(u.pos, t.pos)) { reachable = canCaptureTemple(s, u) !== null; if (reachable) break; continue; }
-      const occupied = s.units.filter(x => x.hp > 0 && x.id !== u.id).map(x => x.pos);
-      const hexes = getReachableHexes(u.pos, u.stats.speed, s.mapRadius, [...occupied, ...wallPos], s.hills);
-      if (hexes.some(h => hexEqual(h, t.pos))) { reachable = true; break; }
-    }
-    if (!reachable) continue;
-    const winsGame = myBefore + 1 === total;
-    const prevOwner = t.ownerId;
-    const prevCount = prevOwner === null ? 0 : s.temples.filter(x => x.ownerId === prevOwner).length;
-    const prevLast = prevOwner !== null && prevCount === 1;
-    const klass = winsGame ? 'PIVOTAL-WIN' : prevLast ? 'PIVOTAL-ELIM' : t.level >= 2 ? 'HIGH' : 'MINOR';
-    out.push({ templeId: t.id, klass, level: t.level });
-  }
-  return out;
+function reachableCaptures(_s: GameState, _pid: number): Reach[] {
+  return []; // no-op — see OBSOLETE note above.
 }
 
-function brinkScan(s: GameState, pid: number): Brink[] {
-  const total = s.temples.length;
-  if (s.temples.filter(t => t.ownerId === pid).length !== total - 1) return [];
-  const myUnits = s.units.filter(u => u.hp > 0 && u.playerId === pid);
-  const wallPos: HexCoord[] = [...s.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
-  const out: Brink[] = [];
-  for (const t of s.temples) {
-    if (t.ownerId === pid) continue; // the missing temple(s)
-    const occ = s.units.find(u => u.hp > 0 && hexEqual(u.pos, t.pos));
-    let single = false, minDist = Infinity, attackable = false;
-    for (const u of myUnits) {
-      minDist = Math.min(minDist, hexDistance(u.pos, t.pos));
-      if (hexEqual(u.pos, t.pos)) { if (canCaptureTemple(s, u)) single = true; continue; }
-      const occupied = s.units.filter(x => x.hp > 0 && x.id !== u.id).map(x => x.pos);
-      const hexes = getReachableHexes(u.pos, u.stats.speed, s.mapRadius, [...occupied, ...wallPos], s.hills);
-      if (hexes.some(h => hexEqual(h, t.pos))) single = true;
-      if (occ && occ.playerId !== pid && !u.hasAttacked && hexDistance(u.pos, occ.pos) <= getEffectiveRange(s, u)) attackable = true;
-    }
-    out.push({ templeId: t.id, reachableSingleUnit: single, occupantPlayer: occ ? occ.playerId : null, minBotDist: minDist, occupantAttackableByBot: attackable });
-  }
-  return out;
+function brinkScan(_s: GameState, _pid: number): Brink[] {
+  return []; // no-op — see OBSOLETE note above.
 }
 
 function makeBot(botId: number, rows: OracleTurn[]): TurnFn {
@@ -105,13 +70,13 @@ function makeBot(botId: number, rows: OracleTurn[]): TurnFn {
   const real = makePolicySearchBot(pnet, vnet, hardTurn, { K, temp: TEMP, leaf, depth: DEPTH });
   return (s) => {
     const pid = s.currentPlayerIndex;
-    const total = s.temples.length;
-    const ownedBefore = new Set(s.temples.filter(t => t.ownerId === pid).map(t => t.id));
+    const total = s.capitals.length + s.strategicSites.length;
+    const ownedBefore = new Set(getOwnedStructures(s, pid).map(t => t.id));
     const reachable = reachableCaptures(s, pid);
     const brink = brinkScan(s, pid);
     const turn = s.turnNumber;
     real(s);
-    const ownedAfter = new Set(s.temples.filter(t => t.ownerId === pid).map(t => t.id));
+    const ownedAfter = new Set(getOwnedStructures(s, pid).map(t => t.id));
     const convertedIds = [...ownedAfter].filter(id => !ownedBefore.has(id));
     rows.push({ turn, myBefore: ownedBefore.size, myAfter: ownedAfter.size, total, reachable, convertedIds, brink });
   };

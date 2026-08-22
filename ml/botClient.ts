@@ -145,8 +145,11 @@ export function makeRLTurnFn(opp: TurnFn, rng: () => number = Math.random): Turn
 function describe(state: GameState, m: Micro): AIAction | null {
   const p = m.params as Record<string, unknown>;
   const unitById = (id: unknown) => (typeof id === 'string' ? state.units.find(u => u.id === id) : undefined);
-  const templeById = (id: unknown) => (typeof id === 'string' ? state.temples.find(t => t.id === id) : undefined);
-  const home = state.temples.find(t => t.ownerId === state.currentPlayerIndex)?.pos ?? { q: 0, r: 0 };
+  const structureById = (id: unknown) => {
+    if (typeof id !== 'string') return undefined;
+    return state.capitals.find(c => c.id === id) ?? state.strategicSites.find(t => t.id === id);
+  };
+  const home = state.capitals.find(c => c.playerId === state.currentPlayerIndex)?.pos ?? { q: 0, r: 0 };
   switch (m.action) {
     case 'move': {
       const u = unitById(p.unitId); const to = p.to as HexCoord | undefined;
@@ -158,17 +161,17 @@ function describe(state: GameState, m: Micro): AIAction | null {
       const pos = t ? { ...t.pos } : (u ? { ...u.pos } : home);
       return { type: 'attack', pos, description: `Hard AI ${u?.type ?? 'unit'} attacks at (${pos.q},${pos.r})` };
     }
-    case 'capture': {
+    case 'attack-structure': {
+      const pos = (p.targetPos as HexCoord | undefined) ?? home;
+      return { type: 'attack', pos, description: `Hard AI strikes a structure at (${pos.q},${pos.r})` };
+    }
+    case 'found': {
       const u = unitById(p.unitId); const pos = u ? { ...u.pos } : home;
-      return { type: 'upgrade', pos, description: `Hard AI captures temple at (${pos.q},${pos.r})` };
+      return { type: 'upgrade', pos, description: `Hard AI begins founding at (${pos.q},${pos.r})` };
     }
     case 'recruit': {
-      const t = templeById(p.templeId); const pos = t ? { ...t.pos } : home;
+      const t = structureById(p.templeId); const pos = t ? { ...t.pos } : home;
       return { type: 'spawn', pos, description: `Hard AI recruits ${String(p.unitType)} at (${pos.q},${pos.r})` };
-    }
-    case 'upgrade-temple': {
-      const t = templeById(p.templeId); const pos = t ? { ...t.pos } : home;
-      return { type: 'upgrade', pos, description: `Hard AI upgrades temple at (${pos.q},${pos.r})` };
     }
     case 'research':
       return { type: 'upgrade', pos: { ...home }, description: `Hard AI researches ${String(p.techId)}` };

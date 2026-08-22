@@ -1,15 +1,17 @@
 import {
   GameState, HexCoord, Unit, UnitType, TechId,
-  UNIT_COSTS, templeUpgradeCost, TECH_COST,
-  TEMPLE_ECONOMY_CAP_LEVEL, TELEPORT_BUILD_COST, SUPPORT_RANGE,
+  UNIT_COSTS, TECH_COST,
+  TELEPORT_BUILD_COST, SUPPORT_RANGE,
 } from './types';
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
 import { calculateDamage } from './combat';
 import {
   getCurrentPlayer, getUnitAt,
   spawnUnit, selectUnit, moveUnit, attackUnit, deselectAll,
-  captureTemple, canCaptureTemple,
-  upgradeTemple, researchTech, canResearch,
+  canStartFounding, startFounding,
+  attackStructure, getStructureAt,
+  getOwnedStructures, getPlayerCapital,
+  researchTech, canResearch,
   buildTeleportPair, canBuildTeleportPair, getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples, getTeleportAt,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
@@ -81,9 +83,12 @@ function unitValue(type: UnitType): number {
   }
 }
 
+// A player is "alive" as long as their Capital stands — it's permanent and
+// indestructible except by combat, and its destruction already ends the
+// game (checkWinCondition), so in practice this is always true until then.
 function isPlayerAlive(state: GameState, playerId: number): boolean {
-  return state.units.some(u => u.hp > 0 && u.playerId === playerId)
-    || state.temples.some(t => t.ownerId === playerId);
+  const capital = getPlayerCapital(state, playerId);
+  return !!capital && capital.hp > 0;
 }
 
 function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
@@ -150,6 +155,13 @@ function currentAttackTargets(state: GameState): Unit[] {
     .filter((u): u is Unit => !!u && u.hp > 0);
 }
 
+// Enemy structures (Capital/City/Temple) currently in range — a hard-AI-only
+// concern (finishing the enemy Capital is the whole point of the redesign),
+// so keep it a separate query from unit targets rather than merging shapes.
+function currentStructureAttackHexes(state: GameState): HexCoord[] {
+  return state.structureAttackHexes;
+}
+
 function bestBy<T>(items: T[], score: (t: T) => number): T | null {
   let best: T | null = null;
   let bestScore = -Infinity;
@@ -160,65 +172,90 @@ function bestBy<T>(items: T[], score: (t: T) => number): T | null {
   return best;
 }
 
-// ── Objective selection: defend threatened temples → expand → hunt weakest enemy ──
+// ── Objective selection: defend threatened structures → besiege → hunt weakest enemy ──
 
 function weakestEnemyTarget(state: GameState, unit: Unit, aiPlayerId: number): HexCoord | null {
   const enemyPlayers = state.players.filter(p => p.id !== aiPlayerId && isPlayerAlive(state, p.id));
   if (enemyPlayers.length === 0) return null;
-  // Strength = total unit HP + a premium per owned temple. Focus the weakest.
+  // Strength = total unit HP + a premium per owned structure + remaining Capital
+  // HP (the actual win condition now). Focus the weakest.
   const target = bestBy(enemyPlayers, p => {
     const hp = state.units.filter(u => u.hp > 0 && u.playerId === p.id).reduce((s, u) => s + u.hp, 0);
-    const temples = state.temples.filter(t => t.ownerId === p.id).length;
-    return -(hp + temples * 20);
+    const structures = getOwnedStructures(state, p.id).length;
+    const capitalHp = getPlayerCapital(state, p.id)?.hp ?? 0;
+    return -(hp + structures * 20 + capitalHp);
   });
   if (!target) return null;
   const revealed = state.units.filter(u =>
     u.hp > 0 && u.playerId === target.id && isForestUnitRevealed(state, u.pos, aiPlayerId));
   const nearestUnit = bestBy(revealed, u => -hexDistance(unit.pos, u.pos));
   if (nearestUnit) return nearestUnit.pos;
-  const temples = state.temples.filter(t => t.ownerId === target.id);
-  const nearestTemple = bestBy(temples, t => -hexDistance(unit.pos, t.pos));
-  return nearestTemple ? nearestTemple.pos : null;
+  const structures = getOwnedStructures(state, target.id);
+  const nearestStructure = bestBy(structures, s => -hexDistance(unit.pos, s.pos));
+  return nearestStructure ? nearestStructure.pos : null;
 }
 
 function pickObjective(state: GameState, unit: Unit, aiPlayerId: number): HexCoord | null {
-  const myTemples = state.temples.filter(t => t.ownerId === aiPlayerId);
+  const myStructures = getOwnedStructures(state, aiPlayerId);
   const enemies = revealedEnemies(state, aiPlayerId);
 
-  // 1. Defend an owned temple under imminent threat with no adjacent defender.
-  for (const t of myTemples) {
-    const threatened = enemies.some(e => hexDistance(e.pos, t.pos) <= 2);
+  // 1. Defend an owned structure under imminent threat with no adjacent defender.
+  for (const s of myStructures) {
+    const threatened = enemies.some(e => hexDistance(e.pos, s.pos) <= 2);
     if (!threatened) continue;
     const defended = state.units.some(u =>
-      u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, t.pos) <= 1);
-    if (!defended) return t.pos;
+      u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, s.pos) <= 1);
+    if (!defended) return s.pos;
   }
 
-  // 2. Expand: nearest temple we don't own (neutral or enemy).
-  const capturable = state.temples.filter(t => t.ownerId !== aiPlayerId);
-  const nearestTemple = bestBy(capturable, t => -hexDistance(unit.pos, t.pos));
-  const templeDist = nearestTemple ? hexDistance(unit.pos, nearestTemple.pos) : Infinity;
+  // 2. Besiege: nearest enemy structure — destroying the Capital wins the game
+  // (§11), and any City/Temple along the way is a legitimate combat target too.
+  const enemyStructures = state.players
+    .filter(p => p.id !== aiPlayerId)
+    .flatMap(p => getOwnedStructures(state, p.id));
+  const nearestStructure = bestBy(enemyStructures, s => -hexDistance(unit.pos, s.pos));
+  const structureDist = nearestStructure ? hexDistance(unit.pos, nearestStructure.pos) : Infinity;
 
-  // 3. Hunt the weakest enemy.
+  // 3. Hunt the weakest enemy's units.
   const enemyTarget = weakestEnemyTarget(state, unit, aiPlayerId);
   const enemyDist = enemyTarget ? hexDistance(unit.pos, enemyTarget) : Infinity;
 
-  if (nearestTemple && templeDist <= enemyDist) return nearestTemple.pos;
+  if (nearestStructure && structureDist <= enemyDist) return nearestStructure.pos;
   if (enemyTarget) return enemyTarget;
-  return nearestTemple ? nearestTemple.pos : null;
+  return nearestStructure ? nearestStructure.pos : null;
 }
 
 // ── Per-unit action (engine-routed) ──
 
+// If the unit can attack an enemy structure right now, do it — prioritising
+// the enemy Capital (that's the actual win condition, §11) over a City/Temple.
+function tryAttackStructure(state: GameState, unit: Unit, hard: boolean, actions: AIAction[]): boolean {
+  const hexes = currentStructureAttackHexes(state);
+  if (hexes.length === 0) return false;
+  const scored = bestBy(hexes, h => {
+    const ref = getStructureAt(state, h);
+    if (!ref) return -Infinity;
+    return ref.kind === 'capital' ? 1000 - ref.capital.hp : 500 - ref.site.hp;
+  });
+  if (!scored) return false;
+  observe(state, 'attack-structure', { unitId: unit.id, targetPos: scored });
+  const result = attackStructure(state, scored);
+  if (!result) return false;
+  actions.push({ type: 'attack', pos: { ...scored }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} strikes a structure at (${scored.q},${scored.r})${result.gameOver ? ' — Capital destroyed!' : ''}` });
+  return true;
+}
+
 function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: boolean, actions: AIAction[]): void {
   if (state.phase !== 'playing' || unit.hp <= 0) return;
 
-  // Free capture of the temple we stand on (does not consume move/attack).
-  const cap = canCaptureTemple(state, unit);
-  if (cap) {
-    observe(state, 'capture', { unitId: unit.id });
-    captureTemple(state, unit, cap);
-    actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI captures temple at (${unit.pos.q},${unit.pos.r})` });
+  // Founder units try to found on the neutral/ruined site they're standing on
+  // (no-op — canStartFounding returns null — for every other unit type).
+  const founding = canStartFounding(state, unit);
+  if (founding) {
+    observe(state, 'found', { unitId: unit.id });
+    startFounding(state, unit.id);
+    actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI begins founding a ${founding.targetState} at (${unit.pos.q},${unit.pos.r})` });
+    return; // founding spends the whole activation
   }
   if (unit.hasAttacked) return;
   if (!select(state, unit)) return;
@@ -232,6 +269,9 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
     actions.push({ type: 'attack', pos: { ...bestHere.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} kills at (${bestHere.pos.q},${bestHere.pos.r})` });
     return;
   }
+
+  // No unit kill available — take a shot at an enemy structure if one is in range.
+  if (!bestHere && tryAttackStructure(state, unit, hard, actions)) return;
 
   // Otherwise consider repositioning toward the best objective / a kill.
   if (!unit.hasMoved) {
@@ -265,6 +305,8 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
           observe(state, 'attack', { unitId: unit.id, targetId: bestAfter.id });
           attackUnit(state, bestAfter.pos);
           actions.push({ type: 'move+attack', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} advances (${before.q},${before.r})→(${unit.pos.q},${unit.pos.r}) and strikes` });
+        } else if (tryAttackStructure(state, unit, hard, actions)) {
+          // handled — moved and struck a structure
         } else {
           actions.push({ type: 'move', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} advances to (${unit.pos.q},${unit.pos.r})` });
         }
@@ -278,7 +320,9 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
     observe(state, 'attack', { unitId: unit.id, targetId: bestHere.id });
     attackUnit(state, bestHere.pos);
     actions.push({ type: 'attack', pos: { ...bestHere.pos }, description: `${hard ? 'Hard ' : ''}AI ${unit.type} attacks at (${bestHere.pos.q},${bestHere.pos.r})` });
+    return;
   }
+  tryAttackStructure(state, unit, hard, actions);
 }
 
 // Support units (healer / boosters) never charge — they trail the combat cluster
@@ -336,7 +380,7 @@ const HARD_RESEARCH_PLAN: TechId[] = [
 function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   const player = state.players[aiPlayerId]!;
   if (player.aura < TECH_COST) return;
-  const home = state.temples.find(t => t.ownerId === aiPlayerId);
+  const home = getPlayerCapital(state, aiPlayerId);
   for (const tech of HARD_RESEARCH_PLAN) {
     if (!canResearch(state, tech)) continue;
     observe(state, 'research', { techId: tech });
@@ -347,41 +391,23 @@ function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): 
   }
 }
 
-function doUpgrades(state: GameState, aiPlayerId: number, homeTempleId: string | undefined, actions: AIAction[]): void {
-  const player = state.players[aiPlayerId]!;
-  const RESERVE = 6; // keep some aura for recruiting
-  const temples = state.temples
-    .filter(t => t.ownerId === aiPlayerId && t.level < TEMPLE_ECONOMY_CAP_LEVEL)
-    .sort((a, b) => {
-      const ah = a.id === homeTempleId ? 0 : 1;
-      const bh = b.id === homeTempleId ? 0 : 1;
-      return ah - bh || a.level - b.level;
-    });
-  for (const t of temples) {
-    const cost = templeUpgradeCost(t.level);
-    if (cost === null || player.aura < cost) continue;
-    const priority = t.id === homeTempleId && t.level < 3; // rush home to L3 first
-    if (!priority && player.aura < cost + RESERVE) continue;
-    observe(state, 'upgrade-temple', { templeId: t.id });
-    if (upgradeTemple(state, t.id)) {
-      actions.push({ type: 'upgrade', pos: { ...t.pos }, description: `Hard AI upgrades temple to L${t.level} at (${t.pos.q},${t.pos.r})` });
-    }
-  }
-}
+// PHASE 3 NOTE: temple leveling is gone — there's no more per-structure
+// "upgrade" economy action to spend surplus aura on (Farms/Devotion land in
+// phase 4). The hard AI's surplus aura now just goes toward recruiting more.
 
 function doTeleport(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   if (!state.playerTech[aiPlayerId]?.researched.has('teleports')) return;
   const player = state.players[aiPlayerId]!;
   if (player.aura < TELEPORT_BUILD_COST) return;
-  for (const temple of state.temples.filter(t => t.ownerId === aiPlayerId)) {
-    if (!canBuildTeleportPair(state, temple.id)) continue;
-    const hexesA = getValidTeleportHexes(state, temple.id);
-    const hexesB = getValidTeleportHexesForOtherTemples(state, temple.id);
+  for (const anchor of getOwnedStructures(state, aiPlayerId)) {
+    if (!canBuildTeleportPair(state, anchor.id)) continue;
+    const hexesA = getValidTeleportHexes(state, anchor.id);
+    const hexesB = getValidTeleportHexesForOtherTemples(state, anchor.id);
     if (hexesA.length === 0 || hexesB.length === 0) continue;
-    // Connect the two most-distant temples for maximum redeploy value.
-    const posB = bestBy(hexesB, h => hexDistance(temple.pos, h))!;
-    observe(state, 'build-teleport', { templeId: temple.id, pos: hexesA[0]!, targetPos: posB });
-    if (buildTeleportPair(state, temple.id, hexesA[0]!, posB)) {
+    // Connect the two most-distant structures for maximum redeploy value.
+    const posB = bestBy(hexesB, h => hexDistance(anchor.pos, h))!;
+    observe(state, 'build-teleport', { templeId: anchor.id, pos: hexesA[0]!, targetPos: posB });
+    if (buildTeleportPair(state, anchor.id, hexesA[0]!, posB)) {
       actions.push({ type: 'upgrade', pos: { ...hexesA[0]! }, description: `Hard AI builds teleport at (${hexesA[0]!.q},${hexesA[0]!.r})` });
       return; // one pair per turn
     }
@@ -426,15 +452,15 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
 
 function spawnPass(state: GameState, aiPlayerId: number, hard: boolean, actions: AIAction[]): void {
   const player = state.players[aiPlayerId]!;
-  for (const temple of state.temples.filter(t => t.ownerId === aiPlayerId)) {
-    if (getUnitAt(state, temple.pos)) continue; // occupied — can't spawn (throttles multi-spawn)
+  for (const structure of getOwnedStructures(state, aiPlayerId)) {
+    if (getUnitAt(state, structure.pos)) continue; // occupied — can't spawn (throttles multi-spawn)
     if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
     const unlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!);
     const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, hard);
     if (!type) continue;
-    observe(state, 'recruit', { unitType: type, templeId: temple.id });
-    if (spawnUnit(state, temple.id, type)) {
-      actions.push({ type: 'spawn', pos: { ...temple.pos }, description: `${hard ? 'Hard ' : ''}AI recruits ${type} at (${temple.pos.q},${temple.pos.r})` });
+    observe(state, 'recruit', { unitType: type, templeId: structure.id });
+    if (spawnUnit(state, structure.id, type)) {
+      actions.push({ type: 'spawn', pos: { ...structure.pos }, description: `${hard ? 'Hard ' : ''}AI recruits ${type} at (${structure.pos.q},${structure.pos.r})` });
     }
   }
 }
@@ -446,23 +472,12 @@ function runTurn(state: GameState, aiPlayerId: number, hard: boolean): AIAction[
   const player = state.players.find(p => p.id === aiPlayerId);
   if (!player || state.phase !== 'playing' || getCurrentPlayer(state).id !== aiPlayerId) return actions;
 
-  const aiTemples = state.temples.filter(t => t.ownerId === aiPlayerId);
-  const homeTemple =
-    (player.startTempleId ? aiTemples.find(t => t.id === player.startTempleId) : undefined) ?? aiTemples[0];
-
-  // 1. Economy (spend aura — never float it).
+  // 1. Economy (spend aura — never float it). Temple leveling is gone (phase 3),
+  // so the normal AI has no separate economy step any more — its surplus aura
+  // just goes straight to recruiting below.
   if (hard) {
     doResearch(state, aiPlayerId, actions);
-    doUpgrades(state, aiPlayerId, homeTemple?.id, actions);
     doTeleport(state, aiPlayerId, actions);
-  } else if (homeTemple && homeTemple.level < 3) {
-    // Normal AI: only nudges its home temple up when it has clear surplus.
-    const cost = templeUpgradeCost(homeTemple.level);
-    if (cost !== null && player.aura >= cost + 3 && Math.random() < 0.5) {
-      if (upgradeTemple(state, homeTemple.id)) {
-        actions.push({ type: 'upgrade', pos: { ...homeTemple.pos }, description: `AI upgrades home temple to L${homeTemple.level}` });
-      }
-    }
   }
 
   // 2. Recruit (pass 1).

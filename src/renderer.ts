@@ -1,4 +1,4 @@
-import { GameState, HexCoord, Unit, Temple, TeleportBuilding, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, TeleportBuilding, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS } from './types';
 import { generateHexMap, hexToPixel, hexEqual, hexKey, hexDistance } from './hex';
 import { getCurrentPlayer, calculateEncirclement, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getSupportBoostsForUnit } from './game';
 
@@ -442,11 +442,15 @@ export class Renderer {
       }
     }
 
-    // Draw temples (only if explored)
-    for (const temple of state.temples) {
-      const key = hexKey(temple.pos);
+    // Draw Capitals + strategic sites (only if explored)
+    for (const capital of state.capitals) {
+      if (!explored.has(hexKey(capital.pos))) continue;
+      this.drawCapital(capital, state, size, cx, cy);
+    }
+    for (const site of state.strategicSites) {
+      const key = hexKey(site.pos);
       if (!explored.has(key)) continue;
-      this.drawTemple(temple, state, size, cx, cy);
+      this.drawSite(site, state, size, cx, cy);
     }
 
     // Draw teleport buildings (visible if tile is explored)
@@ -791,15 +795,54 @@ export class Renderer {
     }
   }
 
-  private drawTemple(temple: Temple, state: GameState, size: number, cx: number, cy: number): void {
+  // The permanent home base — always owner-colored (never neutral), drawn
+  // larger than a strategic site so it reads as the "capital" silhouette.
+  private drawCapital(capital: Capital, state: GameState, size: number, cx: number, cy: number): void {
     const ctx = this.ctx;
-    const { x, y } = hexToPixel(temple.pos, size, cx, cy);
+    const { x, y } = hexToPixel(capital.pos, size, cx, cy);
     const s = size;
     const iconScale = s / BASE_HEX_SIZE;
-    const isSelected = state.selectedTempleId === temple.id;
-
-    const owner = temple.ownerId !== null ? state.players.find(p => p.id === temple.ownerId) : null;
+    const owner = state.players.find(p => p.id === capital.playerId);
     const color = owner ? owner.color : '#888888';
+
+    ctx.beginPath();
+    ctx.moveTo(x, y - s * 0.55);
+    ctx.lineTo(x - s * 0.42, y + s * 0.3);
+    ctx.lineTo(x + s * 0.42, y + s * 0.3);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#ffd700';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(x, y - 2 * iconScale, 4 * iconScale, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+
+    const labelY = y + s * 0.55;
+    ctx.font = `bold ${Math.max(8, 9 * iconScale)}px sans-serif`;
+    ctx.fillStyle = '#ddd';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Capital ${capital.hp}/${capital.maxHp}`, x, labelY);
+  }
+
+  // Neutral/founding/city/temple/ruins — color reflects owner (gray while
+  // neutral/ruins, dimmed owner color while founding, full owner color once
+  // complete). No more "level" — see StrategicSiteState.
+  private drawSite(site: StrategicSite, state: GameState, size: number, cx: number, cy: number): void {
+    const ctx = this.ctx;
+    const { x, y } = hexToPixel(site.pos, size, cx, cy);
+    const s = size;
+    const iconScale = s / BASE_HEX_SIZE;
+    const isSelected = state.selectedSiteId === site.id;
+
+    const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
+    const foundingOwner = site.founding ? state.players.find(p => p.id === site.founding!.playerId) : null;
+    let color = '#888888';
+    if (owner) color = owner.color;
+    else if (foundingOwner) color = foundingOwner.color + '80'; // dimmed while founding
 
     if (isSelected) {
       ctx.beginPath();
@@ -816,7 +859,7 @@ export class Renderer {
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
-    ctx.strokeStyle = '#000';
+    ctx.strokeStyle = site.state === 'ruins' ? '#552200' : '#000';
     ctx.lineWidth = 2;
     ctx.stroke();
 
@@ -825,12 +868,11 @@ export class Renderer {
     ctx.fillStyle = '#fff';
     ctx.fill();
 
-    // Level label
     const labelY = y + s * 0.5;
     ctx.font = `bold ${Math.max(8, 9 * iconScale)}px sans-serif`;
     ctx.fillStyle = '#ddd';
     ctx.textAlign = 'center';
-    ctx.fillText(`Lv.${temple.level}`, x, labelY);
+    ctx.fillText(site.state, x, labelY);
   }
 
   private drawTeleportBuilding(tp: TeleportBuilding, playerColor: string, isPaired: boolean, size: number, cx: number, cy: number, dimmed: boolean): void {
