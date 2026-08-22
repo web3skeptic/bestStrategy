@@ -9,7 +9,7 @@
     "build:atlas": "node scripts/build-tile-atlas.mjs",
     "server": "tsx server/server.ts",
     "server:dev": "tsx watch server/server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx scripts/verify-combat-v3.ts",
     "build:root": "vite build"
   },
   "keywords": [],

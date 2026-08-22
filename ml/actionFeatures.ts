@@ -4,7 +4,7 @@
 // temples, enemy positions), so per-candidate cost is a handful of hex-distance
 // ops. Concatenated with the state features, this is the policy net's input.
 import { GameState, Unit, Temple, HexCoord, UnitType, TechId, UNIT_COSTS, templeUpgradeCost, TECH_COST, TECH_NODES } from '../src/types';
-import { getEffectiveAttack, getEffectiveDefense } from '../src/game';
+import { getEffectiveAttack, getEffectiveDefense, getUnitTypeMultiplier } from '../src/game';
 import { hexDistance, hexKey } from '../src/hex';
 import { Micro } from './gameEnv';
 
@@ -86,7 +86,7 @@ export function actionFeatures(state: GameState, ctx: ActionCtx, micro: Micro, o
     if (tgt) {
       const atk = ctx.effAtk.get(actor.id) ?? actor.stats.attack;
       const def = ctx.effDef.get(tgt.id) ?? tgt.stats.defense;
-      const bonus = actor.stats.attackBonusAgainst?.[tgt.type] ?? 1;
+      const bonus = getUnitTypeMultiplier(actor.type, tgt.type);
       const est = Math.max(0, atk * bonus - def);
       s[6] = tgt.stats.maxHp > 0 ? tgt.hp / tgt.stats.maxHp : 0;
       s[7] = tgt.hp > 0 ? Math.min(1, est / tgt.hp) : 1;

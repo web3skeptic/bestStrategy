@@ -4,6 +4,7 @@ import {
   TEMPLE_ECONOMY_CAP_LEVEL, TELEPORT_BUILD_COST, SUPPORT_RANGE,
 } from './types';
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
+import { calculateDamage } from './combat';
 import {
   getCurrentPlayer, getUnitAt,
   spawnUnit, selectUnit, moveUnit, attackUnit, deselectAll,
@@ -14,6 +15,7 @@ import {
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
   calculateEncirclement, isForestUnitRevealed, endTurn,
+  getUnitTypeMultiplier,
 } from './game';
 import { runRLHardTurn } from '../ml/botClient';
 
@@ -89,19 +91,16 @@ function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
     u.hp > 0 && u.playerId !== aiPlayerId && isForestUnitRevealed(state, u.pos, aiPlayerId));
 }
 
-// Deterministic mean-case damage estimate (multiplier fixed at 1.0). Mirrors the
-// engine's calculateDamage: round(enc * typeBonus * (atk - def) * hpFraction),
-// where hpFraction is the attacker's current health — a landed hit deals ≥1.
-// Used only for target ranking, so no RNG is wanted here.
+// Deterministic damage estimate for target ranking. Mirrors the engine's own
+// calculateDamage (combat.ts) exactly, via the shared getUnitTypeMultiplier
+// helper, so the AI never drifts from the real combat math.
 function estimateDamage(state: GameState, attacker: Unit, target: Unit): number {
   const enc = calculateEncirclement(state, target);
-  const typeBonus =
-    (attacker.stats.attackBonusAgainst?.[target.type] ?? 1) /
-    (target.stats.defenseBonusAgainst?.[attacker.type] ?? 1);
+  const typeBonus = getUnitTypeMultiplier(attacker.type, target.type);
   const atk = getEffectiveAttack(state, attacker);
   const def = getEffectiveDefense(state, target);
   const hpFraction = attacker.hp / attacker.stats.maxHp;
-  return Math.max(1, Math.round(enc.attackMultiplier * typeBonus * (atk - def) * hpFraction));
+  return Math.max(1, calculateDamage(atk, def, enc.attackMultiplier, typeBonus, hpFraction));
 }
 
 function scoreTarget(state: GameState, attacker: Unit, target: Unit): number {

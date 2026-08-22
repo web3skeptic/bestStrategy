@@ -1056,15 +1056,14 @@ function updateUI(): void {
       const effDef = getEffectiveDefense(state, unit);
       const effAtk = getEffectiveAttack(state, unit);
       const effRng = getEffectiveRange(state, unit);
-      const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+2)` : `${effDef}`;
+      const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+${effDef - unit.stats.defense})` : `${effDef}`;
       const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
-      const bonusNote = unit.stats.attackBonusAgainst || unit.stats.defenseBonusAgainst ? ' [spear bonus]' : '';
       let supportNote = '';
       if (unit.type === 'healer') supportNote = ` | ✚${HEALER_HEAL_AMOUNT}HP/t (r1 full·r2 half)`;
       if (unit.type === 'damageBooster') supportNote = ` | +${DAMAGE_BOOST_AMOUNT}ATK (r1 full·r2 half)`;
       if (unit.type === 'rangeBooster') supportNote = ` | +${RANGE_BOOST_AMOUNT}RNG (r1)`;
-      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${bonusNote}${supportNote}`;
+      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${supportNote}`;
 
       const capturable = canCaptureTemple(state, unit);
       if (capturable) {
@@ -1957,7 +1956,12 @@ document.getElementById('zoomOutBtn')!.addEventListener('click', () => {
 });
 
 // ── Keyboard ──
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const ae = e.target as HTMLElement | null;
+  return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+}
 document.addEventListener('keydown', (e) => {
+  if (isTypingTarget(e)) return;
   if (e.key === 'Escape') {
     if (menuOverlay.classList.contains('hidden')) {
       showMenu();

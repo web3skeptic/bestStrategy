@@ -12,6 +12,27 @@ import {
   hexDistance, hexEqual, hexNeighbors, getReachableHexes,
   hexKey, generateHexMap, DIRECTIONS, OPPOSING_PAIRS, hexLineDraw,
 } from './hex';
+import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
+
+// Maps the current universal unit roster onto the shared soft-counter classes
+// (see ./combat.ts). The faction-specific v0.2 roster will assign its own
+// classes directly; this table exists so the single legacy roster keeps
+// working under the same rules engine in the meantime.
+export const UNIT_CLASS: Record<UnitType, UnitClass> = {
+  warrior:       'warrior',
+  archer:        'archer',
+  catapult:      'siege',
+  horserider:    'cavalry',
+  heavyknight:   'heavy',
+  spearsman:     'pike',
+  healer:        'support',
+  damageBooster: 'support',
+  rangeBooster:  'support',
+};
+
+export function getUnitTypeMultiplier(attackerType: UnitType, defenderType: UnitType): number {
+  return getTypeMultiplier(UNIT_CLASS[attackerType], UNIT_CLASS[defenderType]);
+}
 
 // ── Unit stats ──
 
@@ -44,15 +65,13 @@ const HEAVYKNIGHT_STATS: UnitStats = {
 };
 
 const SPEARSMAN_STATS: UnitStats = {
+  // Balance v3 (2026-08-21): the old per-unit 3x/4x attack + 2x/2.5x defense
+  // bonuses made the spearsman a near hard-counter. Replaced by the shared
+  // soft-counter matrix in combat.ts (pike class gets a flat 1.35x attacking
+  // cavalry/heavy, no defense-side multiplier at all) — a strong answer at
+  // equal cost, not an auto-win.
   maxHp: 15, attack: 10, defense: 5, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 2, cantShootAfterMove: false,
-  attackBonusAgainst: { horserider: 3.0, heavyknight: 4.0 },
-  // Balance v2 (2026-05-17): defense bonus capped from 3×→2× (vs horse) and
-  // 6×→2.5× (vs HK). Previous values made a 2⚡ spearsman hard-counter a 7⚡
-  // heavy knight (1v1 win with full HP). counter_v1 swept the v2 tournament at
-  // 88.9% because the cavalry-heavy field couldn't trade into spearsmen. Keeps
-  // the spearsman as the cavalry counter, but a soft counter, not a hard one.
-  defenseBonusAgainst: { horserider: 2.0, heavyknight: 2.5 },
 };
 
 const HEALER_STATS: UnitStats = {
@@ -103,17 +122,13 @@ export function getUnlockedUnits(tech: PlayerTech): Set<UnitType> {
 }
 
 /**
- * Deep-copy a base UnitStats, cloning the nested bonus dicts so the copy never
- * shares the `attackBonusAgainst`/`defenseBonusAgainst` objects with the shared
- * UNIT_STATS singletons. Used by both `createUnit` and `rebuildUnitStats` so the
- * two paths produce identical, fully-independent stat objects.
+ * Shallow-copy a base UnitStats so the copy never shares object identity with
+ * the shared UNIT_STATS singletons. Used by both `createUnit` and
+ * `rebuildUnitStats` so the two paths produce identical, independent stat
+ * objects.
  */
 function cloneStats(base: UnitStats): UnitStats {
-  return {
-    ...base,
-    attackBonusAgainst: { ...(base.attackBonusAgainst ?? {}) },
-    defenseBonusAgainst: { ...(base.defenseBonusAgainst ?? {}) },
-  };
+  return { ...base };
 }
 
 function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): UnitStats {
@@ -121,7 +136,7 @@ function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): U
   if (r.has('roads')) stats.speed += 1;
   if (r.has('infantry_move') && (type === 'warrior' || type === 'spearsman')) stats.speed += 1;
   if (r.has('longrange_hp') && (type === 'archer' || type === 'catapult')) stats.maxHp += 5;
-  if (r.has('catapult_splash') && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.5; }
+  if (r.has('catapult_splash') && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.4; }
   if (r.has('horse_sight') && (type === 'horserider' || type === 'heavyknight')) stats.vision += 1;
   return stats;
 }
@@ -195,7 +210,7 @@ export interface PlayerConfig {
 
 const DEFAULT_PLAYERS: PlayerConfig[] = [
   { name: 'Player 1', color: '#ff4444' },
-  { name: 'AI', color: '#4488ff' },
+  { name: 'AI', color: '#44cc55' },
 ];
 
 // ── Visibility ──
@@ -861,9 +876,13 @@ export interface EncirclementInfo {
   attackMultiplier: number;
 }
 
-function isBlockedHex(hex: HexCoord, targetPlayerId: number, aliveUnits: Unit[], mapRadius: number, group: Set<string>): boolean {
+// Balance v3 (2026-08-21): map edges no longer count as blocking. A group
+// defending against empty space near its own Capital isn't "half surrounded"
+// just because the map ends there — only actual enemy pressure should earn
+// the encirclement bonus. Movement is still naturally bounded by mapRadius
+// elsewhere (getReachableHexes); this function is only about damage pressure.
+function isBlockedHex(hex: HexCoord, targetPlayerId: number, aliveUnits: Unit[], group: Set<string>): boolean {
   if (group.has(hexKey(hex))) return false;
-  if (hexDistance({ q: 0, r: 0 }, hex) > mapRadius) return true;
   const unitThere = aliveUnits.find(u => hexEqual(u.pos, hex));
   if (unitThere && unitThere.playerId !== targetPlayerId) return true;
   return false;
@@ -909,7 +928,7 @@ export function calculateEncirclement(state: GameState, targetUnit: Unit): Encir
   const perimeterTotal = perimeterHexes.length;
   let perimeterBlocked = 0;
   for (const hex of perimeterHexes) {
-    if (isBlockedHex(hex, targetUnit.playerId, aliveUnits, state.mapRadius, group)) {
+    if (isBlockedHex(hex, targetUnit.playerId, aliveUnits, group)) {
       perimeterBlocked++;
     }
   }
@@ -925,8 +944,8 @@ export function calculateEncirclement(state: GameState, targetUnit: Unit): Encir
       const dirB = DIRECTIONS[j]!;
       const hexA: HexCoord = { q: pos.q + dirA.q, r: pos.r + dirA.r };
       const hexB: HexCoord = { q: pos.q + dirB.q, r: pos.r + dirB.r };
-      if (isBlockedHex(hexA, targetUnit.playerId, aliveUnits, state.mapRadius, group) &&
-          isBlockedHex(hexB, targetUnit.playerId, aliveUnits, state.mapRadius, group)) {
+      if (isBlockedHex(hexA, targetUnit.playerId, aliveUnits, group) &&
+          isBlockedHex(hexB, targetUnit.playerId, aliveUnits, group)) {
         pinchCount++;
       }
     }
@@ -934,11 +953,15 @@ export function calculateEncirclement(state: GameState, targetUnit: Unit): Encir
 
   const opposingRatio = pinchMax > 0 ? pinchCount / pinchMax : 0;
 
+  // Balance v3 (2026-08-21): both bonuses capped at +0.25 (was +0.5), so full
+  // encirclement + full pinch tops out at 1.5x (was 2.0x). Temple's mobility
+  // already makes it better at creating encirclement — doubling that damage
+  // on top would reward the same advantage twice.
   let encirclementBonus = 0;
   if (ratio > 0.5) {
-    encirclementBonus = ((ratio - 0.5) / 0.5) * 0.5;
+    encirclementBonus = ((ratio - 0.5) / 0.5) * 0.25;
   }
-  const opposingBonus = opposingRatio * 0.5;
+  const opposingBonus = opposingRatio * 0.25;
   const attackMultiplier = 1.0 + encirclementBonus + opposingBonus;
 
   return {
@@ -1062,32 +1085,19 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
 }
 
 // ── Combat ──
-
-function randomMultiplier(): number {
-  const u1 = Math.random();
-  const u2 = Math.random();
-  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  const value = 1.0 + z * 0.2;
-  return Math.max(0.5, Math.min(1.5, value));
-}
-
-function getAttackTypeBonus(attacker: Unit, target: Unit): number {
-  return attacker.stats.attackBonusAgainst?.[target.type] ?? 1;
-}
-
-function getDefenseTypeBonus(defender: Unit, attacker: Unit): number {
-  return defender.stats.defenseBonusAgainst?.[attacker.type] ?? 1;
-}
-
+//
+// Balance v3 (2026-08-21): competitive combat is now fully deterministic — no
+// RNG multiplier. Uncertainty should come from the opponent's plan and
+// positioning, not damage variance. Per-unit hard-counter multipliers
+// (old spearsman 3x/4x) are gone too; type matchups now come from the shared
+// soft-counter class matrix in ./combat.ts (max 1.35x, never a hard immunity).
+// The damage formula itself (25% floor, health-scaled) also lives there —
+// see calculateDamage in ./combat.ts for the actual math.
+//
 // hpFraction scales the damage by the attacker's CURRENT health (hp / maxHp), so
-// a wounded unit hits softer. This is what gives attacking first a real edge: the
-// attacker strikes at full strength, and the defender fights back (if it can) from
-// its reduced post-hit health.
-function calculateDamage(attackerAtk: number, defenderDef: number, encirclementMultiplier: number, typeBonus = 1, hpFraction = 1): number {
-  const multiplier = randomMultiplier();
-  const raw = multiplier * encirclementMultiplier * typeBonus * (attackerAtk - defenderDef) * hpFraction;
-  return Math.max(0, Math.round(raw));
-}
+// a wounded unit hits softer, but never below half strength. This is what gives
+// attacking first a real edge: the attacker strikes at full strength, and the
+// defender fights back (if it can) from its reduced post-hit health.
 
 export interface SplashHit {
   unitId: string;
@@ -1126,7 +1136,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   // Sequential resolution: the attacker strikes first, scaled by its own current
   // health; a landed attack always deals at least 1.
   const attackerHpFrac = attacker.hp / attacker.stats.maxHp;
-  const typeBonus = getAttackTypeBonus(attacker, target) / getDefenseTypeBonus(target, attacker);
+  const typeBonus = getUnitTypeMultiplier(attacker.type, target.type);
   let damageDealt = calculateDamage(getEffectiveAttack(state, attacker), targetDef, targetEncirclement.attackMultiplier, typeBonus, attackerHpFrac);
   if (damageDealt < 1) damageDealt = 1;
   target.hp -= damageDealt;
@@ -1134,7 +1144,9 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   const targetKilled = target.hp <= 0;
   if (targetKilled) target.hp = 0;
 
-  // Splash
+  // Splash. Computed from the *un-encircled* base hit (encirclementMultiplier
+  // pinned to 1, neutral 1.0 type multiplier) so a heavily-encircled primary
+  // target doesn't cause amplified splash damage across its whole formation.
   const splashHits: SplashHit[] = [];
   if (attacker.stats.splash > 0) {
     const splashTargets = state.units.filter(u =>
@@ -1142,10 +1154,9 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
       hexDistance(targetPos, u.pos) <= attacker.stats.splash
     );
     for (const splashUnit of splashTargets) {
-      const splashEnc = calculateEncirclement(state, splashUnit);
       const splashDef = getEffectiveDefense(state, splashUnit);
       const splashDmg = Math.round(
-        calculateDamage(getEffectiveAttack(state, attacker), splashDef, splashEnc.attackMultiplier, 1, attackerHpFrac) * attacker.stats.splashFactor
+        calculateDamage(getEffectiveAttack(state, attacker), splashDef, 1, 1, attackerHpFrac) * attacker.stats.splashFactor
       );
       splashUnit.hp -= splashDmg;
       const killed = splashUnit.hp <= 0;
@@ -1171,7 +1182,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
       // just took), so a badly-wounded survivor counters weakly. A dead defender
       // never reaches here (guarded by !targetKilled above).
       const defenderHpFrac = target.hp / target.stats.maxHp;
-      const revengeTypeBonus = getAttackTypeBonus(target, attacker) / getDefenseTypeBonus(attacker, target);
+      const revengeTypeBonus = getUnitTypeMultiplier(target.type, attacker.type);
       damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier, revengeTypeBonus, defenderHpFrac);
       if (damageReceived < 1) damageReceived = 1;
       attacker.hp -= damageReceived;

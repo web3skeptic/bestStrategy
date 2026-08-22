@@ -28,6 +28,7 @@ import {
   getEffectiveRange,
   getPlayerVisible, isForestUnitRevealed,
   UNIT_STATS, HEALER_HEAL_AMOUNT, DAMAGE_BOOST_AMOUNT, RANGE_BOOST_AMOUNT,
+  UNIT_CLASS,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -184,8 +185,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       splashFactor: stats.splashFactor,
       canBeRevenged: stats.canBeRevenged,
       cantShootAfterMove: stats.cantShootAfterMove,
-      attackBonusAgainst: stats.attackBonusAgainst ?? {},
-      defenseBonusAgainst: stats.defenseBonusAgainst ?? {},
+      unitClass: UNIT_CLASS[type as UnitType],
       unlockTech: techUnlock?.id ?? null,
       defaultUnlocked: !techUnlock,
     };
@@ -244,12 +244,22 @@ export function buildRulesPayload(): Record<string, unknown> {
       note: 'Requires "teleports" tech. Each portal must be within radius of a different owned temple. Unit stepping on portal teleports to free neighbour of partner portal.',
     },
     combat: {
-      formula: 'damage = max(1, round(randomMultiplier * encirclementMultiplier * typeBonus * (attackerATK - defenderDEF) * attackerHP/attackerMaxHP)); a landed hit always deals at least 1',
-      randomMultiplier: 'Normal(1.0, sigma=0.2), clamped [0.5, 1.5]',
+      deterministic: true,
+      formula: 'modifiedAttack = attackerATK * typeMultiplier; baseDamage = max(0.25*modifiedAttack, modifiedAttack - defenderDEF); damage = round(baseDamage * healthMultiplier * encirclementMultiplier), floored to 1 for a landed hit. No RNG.',
+      healthMultiplier: '0.5 + 0.5 * (attackerCurrentHP / attackerMaxHP) — a wounded attacker never drops below 50% effectiveness.',
+      typeMultiplier: 'Soft-counter matrix keyed by unit class (see units[].unitClass), max 1.35x, defaults to 1.0 for unlisted pairs. Never a hard immunity.',
+      unitClasses: {
+        pike:    { beats: { cavalry: 1.35, heavy: 1.35 } },
+        cavalry: { beats: { archer: 1.25, siege: 1.25, support: 1.25 } },
+        archer:  { beats: { pike: 1.25 } },
+        siege:   { beats: { heavy: 1.30 } },
+        heavy:   { beats: { warrior: 1.20, archer: 1.20 } },
+      },
       firstStrike: 'Damage scales with the attacker\'s current HP fraction, so attacking first (at full HP) beats being countered from reduced HP.',
       revengeAttack: 'Sequential: the attacker strikes first. If the target survives AND the attacker is within the target\'s effective attack range, the target fights back from its REMAINING HP. A dead defender never fights back; an out-of-range defender (e.g. melee vs a distant catapult) cannot.',
       meleeStep: 'Melee units (range=1) step onto killed target\'s tile.',
-      encirclement: 'Up to 2x damage multiplier based on surrounding enemies and map edges.',
+      encirclement: 'Up to 1.5x damage multiplier based on surrounding enemy units. Map edges/empty space do NOT count as blocking — only actual enemy pressure does.',
+      splash: 'Computed from the un-encircled base hit (encirclementMultiplier=1, typeMultiplier=1) before splashFactor is applied, so splash damage is never amplified by the primary target\'s encirclement.',
     },
     turnStructure: {
       startOfTurn: [

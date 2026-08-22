@@ -71,27 +71,6 @@ interface ReplayDto {
   events: ReplayEventDto[];
 }
 
-// ── Default unit stat shape (used to fill in fields not carried by the API
-//    snapshot: cantShootAfterMove, attackBonusAgainst, defenseBonusAgainst).
-//    We mirror only the boolean / bonus fields, since speed/range/etc come
-//    from the snapshot.
-// ──────────────────────────────────────────────────────────────────────────
-const UNIT_DEFAULTS: Record<UnitType, Pick<UnitStats, 'cantShootAfterMove' | 'attackBonusAgainst' | 'defenseBonusAgainst'>> = {
-  warrior:       { cantShootAfterMove: false },
-  archer:        { cantShootAfterMove: false },
-  catapult:      { cantShootAfterMove: false },
-  horserider:    { cantShootAfterMove: false },
-  heavyknight:   { cantShootAfterMove: false },
-  spearsman:     {
-    cantShootAfterMove: false,
-    attackBonusAgainst:  { horserider: 3.0, heavyknight: 4.0 },
-    defenseBonusAgainst: { horserider: 3.0, heavyknight: 6.0 },
-  },
-  healer:        { cantShootAfterMove: false },
-  damageBooster: { cantShootAfterMove: false },
-  rangeBooster:  { cantShootAfterMove: false },
-};
-
 // ── Convert an API snapshot back into a (rendering-only) GameState. ──
 // We don't reconstruct UI/selection fields (left empty) or per-turn state
 // (spawnedTempleIds). Explored is populated lazily based on viewer.
@@ -119,7 +98,6 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   }));
 
   const units: Unit[] = s.units.map(u => {
-    const def = UNIT_DEFAULTS[u.type] ?? { cantShootAfterMove: false };
     const stats: UnitStats = {
       maxHp: u.maxHp,
       attack: u.stats.atk,
@@ -130,10 +108,10 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
       splash: u.stats.splash,
       splashFactor: u.stats.splashFactor,
       canBeRevenged: u.stats.canBeRevenged,
-      cantShootAfterMove: def.cantShootAfterMove,
+      // No unit in the current roster shoots after moving; the flag isn't
+      // carried by the API snapshot since it never varies at runtime.
+      cantShootAfterMove: false,
     };
-    if (def.attackBonusAgainst) stats.attackBonusAgainst = def.attackBonusAgainst;
-    if (def.defenseBonusAgainst) stats.defenseBonusAgainst = def.defenseBonusAgainst;
     return {
       id: u.id, type: u.type, playerId: u.playerId, stats,
       hp: u.hp, pos: u.pos, hasMoved: u.hasMoved, hasAttacked: u.hasAttacked,

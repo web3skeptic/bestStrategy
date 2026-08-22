@@ -24,8 +24,6 @@ export interface UnitStats {
   canBeRevenged: boolean;      // whether the target can hit back after being hit
   vision: number;              // exploration/visibility radius
   cantShootAfterMove: boolean; // whether the unit cannot attack on a turn it moved
-  attackBonusAgainst?: Partial<Record<UnitType, number>>;  // outgoing damage multiplier vs specific unit types
-  defenseBonusAgainst?: Partial<Record<UnitType, number>>; // incoming damage divisor vs specific unit types (higher = harder to damage)
 }
 
 export const UNIT_COSTS: Record<UnitType, number> = {
@@ -40,7 +38,10 @@ export const UNIT_COSTS: Record<UnitType, number> = {
   rangeBooster:  3,
 };
 
-export const HILL_DEFENSE_BONUS = 2;
+// Balance v3 (asymmetric redesign, 2026-08-21): +2 disproportionately
+// strengthened already-defensive units since defense is subtractive; +1 keeps
+// hills a real edge without letting a single tile decide fights on its own.
+export const HILL_DEFENSE_BONUS = 1;
 export const HILL_VISION_BONUS = 1;
 export const HILL_RANGE_BONUS = 1;
 
@@ -124,12 +125,12 @@ export interface Player {
 // must have at least this many visually-distinct entries.
 export const MAX_PLAYERS = 6;
 
-// Per-player colour palette. Index === player slot. Slots 0 and 1 keep the
-// original red / blue so existing 1-player and 2-player games look unchanged.
+// Per-player colour palette. Index === player slot. Slots 0 and 1 are red /
+// green so 1-player and 2-player games show that pairing.
 export const PLAYER_COLORS: readonly string[] = [
   '#ff4444', // 0 red
-  '#4488ff', // 1 blue
-  '#44cc55', // 2 green
+  '#44cc55', // 1 green
+  '#4488ff', // 2 blue
   '#ffcc33', // 3 gold
   '#cc55dd', // 4 purple
   '#ff8833', // 5 orange
