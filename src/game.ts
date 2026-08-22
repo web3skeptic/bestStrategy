@@ -16,9 +16,9 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_DISTANCE_FROM_CAPITAL, FARM_MIN_SPACING,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
-  COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION, UNIT_TRAINING_ROUNDS,
+  COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
 } from './factions';
 
@@ -290,18 +290,6 @@ function createStrategicSite(pos: HexCoord): StrategicSite {
   };
 }
 
-function createFarm(pos: HexCoord, citySiteId: string, ownerId: number): Farm {
-  return {
-    id: `farm_${farmIdCounter++}`,
-    pos: { ...pos },
-    citySiteId,
-    ownerId,
-    hp: STRUCTURES.farm.hp,
-    maxHp: STRUCTURES.farm.hp,
-    defense: STRUCTURES.farm.defense,
-  };
-}
-
 // One Capital per player, permanent ownership, deterministic id (never
 // recreated/rebuilt, so no shared counter needed — see §11).
 function createCapital(playerId: number, pos: HexCoord): Capital {
@@ -383,7 +371,7 @@ export function getOwnedStructures(state: GameState, playerId: number): { id: st
   const capital = state.capitals.find(c => c.playerId === playerId);
   if (capital) out.push(capital);
   for (const site of state.strategicSites) {
-    if ((site.state === 'city' || site.state === 'temple') && site.ownerId === playerId) out.push(site);
+    if (site.state === 'temple' && site.ownerId === playerId) out.push(site);
   }
   return out;
 }
@@ -653,15 +641,29 @@ export function getPopulationCount(state: GameState, playerId: number): number {
   return count;
 }
 
-// §19-20 — production slots: a limited pool a recruit draws from (Capital
-// gives CAPITAL_PRODUCTION_SLOTS, each owned City/Temple gives +1), NOT an
-// unlimited "any owned structure, any number of times" allowance. A recruit
-// occupies one of the recruiting player's slots for UNIT_TRAINING_ROUNDS
-// rounds (the unit itself still appears immediately — only the slot is on
-// cooldown, mirroring the founding system's "completes next round" timing).
+// §16-20 (phase 10 correction) — production is centralized for Agrar
+// (scales with active Farm count, all training still happens at the
+// Capital — Roads move the result) and distributed for Temple (scales with
+// active neutral-Temple count). Both start at PRODUCTION_BASE_SLOTS and cap
+// at PRODUCTION_MAX_SLOTS — the two curves reach the same ceiling by
+// different map structures, matching the area-vs-points asymmetry. A
+// recruit occupies one of the recruiting player's slots for
+// UNIT_TRAINING_ROUNDS rounds (the unit itself still appears immediately —
+// only the slot is on cooldown, mirroring founding's "completes next round").
 export function getProductionSlots(state: GameState, playerId: number): number {
-  const expansions = state.strategicSites.filter(s => s.ownerId === playerId && (s.state === 'city' || s.state === 'temple')).length;
-  return CAPITAL_PRODUCTION_SLOTS + expansions * PRODUCTION_SLOTS_PER_EXPANSION;
+  const player = state.players.find(p => p.id === playerId);
+  if (player?.faction === 'agrar') {
+    const farms = activeFarmsOf(state, playerId).length;
+    let slots = PRODUCTION_BASE_SLOTS;
+    if (farms >= 2) slots++;
+    if (farms >= 4) slots++;
+    return Math.min(slots, PRODUCTION_MAX_SLOTS);
+  }
+  if (player?.faction === 'temple') {
+    const temples = state.strategicSites.filter(s => s.ownerId === playerId && s.state === 'temple').length;
+    return Math.min(PRODUCTION_BASE_SLOTS + temples, PRODUCTION_MAX_SLOTS);
+  }
+  return PRODUCTION_BASE_SLOTS;
 }
 
 export function getBusyProductionSlotCount(state: GameState, playerId: number): number {
@@ -675,29 +677,22 @@ function resolveProductionForPlayer(state: GameState, playerId: number): void {
   state.productionOrders = state.productionOrders.filter(o => o.playerId !== playerId || state.turnNumber < o.freeAtRound);
 }
 
-// ── Economy (§12-19) ──
+// ── Economy (§4-19, phase 10 correction) ──
 //
 // Base income is flat and unconditional (always 6⚡/round per player,
-// regardless of the Capital — it's not "owning a structure" income, it's the
-// baseline). On top of that, each OWNED completed City contributes its Farm
-// count (0-2, +1⚡ each) and each owned completed Temple contributes its
-// Devotion level (0-2, +1⚡ each) — see buildFarm/buyDevotion below. A
-// founding/neutral/ruined site contributes nothing (§10).
+// regardless of structures owned — it's the baseline). On top of that:
+// Agrar's active Farms each contribute AGRAR_FARM_INCOME (§6-9); Temple's
+// owned Temple sites contribute their Devotion level x TEMPLE_DEVOTION_INCOME
+// (§15). A founding/neutral/ruined site or a still-founding Farm contributes
+// nothing.
 export function getPlayerIncome(state: GameState, playerId: number): number {
   let income = BASE_INCOME_PER_ROUND;
+  income += activeFarmsOf(state, playerId).length * AGRAR_FARM_INCOME;
   for (const site of state.strategicSites) {
-    if (site.ownerId !== playerId) continue;
-    if (site.state === 'city') {
-      income += getCityFarms(state, site.id).length * AGRAR_FARM_INCOME;
-    } else if (site.state === 'temple') {
-      income += site.devotionLevel * TEMPLE_DEVOTION_INCOME;
-    }
+    if (site.ownerId !== playerId || site.state !== 'temple') continue;
+    income += site.devotionLevel * TEMPLE_DEVOTION_INCOME;
   }
   return income;
-}
-
-export function getCityFarms(state: GameState, citySiteId: string): Farm[] {
-  return state.farms.filter(f => f.citySiteId === citySiteId);
 }
 
 // ── Temple placement (change #5 + spread hardening) ──
@@ -1037,12 +1032,14 @@ export function getStrategicSiteAt(state: GameState, pos: HexCoord): StrategicSi
   return state.strategicSites.find(s => hexEqual(s.pos, pos));
 }
 
-// ── Strategic site founding (§7-10) ──
+// ── Strategic site founding (§7-10, phase 10: Temple-only) ──
 //
 // Replaces the old instant-capture-by-presence system entirely. There is no
-// "capture" any more — a neutral or ruined site becomes a City (Agrar) or an
-// actual Temple (Temple faction) only through a multi-turn founding process
-// that the opponent has a real window to interrupt.
+// "capture" any more — a neutral or ruined site becomes an actual Temple
+// only through a multi-turn founding process the opponent has a real window
+// to interrupt. Phase 10 correction: Agrar NEVER founds a site — "Agrar
+// controls area (Farms), Temple controls points (Temples)" — see §28 and
+// the STATUS comment in factions.ts.
 
 function isFounderUnit(unit: Unit): boolean {
   return unit.type === 'founder';
@@ -1050,7 +1047,7 @@ function isFounderUnit(unit: Unit): boolean {
 
 export interface FoundingCheck {
   site: StrategicSite;
-  targetState: 'city' | 'temple';
+  targetState: 'temple';
 }
 
 // §7 — everything that must hold true to START founding.
@@ -1058,9 +1055,10 @@ export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | 
   if (isMatchSetupRestricted(state)) return null;
   if (unit.playerId !== getCurrentPlayer(state).id) return null;
   if (unit.hasMoved || unit.hasAttacked) return null; // needs an unused activation
-  if (!isFounderUnit(unit)) return null; // only the Builder/Acolyte
+  if (!isFounderUnit(unit)) return null; // only the Acolyte
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || !player.faction) return null;
+  if (player.faction !== 'temple') return null; // §28 — Agrar never founds a site
   const site = getStrategicSiteAt(state, unit.pos);
   if (!site) return null;
   if (site.state !== 'neutral' && site.state !== 'ruins') return null;
@@ -1068,13 +1066,14 @@ export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | 
   const enemyOnSite = state.units.some(u => u.hp > 0 && u.id !== unit.id && u.playerId !== unit.playerId && hexEqual(u.pos, site.pos));
   if (enemyOnSite) return null;
   if (player.aura < SITE_ESTABLISH_COST) return null;
-  const targetState: 'city' | 'temple' = player.faction === 'agrar' ? 'city' : 'temple';
-  return { site, targetState };
+  // §10-11 — a site inside enemy Agrar cultivated territory cannot be founded.
+  if (isSiteCultivationBlocked(state, site.pos, player.id)) return null;
+  return { site, targetState: 'temple' };
 }
 
 // Begin founding: charges 4⚡ immediately (§7 — "do not wait until completion
 // to charge it, otherwise the player can start construction without actually
-// committing resources") and consumes the founder's whole activation.
+// committing resources") and consumes the Acolyte's whole activation.
 // Resolves automatically at the start of the founder's next round — see
 // resolveFoundingForPlayer, called from endTurn().
 export function startFounding(state: GameState, unitId: string): boolean {
@@ -1087,11 +1086,11 @@ export function startFounding(state: GameState, unitId: string): boolean {
   player.aura -= SITE_ESTABLISH_COST;
 
   const fromState = check.site.state as 'neutral' | 'ruins'; // canStartFounding already restricted this to neutral|ruins
-  check.site.state = check.targetState === 'city' ? 'foundingCity' : 'foundingTemple';
+  check.site.state = 'foundingTemple';
   check.site.founding = {
     playerId: unit.playerId,
     unitId: unit.id,
-    targetState: check.targetState,
+    targetState: 'temple',
     fromState,
     startedRound: state.turnNumber,
     completesRound: state.turnNumber + 1,
@@ -1104,26 +1103,22 @@ export function startFounding(state: GameState, unitId: string): boolean {
 
 // §17-18 — conquest does not transfer economic investment. If the SAME
 // player who previously invested here reclaims their own former site
-// (recapture, after it was Ruins), their Farms/Devotion come back — nothing
-// was ever deleted. If a DIFFERENT player completes founding (first-time
-// founding of a virgin site, or claiming another player's former site —
-// including converting it to the other faction's structure type), any prior
-// Farms are deleted and Devotion resets to 0: "the old development is
-// permanently erased."
+// (recapture, after it was Ruins), their Devotion comes back — nothing was
+// ever deleted. If a DIFFERENT player completes founding (first-time
+// founding of a virgin site, or reclaiming a former site), Devotion resets
+// to 0: "the old development is permanently erased."
 function completeFounding(state: GameState, site: StrategicSite): void {
   const founding = site.founding!;
   const isReclaim = site.investmentOwnerId === founding.playerId;
   if (!isReclaim) {
-    state.farms = state.farms.filter(f => f.citySiteId !== site.id);
     site.devotionLevel = 0;
     site.investmentOwnerId = founding.playerId;
   }
   site.ownerId = founding.playerId;
-  site.state = founding.targetState;
-  const stats = founding.targetState === 'city' ? STRUCTURES.city : STRUCTURES.temple;
-  site.hp = stats.hp;
-  site.maxHp = stats.hp;
-  site.defense = stats.defense;
+  site.state = 'temple';
+  site.hp = STRUCTURES.temple.hp;
+  site.maxHp = STRUCTURES.temple.hp;
+  site.defense = STRUCTURES.temple.defense;
   site.founding = null;
 }
 
@@ -1147,7 +1142,7 @@ function failFounding(site: StrategicSite): void {
 // real interrupt window without needing a ZOC system.
 function resolveFoundingForPlayer(state: GameState, playerId: number): void {
   for (const site of state.strategicSites) {
-    if (site.state !== 'foundingCity' && site.state !== 'foundingTemple') continue;
+    if (site.state !== 'foundingTemple') continue;
     const founding = site.founding;
     if (!founding || founding.playerId !== playerId) continue;
     if (state.turnNumber < founding.completesRound) continue;
@@ -1166,50 +1161,127 @@ function resolveFoundingForPlayer(state: GameState, playerId: number): void {
   for (const p of state.players) if (p.id === playerId) updateVisibility(state, playerId);
 }
 
-// ── Agrar Farms (§13-14) ──
+// ── Agrar Farms (§6-11, phase 10 correction) ──
 //
-// A Farm is a real, independently-attackable structure — not just an
-// invisible City upgrade (§13). Exactly FARM_DISTANCE_FROM_CITY hexes from
-// its City (never adjacent), so Agrar has to defend an AREA, not one tile.
-export function getValidFarmHexes(state: GameState, citySiteId: string): HexCoord[] {
-  const site = state.strategicSites.find(s => s.id === citySiteId);
-  if (!site || site.state !== 'city') return [];
-  const r = FARM_DISTANCE_FROM_CITY;
+// Agrar's ONLY economic expansion, built directly by the Builder on open
+// land — never tied to a captured site (Agrar never founds one, §28). A
+// Farm founds over a round like a strategic site (not instantly): the
+// Builder spends its whole activation + AGRAR_FARM_COST to start one, it
+// completes at the start of Agrar's next round if uncontested (see
+// resolveFarmFoundingForPlayer), and only then becomes a real attackable
+// structure that projects cultivated territory (§10-11, getCultivatedHexes).
+
+function activeFarmsOf(state: GameState, playerId: number): Farm[] {
+  return state.farms.filter(f => f.ownerId === playerId && f.state === 'farm');
+}
+
+// Founding + active — the global cap (§6, MAX_ACTIVE_FARMS) counts a Farm
+// the instant its aura is committed, not just once it's complete.
+function allFarmsOf(state: GameState, playerId: number): Farm[] {
+  return state.farms.filter(f => f.ownerId === playerId);
+}
+
+// A new Farm must be within FARM_DISTANCE_FROM_CAPITAL of the Capital OR an
+// existing ACTIVE Farm (§8 — the network spreads from either anchor), but
+// never within FARM_MIN_SPACING of ANY existing Farm, founding or active
+// (§8 — "may NOT be directly adjacent"). Scans the whole (small) map rather
+// than a ring, since there can be multiple anchors.
+export function getValidFarmHexes(state: GameState, playerId: number): HexCoord[] {
+  const capital = state.capitals.find(c => c.playerId === playerId);
+  if (!capital) return [];
+  const anchors = [capital.pos, ...activeFarmsOf(state, playerId).map(f => f.pos)];
+  const allOwn = allFarmsOf(state, playerId);
   const result: HexCoord[] = [];
-  for (let dq = -r; dq <= r; dq++) {
-    for (let dr = Math.max(-r, -dq - r); dr <= Math.min(r, -dq + r); dr++) {
-      const hex: HexCoord = { q: site.pos.q + dq, r: site.pos.r + dr };
-      if (hexDistance(site.pos, hex) !== r) continue; // exactly r, not "within" r
-      if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue;
-      if (state.hills.has(hexKey(hex))) continue;
-      if (state.walls.has(hexKey(hex))) continue;
-      if (getStrategicSiteAt(state, hex)) continue;
-      if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
-      if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
-      result.push(hex);
-    }
+  for (const hex of generateHexMap(state.mapRadius)) {
+    const key = hexKey(hex);
+    if (state.hills.has(key) || state.walls.has(key)) continue;
+    if (getStrategicSiteAt(state, hex)) continue;
+    if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
+    if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
+    if (getUnitAt(state, hex)) continue;
+    if (!anchors.some(a => hexDistance(a, hex) <= FARM_DISTANCE_FROM_CAPITAL)) continue;
+    if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue;
+    result.push(hex);
   }
   return result;
 }
 
-export function canBuildFarm(state: GameState, citySiteId: string, pos: HexCoord): boolean {
+export function canStartFarm(state: GameState, unit: Unit, pos: HexCoord): boolean {
   if (isMatchSetupRestricted(state)) return false;
-  const player = getCurrentPlayer(state);
-  const site = state.strategicSites.find(s => s.id === citySiteId);
-  if (!site || site.state !== 'city' || site.ownerId !== player.id) return false;
-  if (getCityFarms(state, citySiteId).length >= FARM_SLOTS_PER_CITY) return false;
+  if (unit.playerId !== getCurrentPlayer(state).id) return false;
+  if (unit.hasMoved || unit.hasAttacked) return false; // needs an unused activation
+  if (unit.type !== 'founder') return false; // only the Builder
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player || player.faction !== 'agrar') return false; // §28 — Temple has no equivalent
+  if (allFarmsOf(state, player.id).length >= MAX_ACTIVE_FARMS) return false;
   if (player.aura < AGRAR_FARM_COST) return false;
-  return getValidFarmHexes(state, citySiteId).some(h => hexEqual(h, pos));
+  return getValidFarmHexes(state, player.id).some(h => hexEqual(h, pos));
 }
 
-export function buildFarm(state: GameState, citySiteId: string, pos: HexCoord): boolean {
-  if (!canBuildFarm(state, citySiteId, pos)) return false;
-  const player = getCurrentPlayer(state);
+// Begin building: charges AGRAR_FARM_COST immediately (same "commit the
+// resource up front" rule as site founding, §7/§9) and consumes the
+// Builder's whole activation. Resolves at the start of Agrar's next round —
+// see resolveFarmFoundingForPlayer, called from endTurn().
+export function startFarm(state: GameState, unitId: string, pos: HexCoord): boolean {
+  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+  if (!unit || !canStartFarm(state, unit, pos)) return false;
+  const player = state.players.find(p => p.id === unit.playerId)!;
   player.aura -= AGRAR_FARM_COST;
-  const site = state.strategicSites.find(s => s.id === citySiteId)!;
-  state.farms.push(createFarm(pos, citySiteId, player.id));
-  site.investmentOwnerId = player.id;
+  state.farms.push({
+    id: `farm_${farmIdCounter++}`,
+    pos: { ...pos },
+    ownerId: player.id,
+    state: 'foundingFarm',
+    founding: { playerId: player.id, unitId: unit.id, startedRound: state.turnNumber, completesRound: state.turnNumber + 1 },
+    hp: 0, maxHp: 0, defense: 0,
+  });
+  unit.hasMoved = true;
+  unit.hasAttacked = true;
   return true;
+}
+
+// §9-style interruption: a Farm still under construction that an enemy unit
+// has occupied by the time it's due simply fails — removed outright, no
+// refund, no "Ruins" (Farms don't have one, §15). Otherwise it completes and
+// becomes a real structure.
+function resolveFarmFoundingForPlayer(state: GameState, playerId: number): void {
+  const stillFounding: Farm[] = [];
+  for (const farm of state.farms) {
+    if (farm.state !== 'foundingFarm' || !farm.founding || farm.founding.playerId !== playerId) continue;
+    if (state.turnNumber < farm.founding.completesRound) continue;
+    const enemyOnHex = state.units.some(u => u.hp > 0 && u.playerId !== playerId && hexEqual(u.pos, farm.pos));
+    if (enemyOnHex) { stillFounding.push(farm); continue; }
+    farm.state = 'farm';
+    farm.founding = null;
+    farm.hp = STRUCTURES.farm.hp;
+    farm.maxHp = STRUCTURES.farm.hp;
+    farm.defense = STRUCTURES.farm.defense;
+  }
+  if (stillFounding.length) state.farms = state.farms.filter(f => !stillFounding.includes(f));
+}
+
+// §10-11 — every ACTIVE Farm projects cultivated territory onto its own hex
+// + its 6 neighbours (CULTIVATION_RADIUS). A neutral/ruined site inside an
+// ENEMY Agrar player's cultivated territory cannot be founded/rebuilt by
+// Temple — see canStartFounding. Deliberately NOT stored on GameState;
+// always derived fresh from live Farm positions (§45 — avoid duplicated,
+// driftable state).
+export function getCultivatedHexes(state: GameState, agrarPlayerId: number): Set<string> {
+  const hexes = new Set<string>();
+  for (const farm of activeFarmsOf(state, agrarPlayerId)) {
+    hexes.add(hexKey(farm.pos));
+    for (const n of hexNeighbors(farm.pos)) hexes.add(hexKey(n));
+  }
+  return hexes;
+}
+
+function isSiteCultivationBlocked(state: GameState, pos: HexCoord, templePlayerId: number): boolean {
+  const key = hexKey(pos);
+  for (const p of state.players) {
+    if (p.id === templePlayerId || p.faction !== 'agrar') continue;
+    if (getCultivatedHexes(state, p.id).has(key)) return true;
+  }
+  return false;
 }
 
 // ── Temple Devotion (§15) ──
@@ -1253,7 +1325,8 @@ export function canBuildRoad(state: GameState, unit: Unit): boolean {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || player.faction !== 'agrar') return false;
   if (getRoadAt(state, unit.pos)) return false; // already a road here
-  if (getStructureAt(state, unit.pos)) return false; // no roads under Capital/City/Temple/Farm
+  if (getStructureAt(state, unit.pos)) return false; // no roads under Capital/Temple/Farm
+  if (state.farms.some(f => hexEqual(f.pos, unit.pos))) return false; // nor under a still-founding Farm
   const cost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
   return player.aura >= cost;
 }
@@ -1551,11 +1624,11 @@ function updateHighlights(state: GameState): void {
       if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) enemyStructures.push(capital.pos);
     }
     for (const site of state.strategicSites) {
-      if ((site.state === 'city' || site.state === 'temple') && site.ownerId !== unit.playerId
+      if (site.state === 'temple' && site.ownerId !== unit.playerId
         && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
     }
     for (const farm of state.farms) {
-      if (farm.ownerId !== unit.playerId && hexDistance(unit.pos, farm.pos) <= effectiveRange) enemyStructures.push(farm.pos);
+      if (farm.state === 'farm' && farm.ownerId !== unit.playerId && hexDistance(unit.pos, farm.pos) <= effectiveRange) enemyStructures.push(farm.pos);
     }
     state.structureAttackHexes = enemyStructures;
   }
@@ -1781,9 +1854,9 @@ export type StructureRef =
 export function getStructureAt(state: GameState, pos: HexCoord): StructureRef | null {
   const capital = state.capitals.find(c => hexEqual(c.pos, pos));
   if (capital) return { kind: 'capital', capital };
-  const site = state.strategicSites.find(s => hexEqual(s.pos, pos) && (s.state === 'city' || s.state === 'temple'));
+  const site = state.strategicSites.find(s => hexEqual(s.pos, pos) && s.state === 'temple');
   if (site) return { kind: 'site', site };
-  const farm = state.farms.find(f => hexEqual(f.pos, pos));
+  const farm = state.farms.find(f => hexEqual(f.pos, pos) && f.state === 'farm');
   if (farm) return { kind: 'farm', farm };
   return null;
 }
@@ -1959,15 +2032,17 @@ export function endTurn(state: GameState): void {
 
   const newPlayer = getCurrentPlayer(state);
 
-  // §6, §8 — resolve any founding this player has due, BEFORE granting income,
-  // so a structure that completes right now already contributes this turn.
+  // §6, §8 — resolve any founding/Farm construction this player has due,
+  // BEFORE granting income, so a structure that completes right now already
+  // contributes this turn.
   resolveFoundingForPlayer(state, newPlayer.id);
+  resolveFarmFoundingForPlayer(state, newPlayer.id);
 
   // §19-20 — free up any of this player's production slots whose cooldown has
   // elapsed (see getProductionSlots/getBusyProductionSlotCount).
   resolveProductionForPlayer(state, newPlayer.id);
 
-  // §12-19 — real economy: flat base + each owned City's Farms / Temple's
+  // §4-19 — real economy: flat base + Agrar's active Farms / Temple's
   // Devotion. See getPlayerIncome.
   newPlayer.aura += getPlayerIncome(state, newPlayer.id);
 

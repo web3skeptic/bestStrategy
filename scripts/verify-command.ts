@@ -9,7 +9,7 @@ import {
   researchTech, getPopulationCap, getPopulationCount, getProductionSlots,
   getBusyProductionSlotCount, getPlayerCapital, startFounding,
 } from '../src/game';
-import { COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION } from '../src/factions';
+import { COMMAND_TIERS, PRODUCTION_BASE_SLOTS } from '../src/factions';
 import type { GameState } from '../src/types';
 
 let failures = 0;
@@ -96,7 +96,7 @@ console.log('\n=== Production slots (§19-20) ===');
 {
   const state = setup();
   state.currentPlayerIndex = 0;
-  check('a fresh player has CAPITAL_PRODUCTION_SLOTS slots (Capital only, no expansions)', getProductionSlots(state, 0) === CAPITAL_PRODUCTION_SLOTS, `got ${getProductionSlots(state, 0)}`);
+  check('a fresh player has PRODUCTION_BASE_SLOTS slots (Capital only, no expansions)', getProductionSlots(state, 0) === PRODUCTION_BASE_SLOTS, `got ${getProductionSlots(state, 0)}`);
   check('no slots busy at game start', getBusyProductionSlotCount(state, 0) === 0);
 
   const cap = capitalId(state, 0);
@@ -125,20 +125,22 @@ console.log('\n=== Production slots (§19-20) ===');
   check('recruiting is available again after the cooldown', canAfford(state, 'warrior'));
 }
 {
-  // Owning an expansion (City/Temple) grants +1 production slot.
+  // Temple founding a site grants +1 production slot (phase 10: Temple's
+  // production scales with owned Temple count — see verify-economy.ts for
+  // the full per-faction production curve, including Agrar's Farm-based one).
   const state = setup();
   const site = state.strategicSites[0]!;
-  const founder = state.units.find(u => u.playerId === 0 && u.type === 'founder')!;
-  founder.pos = { ...site.pos };
-  founder.hasMoved = false; founder.hasAttacked = false;
-  state.currentPlayerIndex = 0;
-  const before = getProductionSlots(state, 0);
-  startFounding(state, founder.id);
+  const acolyte = state.units.find(u => u.playerId === 1 && u.type === 'founder')!;
+  acolyte.pos = { ...site.pos };
+  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  const before = getProductionSlots(state, 1);
+  startFounding(state, acolyte.id);
   endTurn(state); // opponent's turn
   endTurn(state); // back to this player -> founding resolves (uncontested)
   const site0 = state.strategicSites.find(s => s.id === site.id)!;
-  check('site founded into a City', site0.state === 'city', `got ${site0.state}`);
-  check('owning a City grants +PRODUCTION_SLOTS_PER_EXPANSION slots', getProductionSlots(state, 0) === before + PRODUCTION_SLOTS_PER_EXPANSION, `before=${before} after=${getProductionSlots(state, 0)}`);
+  check('site founded into a Temple', site0.state === 'temple', `got ${site0.state}`);
+  check('owning a Temple grants +1 production slot', getProductionSlots(state, 1) === before + 1, `before=${before} after=${getProductionSlots(state, 1)}`);
 }
 
 // ── Players are independent ──

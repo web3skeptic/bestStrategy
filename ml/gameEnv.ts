@@ -22,7 +22,7 @@ import {
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getOwnedStructures,
   canBuildTeleportPair, getValidTeleportHexes, getValidTeleportHexesForOtherTemples,
-  canBuildFarm, getValidFarmHexes, canBuyDevotion,
+  canBuyDevotion,
 } from '../src/game';
 import { executeAction, computeUnitActions, UnifiedActionName } from '../server/actionDispatcher';
 import { hexDistance } from '../src/hex';
@@ -79,6 +79,7 @@ export function legalMicros(state: GameState): Micro[] {
       else if (a.type === 'attack-structure') out.push({ action: 'attack-structure', params: { unitId: unit.id, targetPos: a.targetPos } });
       else if (a.type === 'found') out.push({ action: 'found', params: { unitId: unit.id } });
       else if (a.type === 'build-road') out.push({ action: 'build-road', params: { unitId: unit.id } });
+      else if (a.type === 'build-farm') out.push({ action: 'build-farm', params: { unitId: unit.id, pos: a.targetPos } });
     }
   }
 
@@ -112,15 +113,11 @@ export function legalMicros(state: GameState): Micro[] {
     out.push({ action: 'build-teleport', params: { templeId: structure.id, pos: a[0]!, targetPos: posB } });
   }
 
-  // Farms / Devotion — one representative Farm hex per owned City with a free
-  // slot, and a Devotion purchase for each owned Temple below max level.
+  // Devotion — a purchase for each owned Temple below max level. Farms are
+  // handled above (Builder-driven, via computeUnitActions' 'build-farm').
   for (const site of state.strategicSites) {
     if (site.ownerId !== pid) continue;
-    if (site.state === 'city') {
-      for (const hex of getValidFarmHexes(state, site.id)) {
-        if (canBuildFarm(state, site.id, hex)) { out.push({ action: 'build-farm', params: { templeId: site.id, pos: hex } }); break; }
-      }
-    } else if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
+    if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
       out.push({ action: 'buy-devotion', params: { templeId: site.id } });
     }
   }

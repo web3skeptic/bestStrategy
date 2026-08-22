@@ -34,7 +34,9 @@ interface SnapshotSite {
   investmentOwnerId: number | null; devotionLevel: number;
 }
 interface SnapshotFarm {
-  id: string; pos: HexCoord; citySiteId: string; ownerId: number; hp: number; maxHp: number; defense: number;
+  id: string; pos: HexCoord; ownerId: number; state: 'foundingFarm' | 'farm';
+  founding: { playerId: number; unitId: string; startedRound: number; completesRound: number } | null;
+  hp: number; maxHp: number; defense: number;
 }
 interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
@@ -127,7 +129,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   }));
 
   const farms: Farm[] = (s.map.farms ?? []).map(f => ({
-    id: f.id, pos: f.pos, citySiteId: f.citySiteId, ownerId: f.ownerId,
+    id: f.id, pos: f.pos, ownerId: f.ownerId, state: f.state, founding: f.founding,
     hp: f.hp, maxHp: f.maxHp, defense: f.defense,
   }));
 

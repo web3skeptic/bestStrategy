@@ -1156,8 +1156,8 @@ export class Renderer3D {
     for (const site of state.strategicSites as StrategicSite[]) {
       const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
       const foundingOwner = site.founding ? state.players.find(p => p.id === site.founding!.playerId) : null;
-      const isCompleted = site.state === 'city' || site.state === 'temple';
-      const isFounding = site.state === 'foundingCity' || site.state === 'foundingTemple';
+      const isCompleted = site.state === 'temple';
+      const isFounding = site.state === 'foundingTemple';
       structures.push({
         id: site.id, pos: site.pos,
         tier: this.structureVisualTier(isCompleted ? 'completed' : isFounding ? 'founding' : 'neutralOrRuins'),
@@ -1167,8 +1167,9 @@ export class Renderer3D {
         canPendingFound: site.state === 'neutral' || site.state === 'ruins',
       });
     }
-    // Farms — Agrar's physical income buildings. Smallest tier (below a
-    // completed City/Temple), placeholder pending real asset work (§70).
+    // Farms — Agrar's physical income buildings. Small fixed tier (a Farm is
+    // deliberately modest next to a Capital/Temple), placeholder pending real
+    // asset work (§70) — same tier whether still founding or active for now.
     for (const farm of state.farms as Farm[]) {
       const owner = state.players.find(p => p.id === farm.ownerId);
       structures.push({

@@ -160,7 +160,7 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
         devotionLevel: site.devotionLevel,
       })),
       farms: s.farms.map(f => ({
-        id: f.id, pos: f.pos, citySiteId: f.citySiteId, ownerId: f.ownerId,
+        id: f.id, pos: f.pos, ownerId: f.ownerId, state: f.state, founding: f.founding,
         hp: f.hp, maxHp: f.maxHp, defense: f.defense,
       })),
       roads: s.roads.map(r => ({ pos: r.pos, ownerId: r.ownerId })),
@@ -563,7 +563,8 @@ headlessRouter.post('/:gameId/auto-play', (req: Request, res: Response) => {
     name: p.name,
     aura: p.aura,
     units: state.units.filter(u => u.hp > 0 && u.playerId === p.id).length,
-    sites: state.strategicSites.filter(s => (s.state === 'city' || s.state === 'temple') && s.ownerId === p.id).length,
+    sites: state.strategicSites.filter(s => s.state === 'temple' && s.ownerId === p.id).length,
+    farms: state.farms.filter(f => f.state === 'farm' && f.ownerId === p.id).length,
     capitalHp: state.capitals.find(c => c.playerId === p.id)?.hp ?? 0,
     tech: state.playerTech[p.id]!.researched.size,
   }));

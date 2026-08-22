@@ -20,7 +20,12 @@ export type FactionId = 'agrar' | 'temple';
 // structureAttackHexes added.
 // v5 (phase 6): productionOrders added (Command system's production-slot cooldowns).
 // v6 (phase 7): roads + pillagedRoadHexes added (Agrar-only physical Roads).
-export const RULES_VERSION = 6;
+// v7 (phase 10): macro-economy correction — "Agrar controls area, Temple
+// controls points". StrategicSiteState drops 'foundingCity'/'city' (Agrar no
+// longer founds sites at all); Farm drops citySiteId, gains state/founding
+// (Farms are now Capital/Farm-network-placed, not City-owned, and found over
+// a round like a site instead of instantly).
+export const RULES_VERSION = 7;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -87,17 +92,16 @@ export function unitYetToMove(unit: Unit): boolean {
 // Replaces the old "Temple" domain type, which was overloaded to mean
 // starting objective + neutral objective + capturable structure + the win
 // condition all at once. That's gone: a StrategicSite is a neutral map
-// objective that a Builder/Acolyte can found into a City (Agrar) or an
-// actual Temple (Temple faction) — it is never instantly captured by
-// standing on it. The player's permanent home base is a separate `Capital`
-// entity (see below), not a StrategicSite state.
+// objective that ONLY a Temple Acolyte can found into an actual Temple —
+// Agrar never converts one into a City (phase 10 correction: "Agrar
+// controls area, Temple controls points" — see factions.ts §STATUS). It is
+// never instantly captured by standing on it. The player's permanent home
+// base is a separate `Capital` entity (see below), not a StrategicSite state.
 export type StrategicSiteState =
-  | 'neutral'        // unclaimed — foundable by either faction
-  | 'foundingCity'    // Agrar Builder founding; 0 income/production until complete
+  | 'neutral'         // unclaimed — foundable only by Temple
   | 'foundingTemple'  // Temple Acolyte founding; 0 income/production until complete
-  | 'city'            // completed Agrar structure
   | 'temple'          // completed Temple-faction structure
-  | 'ruins';          // a destroyed city/temple — refoundable by either faction
+  | 'ruins';          // a destroyed temple — refoundable (Temple only)
 
 // In-progress founding, tracked with explicit round numbers rather than a
 // loose "turn count" (§6 of the brief): founding completes at the START of
@@ -105,8 +109,8 @@ export type StrategicSiteState =
 // current round to respond.
 export interface FoundingProgress {
   playerId: number;
-  unitId: string;               // the Builder/Acolyte performing the founding
-  targetState: 'city' | 'temple';
+  unitId: string;               // the Acolyte performing the founding
+  targetState: 'temple';
   fromState: 'neutral' | 'ruins'; // what to revert to if founding fails (§9 — no half-built garbage states)
   startedRound: number;
   completesRound: number;       // startedRound + 1 — see resolveFoundingForPlayer in game.ts
@@ -116,9 +120,9 @@ export interface StrategicSite {
   id: string;
   pos: HexCoord;
   state: StrategicSiteState;
-  // Only meaningful (non-null) once state is 'city' or 'temple'. A ruined or
-  // founding site has no owner — do not read this as "who's founding it",
-  // use `founding.playerId` for that.
+  // Only meaningful (non-null) once state is 'temple'. A ruined or founding
+  // site has no owner — do not read this as "who's founding it", use
+  // `founding.playerId` for that.
   ownerId: number | null;
   founding: FoundingProgress | null;
   // Combat stats — 0 while neutral/founding/ruins (not a valid attack
@@ -127,31 +131,42 @@ export interface StrategicSite {
   maxHp: number;
   defense: number;
   /**
-   * §17-18 (phase 4): who the Farm/Devotion investment on this site belongs
-   * to. Distinct from `ownerId` — it PERSISTS through Ruins (unlike ownerId,
+   * §17-18 (phase 4): who the Devotion investment on this site belongs to.
+   * Distinct from `ownerId` — it PERSISTS through Ruins (unlike ownerId,
    * which goes null), so a player who rebuilds their OWN former site gets
-   * their Farms/Devotion back. It is only reset (to the new founder) when a
+   * their Devotion back. It is only reset (to the new founder) when a
    * DIFFERENT player completes founding here — see completeFounding in
-   * game.ts, which is also where old Farms actually get deleted in that case.
-   * Null only for a virgin site that has never been founded.
+   * game.ts. Null only for a virgin site that has never been founded.
    */
   investmentOwnerId: number | null;
-  /** §15 (phase 4): 0-2, Temple-only. Meaningless (and kept 0) for a City. */
+  /** §15 (phase 4): 0-2, Temple's economic investment on its own site. */
   devotionLevel: number;
 }
 
-// §13-14 (phase 4) — a physical Agrar economy building, 2 slots per City,
-// placed exactly 2 hexes from it. A real attackable structure (see
-// getStructureAt), not just a City upgrade — the whole point is that Agrar
-// has to defend an AREA, not one tile (§13).
+// Phase 10 correction — a Farm is Agrar's economy engine, built directly by
+// the Builder on open land (NOT tied to a City/StrategicSite — Agrar never
+// owns one of those). Global cap MAX_ACTIVE_FARMS per player, placed within
+// FARM_DISTANCE_FROM_CAPITAL of the Capital or an existing active Farm, but
+// never closer than FARM_MIN_SPACING to another Farm — Agrar expands as a
+// spreading network, not a tight cluster (§8). A real attackable structure
+// (see getStructureAt). Founds over one round like a strategic site, not
+// instantly — see startFarm/resolveFarmFoundingForPlayer in game.ts.
 export interface Farm {
   id: string;
   pos: HexCoord;
-  citySiteId: string; // the StrategicSite (state 'city') this Farm belongs to
   ownerId: number;
+  state: 'foundingFarm' | 'farm';
+  founding: FarmFoundingProgress | null;
   hp: number;
   maxHp: number;
   defense: number;
+}
+
+export interface FarmFoundingProgress {
+  playerId: number;
+  unitId: string; // the Builder performing the construction
+  startedRound: number;
+  completesRound: number;
 }
 
 // The player's permanent home base. Cannot be captured, cannot become

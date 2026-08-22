@@ -14,7 +14,7 @@ import {
   researchTech, canResearch,
   buildTeleportPair, canBuildTeleportPair, getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples, getTeleportAt,
-  canBuildFarm, buildFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
+  canStartFarm, startFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
   canBuildRoad, buildRoad,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
@@ -263,13 +263,27 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
     return; // founding spends the whole activation
   }
 
-  // Agrar's Builder pays a road forward wherever it happens to be standing
-  // (hard AI only — a simple baseline, not a network planner; §23-25).
-  if (hard && canBuildRoad(state, unit)) {
-    observe(state, 'build-road', { unitId: unit.id });
-    buildRoad(state, unit.id);
-    actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `Hard AI builds a road at (${unit.pos.q},${unit.pos.r})` });
-    return; // building spends the whole activation
+  // Agrar's Builder grows its Farm network first — that's the faction's
+  // whole economy now (§6-9) — and only pays a road forward if no valid
+  // Farm hex is available this turn (hard AI only; a simple baseline, not a
+  // network planner).
+  if (hard && unit.type === 'founder') {
+    const player = state.players[aiPlayerId]!;
+    if (player.faction === 'agrar') {
+      const farmHex = getValidFarmHexes(state, aiPlayerId).find(h => canStartFarm(state, unit, h));
+      if (farmHex) {
+        observe(state, 'build-farm', { unitId: unit.id, pos: farmHex });
+        startFarm(state, unit.id, farmHex);
+        actions.push({ type: 'upgrade', pos: { ...farmHex }, description: `Hard AI begins building a Farm at (${farmHex.q},${farmHex.r})` });
+        return; // building spends the whole activation
+      }
+      if (canBuildRoad(state, unit)) {
+        observe(state, 'build-road', { unitId: unit.id });
+        buildRoad(state, unit.id);
+        actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `Hard AI builds a road at (${unit.pos.q},${unit.pos.r})` });
+        return; // building spends the whole activation
+      }
+    }
   }
   if (unit.hasAttacked) return;
   if (!select(state, unit)) return;
@@ -405,19 +419,13 @@ function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): 
   }
 }
 
-// Farms (Agrar Cities) / Devotion (Temple sites) — phase 4 economy. Greedy:
-// spend on every owned site that can afford an upgrade, one build per site
-// per turn, cheapest/earliest investment first so income compounds sooner.
+// Temple Devotion — phase 4/10 economy. Greedy: buy the next level on every
+// owned Temple site that can afford it, one purchase per site per turn.
+// Agrar's Farm-building is handled per-unit in actCombatUnit instead (it's
+// Builder-driven, not site-driven — see §6-9).
 function doEconomy(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   for (const site of getOwnedSites(state, aiPlayerId)) {
-    if (site.state === 'city') {
-      const hex = getValidFarmHexes(state, site.id).find(h => canBuildFarm(state, site.id, h));
-      if (!hex) continue;
-      observe(state, 'build-farm', { templeId: site.id, pos: hex });
-      if (buildFarm(state, site.id, hex)) {
-        actions.push({ type: 'upgrade', pos: { ...hex }, description: `Hard AI builds a Farm at (${hex.q},${hex.r})` });
-      }
-    } else if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
+    if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
       observe(state, 'buy-devotion', { templeId: site.id });
       if (buyDevotion(state, site.id)) {
         actions.push({ type: 'upgrade', pos: { ...site.pos }, description: `Hard AI purchases Devotion at (${site.pos.q},${site.pos.r})` });
@@ -427,7 +435,7 @@ function doEconomy(state: GameState, aiPlayerId: number, actions: AIAction[]): v
 }
 
 function getOwnedSites(state: GameState, aiPlayerId: number) {
-  return state.strategicSites.filter(s => s.ownerId === aiPlayerId && (s.state === 'city' || s.state === 'temple'));
+  return state.strategicSites.filter(s => s.ownerId === aiPlayerId && s.state === 'temple');
 }
 
 function doTeleport(state: GameState, aiPlayerId: number, actions: AIAction[]): void {

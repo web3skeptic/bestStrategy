@@ -92,35 +92,43 @@ export const EARLY_UNLOCKED_SLOTS: Record<FactionId, UnitType[]> = {
   temple: TEMPLE_UNITS.filter(u => u.earlyUnlock && u.slot !== 'founder').map(u => u.slot),
 };
 
-// §51 — structure stats.
+// §51 — structure stats. No more 'city' — Agrar's only structures are its
+// Capital and its Farms (phase 10 correction).
 export interface StructureDef { hp: number; defense: number; }
-export const STRUCTURES: Record<'farm' | 'temple' | 'city' | 'capital', StructureDef> = {
+export const STRUCTURES: Record<'farm' | 'temple' | 'capital', StructureDef> = {
   farm: { hp: 12, defense: 4 },
   temple: { hp: 26, defense: 5 },
-  city: { hp: 30, defense: 6 },
   capital: { hp: 40, defense: 6 },
 };
 
 // §21 — Command cap tiers. Only Command I/II raise the cap; territory never does.
 export const COMMAND_TIERS = { start: 8, commandI: 10, commandII: 12 } as const;
 
-// §19-20 — production slots: Capital gives 2, each controlled expansion +1.
-export const CAPITAL_PRODUCTION_SLOTS = 2;
-export const PRODUCTION_SLOTS_PER_EXPANSION = 1;
+// §16-19 (phase 10) — production is centralized for Agrar (scales with
+// active Farm count) and distributed for Temple (scales with active
+// neutral-Temple count) — see getProductionSlots in game.ts for the actual
+// per-faction curve. Both start from the same base and cap at the same max.
+export const PRODUCTION_BASE_SLOTS = 2;
+export const PRODUCTION_MAX_SLOTS = 4;
 export const UNIT_TRAINING_ROUNDS = 1;
 
 // §4, §12-19 — shared economy constants (identical for both factions).
 export const STARTING_ENERGY = 6;
 export const BASE_INCOME_PER_ROUND = 6;
-export const INCOME_PER_DEVELOPED_SITE = 2;
-export const SITE_ESTABLISH_COST = 4;      // City / Temple founding
-export const AGRAR_FARM_COST = 3;          // x2 farm slots per City
+export const SITE_ESTABLISH_COST = 4;      // Temple founding only — Agrar never founds a site (§28)
+
+// §6-9 (phase 10) — Agrar's Farm network: its ONLY economic expansion, built
+// directly by the Builder on open land, never tied to a captured site.
+export const AGRAR_FARM_COST = 5;
 export const AGRAR_FARM_INCOME = 1;
-export const FARM_SLOTS_PER_CITY = 2;
+export const MAX_ACTIVE_FARMS = 4;
+export const FARM_DISTANCE_FROM_CAPITAL = 2; // a new Farm must be within this of the Capital OR an existing active Farm
+export const FARM_MIN_SPACING = 2;           // two Farms may never be closer than this to each other (no direct adjacency)
+export const CULTIVATION_RADIUS = 1;         // §10 — an active Farm's own hex + its 6 neighbours
+
 export const TEMPLE_DEVOTION_COST = 3;     // x2 devotion levels per Temple
 export const TEMPLE_DEVOTION_INCOME = 1;
 export const TEMPLE_DEVOTION_MAX_LEVEL = 2;
-export const FARM_DISTANCE_FROM_CITY = 2;  // §14
 
 // §23-25 — Agrar-only physical Roads. Temple gets no equivalent bonus.
 export const ROAD_COST_PER_HEX = 1;

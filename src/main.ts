@@ -1,5 +1,5 @@
 import { GameState, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, FARM_SLOTS_PER_CITY, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -46,10 +46,9 @@ import {
   getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
-  canBuildFarm,
-  buildFarm,
+  canStartFarm,
+  startFarm,
   getValidFarmHexes,
-  getCityFarms,
   canBuyDevotion,
   buyDevotion,
   canBuildRoad,
@@ -265,12 +264,12 @@ function checkTempleCaptureToasts(): void {
   for (const s of state.strategicSites) {
     const prev = prevSiteStates.get(s.id)!;
     if (prev === s.state) continue;
-    if (s.state === 'city' || s.state === 'temple') {
+    if (s.state === 'temple') {
       const isMine = viewer !== null && s.ownerId === viewer;
-      showToast(isMine ? `You founded a ${s.state}` : `${nameOf(s.ownerId)} founded a ${s.state}`, isMine ? 'good' : undefined);
-    } else if (s.state === 'ruins' && (prev === 'city' || prev === 'temple')) {
-      showToast('A structure was reduced to Ruins');
-    } else if ((s.state === 'neutral' || s.state === 'ruins') && (prev === 'foundingCity' || prev === 'foundingTemple')) {
+      showToast(isMine ? `You founded a Temple` : `${nameOf(s.ownerId)} founded a Temple`, isMine ? 'good' : undefined);
+    } else if (s.state === 'ruins' && prev === 'temple') {
+      showToast('A Temple was reduced to Ruins');
+    } else if ((s.state === 'neutral' || s.state === 'ruins') && prev === 'foundingTemple') {
       showToast('A founding attempt failed', 'bad');
     }
   }
@@ -1200,13 +1199,35 @@ function updateUI(): void {
       const foundable = canStartFounding(state, unit);
       if (foundable) {
         captureBtn.style.display = 'block';
-        captureBtn.textContent = `⚒ Found ${foundable.targetState === 'city' ? 'City' : 'Temple'} (⚡${SITE_ESTABLISH_COST})`;
+        captureBtn.textContent = `⚒ Found Temple (⚡${SITE_ESTABLISH_COST})`;
       } else if (canBuildRoad(state, unit)) {
         const roadCost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
         captureBtn.style.display = 'block';
         captureBtn.textContent = `🛤 Build Road (⚡${roadCost})`;
       } else {
         captureBtn.style.display = 'none';
+      }
+
+      // Build Farm button (§6-9, Agrar's Builder only) — a separate action
+      // from Found/Road above so the Builder can have both available at once
+      // (e.g. standing on open land near the Capital). Ring-pick hex mode,
+      // like the old per-City flow, but keyed off the Builder unit, not a site.
+      if (myTurn && unit.type === 'founder' && player.faction === 'agrar') {
+        const hasHex = getValidFarmHexes(state, player.id).some(h => canStartFarm(state, unit, h));
+        if (hasHex || buildingFarm?.unitId === unit.id) {
+          economyBtn.style.display = 'block';
+          economyBtn.disabled = false;
+          economyBtn.classList.toggle('active', buildingFarm?.unitId === unit.id);
+          economyBtn.textContent = buildingFarm?.unitId === unit.id
+            ? '⚑ Pick a hex for the Farm…'
+            : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
+        } else {
+          economyBtn.style.display = 'none';
+          if (buildingFarm?.unitId === unit.id) clearBuildFarm();
+        }
+      } else {
+        economyBtn.style.display = 'none';
+        if (buildingFarm) clearBuildFarm();
       }
 
       // Destroy/disband slab — only for the local player's own unit on their turn.
@@ -1228,14 +1249,12 @@ function updateUI(): void {
     const structurePos = capital?.pos ?? site?.pos;
     if (structurePos) {
       const unitOnStructure = getUnitAt(state, structurePos);
-      const economyNote = site && site.state === 'city'
-        ? ` | 🌾 Farms: ${getCityFarms(state, siteId).length}/${FARM_SLOTS_PER_CITY}`
-        : site && site.state === 'temple'
-          ? ` | 🕯 Devotion: ${site.devotionLevel}/${TEMPLE_DEVOTION_MAX_LEVEL}`
-          : '';
+      const economyNote = site
+        ? ` | 🕯 Devotion: ${site.devotionLevel}/${TEMPLE_DEVOTION_MAX_LEVEL}`
+        : '';
       const label = capital
         ? `Capital HP ${capital.hp}/${capital.maxHp}`
-        : `${site!.state === 'city' ? 'City' : 'Temple'} HP ${site!.hp}/${site!.maxHp}${economyNote}`;
+        : `Temple HP ${site!.hp}/${site!.maxHp}${economyNote}`;
       const existingPortals = state.teleportBuildings.filter(t => t.templeId === siteId).length;
       const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
       unitInfoEl.textContent = unitOnStructure
@@ -1254,23 +1273,9 @@ function updateUI(): void {
         if (buildingTeleport?.templeId === siteId) clearBuildTeleport();
       }
 
-      // Build Farm / Buy Devotion button — Agrar Cities place a physical Farm
-      // (hex-picking mode, like teleport); Temple sites buy a Devotion level
-      // directly (no hex needed).
-      if (myTurn && site && site.state === 'city') {
-        const hasHex = getValidFarmHexes(state, siteId).some(h => canBuildFarm(state, siteId, h));
-        if (hasHex || buildingFarm?.citySiteId === siteId) {
-          economyBtn.style.display = 'block';
-          economyBtn.disabled = false;
-          economyBtn.classList.toggle('active', buildingFarm?.citySiteId === siteId);
-          economyBtn.textContent = buildingFarm?.citySiteId === siteId
-            ? '⚑ Pick a hex for the Farm…'
-            : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
-        } else {
-          economyBtn.style.display = 'none';
-          if (buildingFarm?.citySiteId === siteId) clearBuildFarm();
-        }
-      } else if (myTurn && site && site.state === 'temple') {
+      // Buy Devotion button — Temple only (Agrar's Farm-building lives on
+      // the Builder unit selection instead, see above).
+      if (myTurn && site) {
         economyBtn.style.display = 'block';
         economyBtn.classList.remove('active');
         economyBtn.disabled = !canBuyDevotion(state, siteId);
@@ -1581,17 +1586,17 @@ buildTeleportBtn.addEventListener('click', () => {
   }
 });
 
-// ── Build Farm / Buy Devotion mode (phase 4 economy) ──
+// ── Build Farm (Builder-driven, §6-9) / Buy Devotion (site-driven, §15) ──
 
 interface BuildFarmState {
-  citySiteId: string;
+  unitId: string;
 }
 
 let buildingFarm: BuildFarmState | null = null;
 
-function enterBuildFarm(citySiteId: string): void {
-  buildingFarm = { citySiteId };
-  state.buildHexes = getValidFarmHexes(state, citySiteId);
+function enterBuildFarm(unitId: string): void {
+  buildingFarm = { unitId };
+  state.buildHexes = getValidFarmHexes(state, getCurrentPlayer(state).id);
   render();
 }
 
@@ -1611,15 +1616,19 @@ economyBtn.addEventListener('click', () => {
     cancelBuildFarm();
     return;
   }
-  if (state.selectionMode !== 'site' || !state.selectedSiteId) return;
-  const siteId = state.selectedSiteId;
-  const site = state.strategicSites.find(s => s.id === siteId);
-  if (!site) return;
-  if (site.state === 'city') {
-    if (getValidFarmHexes(state, siteId).some(h => canBuildFarm(state, siteId, h))) {
-      enterBuildFarm(siteId);
+  // Agrar: Build Farm — triggered from the Builder's own unit selection.
+  if (state.selectionMode === 'unit' && state.selectedUnitId) {
+    const unit = state.units.find(u => u.id === state.selectedUnitId);
+    if (unit && getValidFarmHexes(state, unit.playerId).some(h => canStartFarm(state, unit, h))) {
+      enterBuildFarm(unit.id);
     }
-  } else if (site.state === 'temple') {
+    return;
+  }
+  // Temple: Buy Devotion — triggered from the Temple site selection.
+  if (state.selectionMode === 'site' && state.selectedSiteId) {
+    const siteId = state.selectedSiteId;
+    const site = state.strategicSites.find(s => s.id === siteId);
+    if (!site || site.state !== 'temple') return;
     sendOrCall({ type: 'action', action: 'buy-devotion', params: { templeId: siteId } }, () => {
       if (buyDevotion(state, siteId)) logCombat(`Purchased a Devotion level (${TEMPLE_DEVOTION_COST}⚡)`);
     });
@@ -2028,12 +2037,12 @@ function handleHexClick(clientX: number, clientY: number): void {
 
   // ── Build Farm mode: place a Farm hex (UI is always local, only final action is sent) ──
   if (buildingFarm) {
-    const citySiteId = buildingFarm.citySiteId;
+    const builderUnitId = buildingFarm.unitId;
     if (state.buildHexes.some(h => hexEqual(h, hex))) {
       clearBuildFarm();
-      sendOrCall({ type: 'action', action: 'build-farm', params: { templeId: citySiteId, pos: hex } }, () => {
-        const built = buildFarm(state, citySiteId, hex);
-        if (built) logCombat(`Built a Farm at (${hex.q},${hex.r}) for ${AGRAR_FARM_COST}⚡`);
+      sendOrCall({ type: 'action', action: 'build-farm', params: { unitId: builderUnitId, pos: hex } }, () => {
+        const started = startFarm(state, builderUnitId, hex);
+        if (started) logCombat(`Began building a Farm at (${hex.q},${hex.r}) for ${AGRAR_FARM_COST}⚡`);
       });
       return;
     } else {

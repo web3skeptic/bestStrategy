@@ -32,8 +32,9 @@ import {
   UNIT_CLASS,
   chooseFaction, isFoundingRound, isAwaitingFactionReveal,
   getOwnedStructures,
-  buildFarm, buyDevotion,
+  startFarm, canStartFarm, getValidFarmHexes, buyDevotion,
   canBuildRoad, buildRoad,
+  getCultivatedHexes,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -44,9 +45,9 @@ import {
 } from '../src/types';
 import {
   SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_DISTANCE_FROM_CAPITAL, FARM_MIN_SPACING, CULTIVATION_RADIUS,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
-  COMMAND_TIERS, CAPITAL_PRODUCTION_SLOTS, PRODUCTION_SLOTS_PER_EXPANSION, UNIT_TRAINING_ROUNDS,
+  COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
 } from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
@@ -80,8 +81,9 @@ export type LegalAction =
   | { type: 'move'; to: HexCoord }
   | { type: 'attack'; targetId: string }
   | { type: 'attack-structure'; targetPos: HexCoord }
-  | { type: 'found'; siteId: string; targetState: 'city' | 'temple' }
-  | { type: 'build-road' };
+  | { type: 'found'; siteId: string; targetState: 'temple' }
+  | { type: 'build-road' }
+  | { type: 'build-farm'; targetPos: HexCoord };
 
 export type LegalMovesPerPlayer = Record<string /* unitId */, LegalAction[]>;
 
@@ -152,19 +154,38 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
       }
     }
     for (const site of state.strategicSites) {
-      if ((site.state === 'city' || site.state === 'temple') && site.ownerId !== unit.playerId
+      if (site.state === 'temple' && site.ownerId !== unit.playerId
         && hexDistance(unit.pos, site.pos) <= effectiveRange) {
         actions.push({ type: 'attack-structure', targetPos: site.pos });
       }
     }
+    for (const farm of state.farms) {
+      if (farm.state === 'farm' && farm.ownerId !== unit.playerId
+        && hexDistance(unit.pos, farm.pos) <= effectiveRange) {
+        actions.push({ type: 'attack-structure', targetPos: farm.pos });
+      }
+    }
   }
 
-  // Founding action (§7).
+  // Founding action (§7, Temple-only).
   const foundingCheck = canStartFounding(state, unit);
   if (foundingCheck) actions.push({ type: 'found', siteId: foundingCheck.site.id, targetState: foundingCheck.targetState });
 
   // Build Road action (§23-25, Agrar-only).
   if (canBuildRoad(state, unit)) actions.push({ type: 'build-road' });
+
+  // Build Farm action (§6-9, Agrar-only) — one representative legal hex per
+  // unit, mirroring the build-road entry; the client/UI presents the full
+  // set via getValidFarmHexes for actual placement.
+  if (unit.type === 'founder') {
+    const player = state.players.find(p => p.id === unit.playerId);
+    if (player?.faction === 'agrar') {
+      const validHexes = getValidFarmHexes(state, unit.playerId);
+      for (const hex of validHexes) {
+        if (canStartFarm(state, unit, hex)) actions.push({ type: 'build-farm', targetPos: hex });
+      }
+    }
+  }
 
   // NOTE: 'destroy' (disband) is deliberately NOT enumerated here — the AI / RL
   // move generation must never consider disbanding its own units.
@@ -267,33 +288,37 @@ export function buildRulesPayload(): Record<string, unknown> {
     factions: factionRosters,
     techTree,
     strategicSites: {
-      note: 'Replaces the old instant-capture temple system entirely (phase 3). A neutral or ruined site is founded by a Builder/Acolyte into a City (Agrar) or an actual Temple (Temple faction) over a multi-turn process — see the "found" action and the foundingRound/structures blocks below.',
+      note: 'Temple-only expansion (phase 10 correction — Agrar never founds a site, see economy.agrarFarms instead). A neutral or ruined site is founded by an Acolyte into an actual Temple over a multi-turn process — see the "found" action and the foundingRound/structures blocks below.',
       establishCost: SITE_ESTABLISH_COST,
-      states: ['neutral', 'foundingCity', 'foundingTemple', 'city', 'temple', 'ruins'],
+      states: ['neutral', 'foundingTemple', 'temple', 'ruins'],
       foundingRules: [
-        'Only a Builder/Acolyte (unit type "founder") standing on a neutral or ruined site, with an unused activation, no enemy on the site, and >= establishCost aura may start founding.',
-        'Starting founding charges establishCost immediately and consumes the founder\'s whole activation — no waiting until completion to pay.',
-        'Founding resolves automatically at the start of the founding player\'s NEXT round: succeeds only if the founder is still alive and on the site, no enemy unit is on the site, and no enemy unit is adjacent to it. Otherwise it fails.',
+        'Only a Temple-faction Acolyte (unit type "founder") standing on a neutral or ruined site, with an unused activation, no enemy on the site, >= establishCost aura, and the site NOT inside enemy Agrar cultivated territory (see economy.agrarFarms.cultivation) may start founding. Agrar can never found a site at all.',
+        'Starting founding charges establishCost immediately and consumes the Acolyte\'s whole activation — no waiting until completion to pay.',
+        'Founding resolves automatically at the start of the founding player\'s NEXT round: succeeds only if the Acolyte is still alive and on the site, no enemy unit is on the site, and no enemy unit is adjacent to it. Otherwise it fails.',
         'Failure returns the site to its prior state (neutral or ruins) with NO refund of the aura spent.',
-        'A founding (or completed) site provides zero income/production while in a foundingCity/foundingTemple state.',
+        'A founding (or completed) site provides zero income/production while in a foundingTemple state.',
+        'Phase 10 correction: ONLY Temple\'s Acolyte can found a site — Agrar never does (see the `command`.faction split and `roads`/economy below: Agrar expands via Farms, not sites). A site inside an enemy Agrar player\'s cultivated territory (see economy.agrarFarms.cultivation) cannot begin founding at all.',
       ],
     },
     structures: {
-      note: 'Shared combat model for Capital/City/Temple/Farm — see the "attack-structure" action. Structures never revenge (no counter-damage) and are never captured by melee follow-through or by standing on them.',
+      note: 'Shared combat model for Capital/Temple/Farm — see the "attack-structure" action. Structures never revenge (no counter-damage) and are never captured by melee follow-through or by standing on them. There is no "City" — Agrar\'s only structures are its Capital and its Farms (phase 10 correction).',
       capital: { hp: STRUCTURES.capital.hp, defense: STRUCTURES.capital.defense, note: 'One per player, permanent, cannot become Ruins or change owner. Reaching 0 HP ends the match immediately.' },
-      city: { hp: STRUCTURES.city.hp, defense: STRUCTURES.city.defense, note: 'Agrar founding result. Reaching 0 HP becomes Ruins (refoundable by either faction).' },
-      temple: { hp: STRUCTURES.temple.hp, defense: STRUCTURES.temple.defense, note: 'Temple-faction founding result. Reaching 0 HP becomes Ruins (refoundable by either faction).' },
-      farm: { hp: STRUCTURES.farm.hp, defense: STRUCTURES.farm.defense, note: 'Agrar-only physical income building — see economy below. Destroying it does not affect the City itself.' },
+      temple: { hp: STRUCTURES.temple.hp, defense: STRUCTURES.temple.defense, note: 'Temple-faction founding result. Reaching 0 HP becomes Ruins (refoundable by Temple only).' },
+      farm: { hp: STRUCTURES.farm.hp, defense: STRUCTURES.farm.defense, note: 'Agrar-only physical income building, built directly on open land (not tied to a site). Destroyed outright at 0 HP — no Ruins state, just gone; may be rebuilt elsewhere.' },
     },
     economy: {
-      note: 'Flat base income plus faction-specific structure investment (phase 4).',
+      note: 'Phase 10 correction — "Agrar controls area, Temple controls points": Agrar\'s economy is its Farm network, Temple\'s is its owned sites. Flat base income plus one faction-specific expansion mechanic each. Both cap at the same maximum (see command.productionSlots for the matching production curve).',
       baseIncomePerRound: 'BASE_INCOME_PER_ROUND, granted every round regardless of structures owned.',
       agrarFarms: {
-        note: 'Physical, independently-attackable buildings placed exactly FARM_DISTANCE_FROM_CITY hexes from an owned City. Up to FARM_SLOTS_PER_CITY per City.',
+        note: 'Agrar\'s ONLY economic expansion. Built directly by the Builder on open land — Agrar never captures/founds a site. A Farm founds over one round like a strategic site (see the "build-farm" action), not instantly.',
         cost: AGRAR_FARM_COST,
         incomePerFarm: AGRAR_FARM_INCOME,
-        slotsPerCity: FARM_SLOTS_PER_CITY,
-        distanceFromCity: FARM_DISTANCE_FROM_CITY,
+        maxActiveFarms: MAX_ACTIVE_FARMS,
+        placement: `A new Farm must be within ${FARM_DISTANCE_FROM_CAPITAL} hexes of the Capital OR an existing ACTIVE Farm, but never within ${FARM_MIN_SPACING} hexes of any other Farm (founding or active) — Agrar spreads as a network, not a cluster.`,
+        cultivation: {
+          note: 'Every ACTIVE Farm projects cultivated territory onto its own hex + its 6 neighbours (CULTIVATION_RADIUS). A neutral or ruined strategic site inside an ENEMY Agrar player\'s cultivated territory cannot be founded/rebuilt by Temple — this is Agrar\'s area-denial tool, NOT combat, vision, movement, or a buff (see foundingRound/strategicSites for the founding-block itself).',
+          radius: CULTIVATION_RADIUS,
+        },
       },
       templeDevotion: {
         note: 'Concentrated, non-spatial investment on the Temple site itself. Two purchasable levels.',
@@ -301,16 +326,16 @@ export function buildRulesPayload(): Record<string, unknown> {
         incomePerLevel: TEMPLE_DEVOTION_INCOME,
         maxLevel: TEMPLE_DEVOTION_MAX_LEVEL,
       },
-      investmentPersistence: 'A City/Temple reduced to Ruins keeps its Farms/Devotion investment on record. Re-founding it as the SAME investing player restores that investment; a DIFFERENT player founding it wipes the investment (Farms removed, Devotion reset to 0) and starts fresh.',
+      investmentPersistence: 'A Temple reduced to Ruins keeps its Devotion investment on record. Re-founding it as the SAME investing player restores that investment; a DIFFERENT player founding it resets Devotion to 0. Farms have no equivalent — a destroyed Farm is just gone (see structures.farm).',
     },
     command: {
-      note: 'Population cap and recruiting throughput (phase 6, §19-22). Territory never raises the cap — only Command I/II tech does.',
+      note: 'Population cap and recruiting throughput (phase 6, extended phase 10). Territory never raises the population cap — only Command I/II tech does. Production throughput DOES scale with territory, but along each faction\'s own axis — see productionSlots.',
       populationCap: { tiers: COMMAND_TIERS, note: 'Starts at COMMAND_TIERS.start; the "command_1"/"command_2" techs (linear, II requires I) raise it to commandI then commandII.' },
       populationCost: 'Each unit spends its faction def\'s commandCost against the cap (see the `factions` block above) — NOT a flat 1 per unit. Heavier units (cavalry/heavy) cost more of the cap than light ones.',
       productionSlots: {
-        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit occupies one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds — the unit itself still appears immediately, only the SLOT is on cooldown (frees up at the start of that player\'s next round, same timing convention as founding).',
-        capitalSlots: CAPITAL_PRODUCTION_SLOTS,
-        slotsPerExpansion: PRODUCTION_SLOTS_PER_EXPANSION,
+        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit occupies one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds — the unit itself still appears immediately, only the SLOT is on cooldown (frees up at the start of that player\'s next round, same timing convention as founding). Both factions start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS, reached via different territory: Agrar centralizes all training at its Capital and scales slots with active Farm count (2 Farms -> +1, 4 Farms -> +1 more); Temple distributes production — each active owned Temple site itself grants +1 slot AND is a valid recruiting location (see recruit below), not just the Capital.',
+        baseSlots: PRODUCTION_BASE_SLOTS,
+        maxSlots: PRODUCTION_MAX_SLOTS,
         trainingRounds: UNIT_TRAINING_ROUNDS,
       },
     },
@@ -352,7 +377,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       buildCost: TELEPORT_BUILD_COST,
       radius: TELEPORT_RADIUS,
       maxPerTemple: TELEPORT_MAX_PER_TEMPLE,
-      note: 'Requires "teleports" tech. Each portal must be within radius of a different owned structure (Capital or completed City/Temple). Unit stepping on portal teleports to free neighbour of partner portal.',
+      note: 'Requires "teleports" tech. Each portal must be within radius of a different owned structure (Capital or completed Temple — Farms are not valid anchors). Unit stepping on portal teleports to free neighbour of partner portal.',
     },
     combat: {
       deterministic: true,
@@ -374,19 +399,19 @@ export function buildRulesPayload(): Record<string, unknown> {
     },
     turnStructure: {
       startOfTurn: [
-        'Receive aura income: BASE_INCOME_PER_ROUND + AGRAR_FARM_INCOME per owned Farm + TEMPLE_DEVOTION_INCOME per Devotion level — see economy above.',
-        'Resolve any founding this player has due (§6) — succeeds or fails before income is granted, so a structure completing this turn already counts.',
+        'Receive aura income: BASE_INCOME_PER_ROUND + AGRAR_FARM_INCOME per active owned Farm + TEMPLE_DEVOTION_INCOME per Devotion level — see economy above.',
+        'Resolve any site founding AND any Farm construction this player has due (§6, §9) — succeeds or fails before income is granted, so a structure completing this turn already counts.',
         'Healers restore HP to nearby allies (within support range)',
       ],
       availableActions: [
         'move — move a unit to a reachable hex',
         'attack — attack an enemy unit within range (blocked during the Founding Round)',
-        'attack-structure — { unitId, targetPos } attack an enemy Capital/City/Temple/Farm within range (same restriction). Structures never revenge.',
-        'recruit — spawn a unit at an owned structure (blocked during Founding Round / faction-reveal pause)',
-        'found — { unitId } start founding at the neutral/ruined site the Builder/Acolyte is standing on (same restriction) — see strategicSites above.',
-        'build-farm — { templeId (owned City id), pos } build a Farm at a valid hex around that City (same restriction) — Agrar only, see economy above.',
+        'attack-structure — { unitId, targetPos } attack an enemy Capital/Temple/Farm within range (same restriction). Structures never revenge.',
+        'recruit — spawn a unit at an owned structure (blocked during Founding Round / faction-reveal pause) — for Agrar this is the Capital ONLY (centralized production); for Temple it\'s the Capital plus each owned Temple site (distributed production) — see command.productionSlots.',
+        'found — { unitId } start founding at the neutral/ruined site the Acolyte is standing on (same restriction, Temple only) — see strategicSites above.',
+        'build-farm — { unitId, pos } the Builder starts building a Farm at a valid hex (same restriction) — Agrar only, see economy.agrarFarms above. Completes next round like founding.',
         'buy-devotion — { templeId (owned Temple id) } purchase the next Devotion level on that Temple (same restriction) — Temple faction only, see economy above.',
-        'build-road — { unitId } the unit\'s Builder builds a road on its current hex (same restriction) — Agrar faction only, see roads above.',
+        'build-road — { unitId } the Builder builds a road on its current hex (same restriction) — Agrar faction only, see roads above.',
         'research — research a tech (same restriction)',
         'build-teleport — build a teleport portal pair (same restriction)',
         'end-turn — end the current player\'s turn (blocked only during the faction-reveal pause)',
@@ -550,7 +575,7 @@ export function executeAction(
 
         const ok = startFounding(state, unitId);
         if (!ok) {
-          return fail(state, playerSlot, action, `Unit ${unitId} cannot start founding here (not a Builder/Acolyte, site not neutral/ruins, enemy present, already used this turn, or insufficient aura)`);
+          return fail(state, playerSlot, action, `Unit ${unitId} cannot start founding here (not a Temple Acolyte, site not neutral/ruins, enemy present, cultivation-blocked, already used this turn, or insufficient aura)`);
         }
         log.push(`Unit ${unitId} began founding at (${unit.pos.q},${unit.pos.r})`);
         return { ok: true, action, log, broadcastToBoth: true };
@@ -584,7 +609,8 @@ export function executeAction(
 
       case 'recruit': {
         // templeId is a legacy wire-param name — it's actually any owned
-        // structure id (Capital or completed City/Temple).
+        // recruit-eligible structure id (Capital, or a completed Temple for
+        // the Temple faction — Farms are never recruit-eligible, §17).
         const { unitType, templeId: structureId } = params as { unitType?: UnitType; templeId?: string };
         if (!unitType || !structureId) return fail(state, playerSlot, action, 'Missing unitType or templeId');
         const ok = spawnUnit(state, structureId, unitType);
@@ -603,11 +629,11 @@ export function executeAction(
       }
 
       case 'build-farm': {
-        const { templeId: citySiteId, pos } = params as { templeId?: string; pos?: HexCoord };
-        if (!citySiteId || !pos) return fail(state, playerSlot, action, 'Missing templeId or pos for farm build');
-        const ok = buildFarm(state, citySiteId, pos);
-        if (!ok) return fail(state, playerSlot, action, `Cannot build farm for City ${citySiteId} at (${pos.q},${pos.r})`);
-        log.push(`Player ${playerSlot} built a Farm at (${pos.q},${pos.r})`);
+        const { unitId, pos } = params as { unitId?: string; pos?: HexCoord };
+        if (!unitId || !pos) return fail(state, playerSlot, action, 'Missing unitId or pos for farm build');
+        const ok = startFarm(state, unitId, pos);
+        if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a Farm at (${pos.q},${pos.r})`);
+        log.push(`Player ${playerSlot} began building a Farm at (${pos.q},${pos.r})`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 
