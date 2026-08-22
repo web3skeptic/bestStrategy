@@ -26,7 +26,7 @@ import {
   researchTech,
   buildTeleportPair,
   resignGame,
-  getEffectiveRange, getEffectiveSpeed,
+  getEffectiveRange, getEffectiveSpeed, getZocHexes,
   getPlayerVisible, isForestUnitRevealed,
   UNIT_STATS, HEALER_HEAL_AMOUNT, DAMAGE_BOOST_AMOUNT, RANGE_BOOST_AMOUNT,
   UNIT_CLASS,
@@ -128,6 +128,7 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
       state.mapRadius,
       [...occupied, ...wallPositions],
       state.hills,
+      getZocHexes(state, unit.playerId),
     );
     for (const h of reachable) actions.push({ type: 'move', to: h });
   }
@@ -188,7 +189,7 @@ export function computeUnitMoveHexes(state: GameState, unit: Unit): HexCoord[] {
     const [q, r] = k.split(',').map(Number);
     return { q: q!, r: r! };
   });
-  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills);
+  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills, getZocHexes(state, unit.playerId));
 }
 
 export function computeUnitAttackTargets(state: GameState, unit: Unit): Unit[] {
@@ -321,6 +322,12 @@ export function buildRulesPayload(): Record<string, unknown> {
         note: 'Any unit that ends its move on a road it does NOT own destroys it on arrival — no separate action needed, it just happens as a side effect of "move". A pillaged hex is cheaper to rebuild than to build fresh.',
         rebuildCost: ROAD_PILLAGE_REBUILD_COST,
       },
+    },
+    zoneOfControl: {
+      note: 'Phase 8, §26. Warrior/pike/cavalry/heavy-class units (see units[].unitClass) project a zone of control onto their 6 adjacent hexes — archer/siege/support/Builder-Acolyte don\'t. Shared rule, not faction-specific.',
+      effect: 'Entering an enemy ZOC hex ends that unit\'s movement for the turn — the hex itself is reachable, but nothing beyond it is that move. A unit that STARTS its turn already in an enemy ZOC hex is not frozen by its own position; the restriction only triggers on newly entering one.',
+      visibility: 'Only VISIBLE enemy ZOC-projectors count — a fogged or forest-hidden enemy (not revealed per the usual fog/forest rules) doesn\'t project a ZOC the opponent can react to.',
+      scope: 'Movement only — attack range and targeting are unaffected; ZOC is not a combat mechanic.',
     },
     terrain: {
       hill: {

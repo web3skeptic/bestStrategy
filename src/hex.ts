@@ -50,26 +50,34 @@ export function generateHexMap(radius: number): HexCoord[] {
 // Get all reachable hexes within `speed` steps (BFS), excluding occupied hexes.
 // Hills restrict movement: stepping onto or off a hill costs all remaining movement
 // (effectively limits that step to 1 tile range).
+// §26 ZOC: entering an enemy zone-of-control hex (adjacent to a visible
+// warrior/pike/cavalry/heavy unit) ends movement for the turn — the hex
+// itself is still reachable, but nothing beyond it is, UNLESS it's the
+// unit's own starting hex (starting adjacent to an enemy doesn't freeze you).
 export function getReachableHexes(
   start: HexCoord,
   speed: number,
   mapRadius: number,
   occupied: HexCoord[],
-  hills?: Set<string>
+  hills?: Set<string>,
+  zocHexes?: Set<string>,
 ): HexCoord[] {
   const result: HexCoord[] = [];
   const visited = new Map<string, number>(); // key → best cost to reach
   const queue: { hex: HexCoord; cost: number }[] = [{ hex: start, cost: 0 }];
-  visited.set(hexKey(start), 0);
+  const startKey = hexKey(start);
+  visited.set(startKey, 0);
 
   while (queue.length > 0) {
     const current = queue.shift()!;
+    const currentKey = hexKey(current.hex);
     if (current.cost > 0) {
       result.push(current.hex);
     }
     if (current.cost >= speed) continue;
+    if (zocHexes && currentKey !== startKey && zocHexes.has(currentKey)) continue;
 
-    const currentIsHill = hills ? hills.has(hexKey(current.hex)) : false;
+    const currentIsHill = hills ? hills.has(currentKey) : false;
 
     for (const n of hexNeighbors(current.hex)) {
       const key = hexKey(n);

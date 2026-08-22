@@ -16,7 +16,8 @@
     "test:faction-rosters": "tsx scripts/verify-faction-rosters.ts",
     "test:command": "tsx scripts/verify-command.ts",
     "test:roads": "tsx scripts/verify-roads.ts",
-    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads",
+    "test:zoc": "tsx scripts/verify-zoc.ts",
+    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc",
     "build:root": "vite build"
   },
   "keywords": [],

@@ -586,6 +586,40 @@ export function getEffectiveSpeed(state: GameState, unit: Unit): number {
   return unit.stats.speed + (onRoad ? ROAD_MOVEMENT_BONUS : 0);
 }
 
+// ── Zone of Control (§26) ──
+//
+// Line-fighting unit classes project a ZOC onto their 6 adjacent hexes;
+// archers/siege/support/Builder-Acolyte don't (they're not a physical
+// blocking presence). Shared across both factions — it's keyed purely by
+// combat class (UNIT_CLASS), not faction, since every faction's flavor of a
+// given slot has the identical projectsZOC flag (verified in factions.ts).
+const ZOC_CLASSES: ReadonlySet<UnitClass> = new Set(['warrior', 'pike', 'cavalry', 'heavy']);
+
+export function unitProjectsZoc(unit: Unit): boolean {
+  return ZOC_CLASSES.has(UNIT_CLASS[unit.type]);
+}
+
+// The set of hexes (from forPlayerId's perspective) currently under enemy
+// ZOC — adjacent to a VISIBLE enemy ZOC-projecting unit (fogged/hidden-in-
+// forest enemies don't project a ZOC the opponent can react to). Entering
+// one of these hexes ends a unit's movement for the turn — see
+// getReachableHexes in hex.ts.
+export function getZocHexes(state: GameState, forPlayerId: number): Set<string> {
+  const zoc = new Set<string>();
+  const visible = getPlayerVisible(state, forPlayerId);
+  for (const enemy of state.units) {
+    if (enemy.hp <= 0 || enemy.playerId === forPlayerId) continue;
+    if (!unitProjectsZoc(enemy)) continue;
+    if (!visible.has(hexKey(enemy.pos))) continue;
+    if (!isForestUnitRevealed(state, enemy.pos, forPlayerId)) continue;
+    for (const n of hexNeighbors(enemy.pos)) {
+      if (hexDistance({ q: 0, r: 0 }, n) > state.mapRadius) continue;
+      zoc.add(hexKey(n));
+    }
+  }
+  return zoc;
+}
+
 // ── Command system (§19-22) ──
 //
 // The population cap is raised ONLY by Command I/II tech, never by
@@ -1498,7 +1532,7 @@ function updateHighlights(state: GameState): void {
   if (!unit.hasMoved && !unit.hasAttacked) {
     const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
     const wallPositions = [...state.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
-    state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills);
+    state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills, getZocHexes(state, unit.playerId));
   }
 
   const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);

@@ -5,7 +5,7 @@ import { runHardAITurn, runAITurn } from '../src/ai';
 import { endTurn, canAfford, canResearch, canBuildTeleportPair,
   getUnlockedUnits, getPopulationCap, getPopulationCount, getUnitAt,
   getValidTeleportHexes, getValidTeleportHexesForOtherTemples, getOwnedStructures,
-  getEffectiveRange, getEffectiveSpeed, getPlayerVisible, isForestUnitRevealed, canStartFounding } from '../src/game';
+  getEffectiveRange, getEffectiveSpeed, getZocHexes, getPlayerVisible, isForestUnitRevealed, canStartFounding } from '../src/game';
 import { TECH_NODES, UnitType } from '../src/types';
 import { hexDistance, hexKey, hexEqual, getReachableHexes } from '../src/hex';
 import { featurize } from './features';
@@ -55,7 +55,7 @@ export function botCandidates(s: GameState): Micro[] {
     .sort((a, b) => a.d - b.d).slice(0, MOVE_UNITS);
   for (const { u } of movable) {
     const occupied = s.units.filter(x => x.hp > 0 && x.id !== u.id).map(x => x.pos);
-    const reachable = getReachableHexes(u.pos, getEffectiveSpeed(s, u), s.mapRadius, [...occupied, ...wallPositions], s.hills);
+    const reachable = getReachableHexes(u.pos, getEffectiveSpeed(s, u), s.mapRadius, [...occupied, ...wallPositions], s.hills, getZocHexes(s, u.playerId));
     const scored = reachable.map(h => ({
       to: h,
       adj: enemies.some(e => hexDistance(h, e.pos) === 1) ? 0 : 1,
