@@ -1,4 +1,4 @@
-import { GameState, HexCoord, Unit, StrategicSite, Capital, TeleportBuilding, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, TeleportBuilding, UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_RANGE_BONUS } from './types';
 import { generateHexMap, hexToPixel, hexEqual, hexKey, hexDistance } from './hex';
 import { getCurrentPlayer, calculateEncirclement, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getSupportBoostsForUnit } from './game';
 
@@ -452,6 +452,10 @@ export class Renderer {
       if (!explored.has(key)) continue;
       this.drawSite(site, state, size, cx, cy);
     }
+    for (const farm of state.farms) {
+      if (!explored.has(hexKey(farm.pos))) continue;
+      this.drawFarm(farm, state, size, cx, cy);
+    }
 
     // Draw teleport buildings (visible if tile is explored)
     for (const tp of state.teleportBuildings) {
@@ -873,6 +877,32 @@ export class Renderer {
     ctx.fillStyle = '#ddd';
     ctx.textAlign = 'center';
     ctx.fillText(site.state, x, labelY);
+  }
+
+  // Agrar's physical income building — small owner-colored square (visually
+  // distinct from the City/Temple triangle glyph), placeholder pending real
+  // asset work (§70 fallback policy).
+  private drawFarm(farm: Farm, state: GameState, size: number, cx: number, cy: number): void {
+    const ctx = this.ctx;
+    const { x, y } = hexToPixel(farm.pos, size, cx, cy);
+    const s = size;
+    const iconScale = s / BASE_HEX_SIZE;
+    const owner = state.players.find(p => p.id === farm.ownerId);
+    const color = owner ? owner.color : '#888888';
+
+    ctx.beginPath();
+    ctx.rect(x - s * 0.24, y - s * 0.24, s * 0.48, s * 0.48);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#3a2';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    const labelY = y + s * 0.45;
+    ctx.font = `bold ${Math.max(7, 8 * iconScale)}px sans-serif`;
+    ctx.fillStyle = '#ddd';
+    ctx.textAlign = 'center';
+    ctx.fillText(`Farm ${farm.hp}/${farm.maxHp}`, x, labelY);
   }
 
   private drawTeleportBuilding(tp: TeleportBuilding, playerColor: string, isPaired: boolean, size: number, cx: number, cy: number, dimmed: boolean): void {

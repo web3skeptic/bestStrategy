@@ -828,6 +828,26 @@
       border-color: #0ef;
       background: rgba(0,80,120,0.95);
       color: #fff;
+    }
+
+    /* ── Build Farm / Buy Devotion button (Phase 4 economy) ── */
+    #economyBtn {
+      display: none;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #5a3;
+      border-radius: 8px;
+      background: rgba(20,60,20,0.85);
+      color: #9e6;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    #economyBtn:active { background: rgba(30,80,30,0.9); }
+    #economyBtn.active {
+      border-color: #7f0;
+      background: rgba(30,100,30,0.95);
+      color: #fff;
       box-shadow: 0 0 10px rgba(0,200,255,0.4);
     }
 
@@ -1411,6 +1431,7 @@
       </div>
       <button id="captureBtn">⚔ Capture Temple</button>
       <button id="teleportBtn">⬡ Teleport</button>
+      <button id="economyBtn">⚑ Build Farm</button>
       <div class="action-row">
         <button class="action-btn" id="endTurnBtn">End Turn</button>
         <button id="techTreeBtn">🔬 Research</button>

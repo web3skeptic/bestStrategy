@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, StrategicSite, Capital, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
 import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
@@ -1145,6 +1145,28 @@ export class Renderer3D {
           : this.P.colors.neutral,
         canPendingFound: site.state === 'neutral' || site.state === 'ruins',
       });
+    }
+    // Farms — Agrar's physical income buildings. Smallest tier (below a
+    // completed City/Temple), placeholder pending real asset work (§70).
+    for (const farm of state.farms as Farm[]) {
+      const owner = state.players.find(p => p.id === farm.ownerId);
+      structures.push({
+        id: farm.id, pos: farm.pos,
+        tier: this.structureVisualTier('founding'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
+        canPendingFound: false,
+      });
+    }
+
+    // Farms are the only structure that can vanish outright (destroyed, not
+    // Ruins) — prune any mesh whose id no longer appears in the live state.
+    const liveIds = new Set(structures.map(s => s.id));
+    for (const [id, entry] of this.structureMeshes) {
+      if (liveIds.has(id)) continue;
+      this.structureGroup.remove(entry.mesh);
+      this.disposeObject(entry.mesh);
+      this.structureMeshes.delete(id);
+      this.structureTintIds.delete(id);
     }
 
     for (const st of structures) {

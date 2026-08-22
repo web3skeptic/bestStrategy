@@ -1,5 +1,5 @@
 import { GameState, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
-import { SITE_ESTABLISH_COST } from './factions';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, FARM_SLOTS_PER_CITY, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -34,7 +34,7 @@ import {
   HEALER_HEAL_AMOUNT,
   DAMAGE_BOOST_AMOUNT,
   RANGE_BOOST_AMOUNT,
-  INTERIM_STRUCTURE_INCOME,
+  getPlayerIncome,
   getUnlockedUnits,
   canResearch,
   researchTech,
@@ -44,6 +44,12 @@ import {
   getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
+  canBuildFarm,
+  buildFarm,
+  getValidFarmHexes,
+  getCityFarms,
+  canBuyDevotion,
+  buyDevotion,
   isFoundingRound,
   isAwaitingFactionReveal,
   chooseFaction,
@@ -174,6 +180,7 @@ const spawnArrowLeft = document.getElementById('spawnArrowLeft') as HTMLButtonEl
 const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButtonElement;
 const captureBtn = document.getElementById('captureBtn')!;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
+const economyBtn = document.getElementById('economyBtn') as HTMLButtonElement;
 
 // Two-tap confirm guard for the destroy/disband HUD slab. Holds the unit id the
 // slab is currently "armed" for; re-armed only when the SAME unit is tapped
@@ -449,6 +456,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
+      buildingFarm = null;
   handoffPending = false;
       hideMenu();
       closeTechTree();
@@ -522,6 +530,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
+      buildingFarm = null;
   handoffPending = false;
       hideMenu();
       closeTechTree();
@@ -731,6 +740,7 @@ function restoreGame(): void {
   spectatorBanner.style.display = 'none';
   controllers = controllersFromSave(save);
   buildingTeleport = null;
+  buildingFarm = null;
   handoffPending = false;
   state = deserialize(save.state);
   snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
@@ -768,6 +778,7 @@ function startLocalGame(kinds: ControllerKind[]): void {
   spectatorBanner.style.display = 'none';
   controllers = [...kinds];
   buildingTeleport = null;
+  buildingFarm = null;
   handoffPending = false;
   const players = kinds.map((kind, i) => ({
     name: seatName(kind, i),
@@ -1199,9 +1210,14 @@ function updateUI(): void {
     const structurePos = capital?.pos ?? site?.pos;
     if (structurePos) {
       const unitOnStructure = getUnitAt(state, structurePos);
+      const economyNote = site && site.state === 'city'
+        ? ` | 🌾 Farms: ${getCityFarms(state, siteId).length}/${FARM_SLOTS_PER_CITY}`
+        : site && site.state === 'temple'
+          ? ` | 🕯 Devotion: ${site.devotionLevel}/${TEMPLE_DEVOTION_MAX_LEVEL}`
+          : '';
       const label = capital
         ? `Capital HP ${capital.hp}/${capital.maxHp}`
-        : `${site!.state === 'city' ? 'City' : 'Temple'} HP ${site!.hp}/${site!.maxHp}`;
+        : `${site!.state === 'city' ? 'City' : 'Temple'} HP ${site!.hp}/${site!.maxHp}${economyNote}`;
       const existingPortals = state.teleportBuildings.filter(t => t.templeId === siteId).length;
       const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
       unitInfoEl.textContent = unitOnStructure
@@ -1219,6 +1235,34 @@ function updateUI(): void {
         buildTeleportBtn.style.display = 'none';
         if (buildingTeleport?.templeId === siteId) clearBuildTeleport();
       }
+
+      // Build Farm / Buy Devotion button — Agrar Cities place a physical Farm
+      // (hex-picking mode, like teleport); Temple sites buy a Devotion level
+      // directly (no hex needed).
+      if (myTurn && site && site.state === 'city') {
+        const hasHex = getValidFarmHexes(state, siteId).some(h => canBuildFarm(state, siteId, h));
+        if (hasHex || buildingFarm?.citySiteId === siteId) {
+          economyBtn.style.display = 'block';
+          economyBtn.disabled = false;
+          economyBtn.classList.toggle('active', buildingFarm?.citySiteId === siteId);
+          economyBtn.textContent = buildingFarm?.citySiteId === siteId
+            ? '⚑ Pick a hex for the Farm…'
+            : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
+        } else {
+          economyBtn.style.display = 'none';
+          if (buildingFarm?.citySiteId === siteId) clearBuildFarm();
+        }
+      } else if (myTurn && site && site.state === 'temple') {
+        economyBtn.style.display = 'block';
+        economyBtn.classList.remove('active');
+        economyBtn.disabled = !canBuyDevotion(state, siteId);
+        economyBtn.textContent = site.devotionLevel >= TEMPLE_DEVOTION_MAX_LEVEL
+          ? '🕯 Devotion (max)'
+          : `🕯 Buy Devotion (${TEMPLE_DEVOTION_COST}⚡)`;
+      } else {
+        economyBtn.style.display = 'none';
+        if (buildingFarm) clearBuildFarm();
+      }
     }
     captureBtn.style.display = 'none';
     destroyArmedUnitId = null;
@@ -1230,6 +1274,8 @@ function updateUI(): void {
     hideDestroySlab();
     buildTeleportBtn.style.display = 'none';
     if (buildingTeleport) clearBuildTeleport();
+    economyBtn.style.display = 'none';
+    if (buildingFarm) clearBuildFarm();
   }
 
   // Spawn bar — shown whenever an owned temple is selected. When a unit occupies
@@ -1322,7 +1368,7 @@ function updateMyPlayerBadge(): void {
 
 // ── Stat pills (aura income + population) ──
 function updateStatPills(player: Player): void {
-  const income = getOwnedStructures(state, player.id).length * INTERIM_STRUCTURE_INCOME;
+  const income = getPlayerIncome(state, player.id);
   auraInfoEl.innerHTML =
     `<span class="pill-icon gem-icon"></span>` +
     `<span class="pill-value">${player.aura}</span>` +
@@ -1503,6 +1549,51 @@ buildTeleportBtn.addEventListener('click', () => {
     if (canBuildTeleportPair(state, state.selectedSiteId)) {
       enterBuildTeleport(state.selectedSiteId);
     }
+  }
+});
+
+// ── Build Farm / Buy Devotion mode (phase 4 economy) ──
+
+interface BuildFarmState {
+  citySiteId: string;
+}
+
+let buildingFarm: BuildFarmState | null = null;
+
+function enterBuildFarm(citySiteId: string): void {
+  buildingFarm = { citySiteId };
+  state.buildHexes = getValidFarmHexes(state, citySiteId);
+  render();
+}
+
+// Clear farm-build state WITHOUT triggering a render — safe from inside render().
+function clearBuildFarm(): void {
+  buildingFarm = null;
+  state.buildHexes = [];
+}
+
+function cancelBuildFarm(): void {
+  clearBuildFarm();
+  render();
+}
+
+economyBtn.addEventListener('click', () => {
+  if (buildingFarm) {
+    cancelBuildFarm();
+    return;
+  }
+  if (state.selectionMode !== 'site' || !state.selectedSiteId) return;
+  const siteId = state.selectedSiteId;
+  const site = state.strategicSites.find(s => s.id === siteId);
+  if (!site) return;
+  if (site.state === 'city') {
+    if (getValidFarmHexes(state, siteId).some(h => canBuildFarm(state, siteId, h))) {
+      enterBuildFarm(siteId);
+    }
+  } else if (site.state === 'temple') {
+    sendOrCall({ type: 'action', action: 'buy-devotion', params: { templeId: siteId } }, () => {
+      if (buyDevotion(state, siteId)) logCombat(`Purchased a Devotion level (${TEMPLE_DEVOTION_COST}⚡)`);
+    });
   }
 });
 
@@ -1892,6 +1983,23 @@ function handleHexClick(clientX: number, clientY: number): void {
     }
   }
 
+  // ── Build Farm mode: place a Farm hex (UI is always local, only final action is sent) ──
+  if (buildingFarm) {
+    const citySiteId = buildingFarm.citySiteId;
+    if (state.buildHexes.some(h => hexEqual(h, hex))) {
+      clearBuildFarm();
+      sendOrCall({ type: 'action', action: 'build-farm', params: { templeId: citySiteId, pos: hex } }, () => {
+        const built = buildFarm(state, citySiteId, hex);
+        if (built) logCombat(`Built a Farm at (${hex.q},${hex.r}) for ${AGRAR_FARM_COST}⚡`);
+      });
+      return;
+    } else {
+      cancelBuildFarm();
+      render();
+      return;
+    }
+  }
+
   // ── Unit mode: try move ──
   if (state.selectionMode === 'unit' && state.moveHexes.some(h => hexEqual(h, hex))) {
     sendOrCall({ type: 'action_move', dest: hex }, () => {
@@ -1913,8 +2021,12 @@ function handleHexClick(clientX: number, clientY: number): void {
   // ── Select unit or structure ──
   const unit = getUnitAt(state, hex);
   const structureRef = getStructureAt(state, hex);
-  const structureId = structureRef ? (structureRef.kind === 'capital' ? structureRef.capital.id : structureRef.site.id) : undefined;
-  const structureOwner = structureRef ? (structureRef.kind === 'capital' ? structureRef.capital.playerId : structureRef.site.ownerId) : null;
+  const structureId = structureRef
+    ? (structureRef.kind === 'capital' ? structureRef.capital.id : structureRef.kind === 'farm' ? structureRef.farm.id : structureRef.site.id)
+    : undefined;
+  const structureOwner = structureRef
+    ? (structureRef.kind === 'capital' ? structureRef.capital.playerId : structureRef.kind === 'farm' ? structureRef.farm.ownerId : structureRef.site.ownerId)
+    : null;
   const myUnitHere = unit && unit.playerId === currentPlayer.id;
   const myStructureHere = !!structureId && structureOwner === currentPlayer.id;
 
@@ -1943,6 +2055,7 @@ function handleHexClick(clientX: number, clientY: number): void {
 
   // Deselect
   if (buildingTeleport) cancelBuildTeleport();
+  if (buildingFarm) cancelBuildFarm();
   sendOrCall({ type: 'action_deselect' }, () => deselectAll(state));
 }
 
@@ -2188,6 +2301,7 @@ function doEndTurn(): void {
   if (aiRunning) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   if (buildingTeleport) cancelBuildTeleport();
+  if (buildingFarm) cancelBuildFarm();
   if (multiplayerMode && mpClient) {
     mpClient.endTurn();
     return;

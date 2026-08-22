@@ -12,7 +12,8 @@
     "test:combat": "tsx scripts/verify-combat-v3.ts",
     "test:founding-round": "tsx scripts/verify-founding-round.ts",
     "test:strategic-sites": "tsx scripts/verify-strategic-sites.ts",
-    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites",
+    "test:economy": "tsx scripts/verify-economy.ts",
+    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites && npm run test:economy",
     "build:root": "vite build"
   },
   "keywords": [],

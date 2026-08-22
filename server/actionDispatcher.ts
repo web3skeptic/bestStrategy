@@ -32,6 +32,7 @@ import {
   UNIT_CLASS,
   chooseFaction, isFoundingRound, isAwaitingFactionReveal,
   getOwnedStructures,
+  buildFarm, buyDevotion,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -40,7 +41,11 @@ import {
   SUPPORT_RANGE,
   TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
 } from '../src/types';
-import { SITE_ESTABLISH_COST, STRUCTURES } from '../src/factions';
+import {
+  SITE_ESTABLISH_COST, STRUCTURES,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
+  TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
+} from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
 
 // ── Unified action vocabulary ──
@@ -54,6 +59,8 @@ export type UnifiedActionName =
   | 'destroy'
   | 'research'
   | 'build-teleport'
+  | 'build-farm'
+  | 'buy-devotion'
   | 'end-turn'
   | 'resign'
   | 'choose-faction';
@@ -238,10 +245,29 @@ export function buildRulesPayload(): Record<string, unknown> {
       ],
     },
     structures: {
-      note: 'Shared combat model for Capital/City/Temple — see the "attack-structure" action. Structures never revenge (no counter-damage) and are never captured by melee follow-through or by standing on them.',
+      note: 'Shared combat model for Capital/City/Temple/Farm — see the "attack-structure" action. Structures never revenge (no counter-damage) and are never captured by melee follow-through or by standing on them.',
       capital: { hp: STRUCTURES.capital.hp, defense: STRUCTURES.capital.defense, note: 'One per player, permanent, cannot become Ruins or change owner. Reaching 0 HP ends the match immediately.' },
       city: { hp: STRUCTURES.city.hp, defense: STRUCTURES.city.defense, note: 'Agrar founding result. Reaching 0 HP becomes Ruins (refoundable by either faction).' },
       temple: { hp: STRUCTURES.temple.hp, defense: STRUCTURES.temple.defense, note: 'Temple-faction founding result. Reaching 0 HP becomes Ruins (refoundable by either faction).' },
+      farm: { hp: STRUCTURES.farm.hp, defense: STRUCTURES.farm.defense, note: 'Agrar-only physical income building — see economy below. Destroying it does not affect the City itself.' },
+    },
+    economy: {
+      note: 'Flat base income plus faction-specific structure investment (phase 4).',
+      baseIncomePerRound: 'BASE_INCOME_PER_ROUND, granted every round regardless of structures owned.',
+      agrarFarms: {
+        note: 'Physical, independently-attackable buildings placed exactly FARM_DISTANCE_FROM_CITY hexes from an owned City. Up to FARM_SLOTS_PER_CITY per City.',
+        cost: AGRAR_FARM_COST,
+        incomePerFarm: AGRAR_FARM_INCOME,
+        slotsPerCity: FARM_SLOTS_PER_CITY,
+        distanceFromCity: FARM_DISTANCE_FROM_CITY,
+      },
+      templeDevotion: {
+        note: 'Concentrated, non-spatial investment on the Temple site itself. Two purchasable levels.',
+        costPerLevel: TEMPLE_DEVOTION_COST,
+        incomePerLevel: TEMPLE_DEVOTION_INCOME,
+        maxLevel: TEMPLE_DEVOTION_MAX_LEVEL,
+      },
+      investmentPersistence: 'A City/Temple reduced to Ruins keeps its Farms/Devotion investment on record. Re-founding it as the SAME investing player restores that investment; a DIFFERENT player founding it wipes the investment (Farms removed, Devotion reset to 0) and starts fresh.',
     },
     terrain: {
       hill: {
@@ -288,16 +314,18 @@ export function buildRulesPayload(): Record<string, unknown> {
     },
     turnStructure: {
       startOfTurn: [
-        'Receive aura income: INTERIM flat amount per owned structure (Capital + each completed City/Temple) — placeholder for phase 4 Farm/Devotion economy.',
+        'Receive aura income: BASE_INCOME_PER_ROUND + AGRAR_FARM_INCOME per owned Farm + TEMPLE_DEVOTION_INCOME per Devotion level — see economy above.',
         'Resolve any founding this player has due (§6) — succeeds or fails before income is granted, so a structure completing this turn already counts.',
         'Healers restore HP to nearby allies (within support range)',
       ],
       availableActions: [
         'move — move a unit to a reachable hex',
         'attack — attack an enemy unit within range (blocked during the Founding Round)',
-        'attack-structure — { unitId, targetPos } attack an enemy Capital/City/Temple within range (same restriction). Structures never revenge.',
+        'attack-structure — { unitId, targetPos } attack an enemy Capital/City/Temple/Farm within range (same restriction). Structures never revenge.',
         'recruit — spawn a unit at an owned structure (blocked during Founding Round / faction-reveal pause)',
         'found — { unitId } start founding at the neutral/ruined site the Builder/Acolyte is standing on (same restriction) — see strategicSites above.',
+        'build-farm — { templeId (owned City id), pos } build a Farm at a valid hex around that City (same restriction) — Agrar only, see economy above.',
+        'buy-devotion — { templeId (owned Temple id) } purchase the next Devotion level on that Temple (same restriction) — Temple faction only, see economy above.',
         'research — research a tech (same restriction)',
         'build-teleport — build a teleport portal pair (same restriction)',
         'end-turn — end the current player\'s turn (blocked only during the faction-reveal pause)',
@@ -443,9 +471,9 @@ export function executeAction(
           deselectAll(state);
           return fail(state, playerSlot, action, `Invalid structure attack from ${unitId} to (${targetPos.q},${targetPos.r})`);
         }
-        const kind = ref.kind === 'capital' ? 'Capital' : ref.site.state === 'ruins' ? 'structure' : 'structure';
+        const kind = ref.kind === 'capital' ? 'Capital' : ref.kind === 'farm' ? 'Farm' : 'structure';
         log.push(`Unit ${unitId} attacked ${kind} at (${targetPos.q},${targetPos.r}): ${combat.damageDealt} dmg dealt`);
-        if (combat.destroyed) log.push(ref.kind === 'capital' ? 'Capital destroyed!' : 'Structure destroyed — reduced to Ruins');
+        if (combat.destroyed) log.push(ref.kind === 'capital' ? 'Capital destroyed!' : ref.kind === 'farm' ? 'Farm destroyed' : 'Structure destroyed — reduced to Ruins');
         if (combat.gameOver) log.push(`Game over — player ${playerSlot} wins`);
         deselectAll(state);
         return { ok: true, action, log, broadcastToBoth: true };
@@ -510,6 +538,24 @@ export function executeAction(
         const ok = buildTeleportPair(state, anchorId, pos, targetPos);
         if (!ok) return fail(state, playerSlot, action, `Cannot build teleport pair from structure ${anchorId}`);
         log.push(`Player ${playerSlot} built teleport pair near structure ${anchorId}`);
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'build-farm': {
+        const { templeId: citySiteId, pos } = params as { templeId?: string; pos?: HexCoord };
+        if (!citySiteId || !pos) return fail(state, playerSlot, action, 'Missing templeId or pos for farm build');
+        const ok = buildFarm(state, citySiteId, pos);
+        if (!ok) return fail(state, playerSlot, action, `Cannot build farm for City ${citySiteId} at (${pos.q},${pos.r})`);
+        log.push(`Player ${playerSlot} built a Farm at (${pos.q},${pos.r})`);
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'buy-devotion': {
+        const { templeId: templeSiteId } = params as { templeId?: string };
+        if (!templeSiteId) return fail(state, playerSlot, action, 'Missing templeId for devotion purchase');
+        const ok = buyDevotion(state, templeSiteId);
+        if (!ok) return fail(state, playerSlot, action, `Cannot buy Devotion for Temple ${templeSiteId}`);
+        log.push(`Player ${playerSlot} purchased a Devotion level at Temple ${templeSiteId}`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

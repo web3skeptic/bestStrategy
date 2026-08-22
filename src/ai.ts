@@ -14,6 +14,7 @@ import {
   researchTech, canResearch,
   buildTeleportPair, canBuildTeleportPair, getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples, getTeleportAt,
+  canBuildFarm, buildFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
   calculateEncirclement, isForestUnitRevealed, endTurn,
@@ -235,7 +236,9 @@ function tryAttackStructure(state: GameState, unit: Unit, hard: boolean, actions
   const scored = bestBy(hexes, h => {
     const ref = getStructureAt(state, h);
     if (!ref) return -Infinity;
-    return ref.kind === 'capital' ? 1000 - ref.capital.hp : 500 - ref.site.hp;
+    if (ref.kind === 'capital') return 1000 - ref.capital.hp;
+    if (ref.kind === 'farm') return 200 - ref.farm.hp;
+    return 500 - ref.site.hp;
   });
   if (!scored) return false;
   observe(state, 'attack-structure', { unitId: unit.id, targetPos: scored });
@@ -391,9 +394,30 @@ function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): 
   }
 }
 
-// PHASE 3 NOTE: temple leveling is gone — there's no more per-structure
-// "upgrade" economy action to spend surplus aura on (Farms/Devotion land in
-// phase 4). The hard AI's surplus aura now just goes toward recruiting more.
+// Farms (Agrar Cities) / Devotion (Temple sites) — phase 4 economy. Greedy:
+// spend on every owned site that can afford an upgrade, one build per site
+// per turn, cheapest/earliest investment first so income compounds sooner.
+function doEconomy(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
+  for (const site of getOwnedSites(state, aiPlayerId)) {
+    if (site.state === 'city') {
+      const hex = getValidFarmHexes(state, site.id).find(h => canBuildFarm(state, site.id, h));
+      if (!hex) continue;
+      observe(state, 'build-farm', { templeId: site.id, pos: hex });
+      if (buildFarm(state, site.id, hex)) {
+        actions.push({ type: 'upgrade', pos: { ...hex }, description: `Hard AI builds a Farm at (${hex.q},${hex.r})` });
+      }
+    } else if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
+      observe(state, 'buy-devotion', { templeId: site.id });
+      if (buyDevotion(state, site.id)) {
+        actions.push({ type: 'upgrade', pos: { ...site.pos }, description: `Hard AI purchases Devotion at (${site.pos.q},${site.pos.r})` });
+      }
+    }
+  }
+}
+
+function getOwnedSites(state: GameState, aiPlayerId: number) {
+  return state.strategicSites.filter(s => s.ownerId === aiPlayerId && (s.state === 'city' || s.state === 'temple'));
+}
 
 function doTeleport(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   if (!state.playerTech[aiPlayerId]?.researched.has('teleports')) return;
@@ -472,10 +496,11 @@ function runTurn(state: GameState, aiPlayerId: number, hard: boolean): AIAction[
   const player = state.players.find(p => p.id === aiPlayerId);
   if (!player || state.phase !== 'playing' || getCurrentPlayer(state).id !== aiPlayerId) return actions;
 
-  // 1. Economy (spend aura — never float it). Temple leveling is gone (phase 3),
-  // so the normal AI has no separate economy step any more — its surplus aura
-  // just goes straight to recruiting below.
+  // 1. Economy (spend aura — never float it). The normal AI keeps things
+  // simple and skips Farms/Devotion/research/teleport; its surplus aura goes
+  // straight to recruiting below.
   if (hard) {
+    doEconomy(state, aiPlayerId, actions);
     doResearch(state, aiPlayerId, actions);
     doTeleport(state, aiPlayerId, actions);
   }

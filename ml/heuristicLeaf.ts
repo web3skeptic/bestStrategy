@@ -3,10 +3,10 @@
 // (-1, 1) from `botId`'s point of view, sign = who is ahead. Uses only the same
 // public accessors the engine/AI use — no forked rules, no cloning.
 import { GameState, UNIT_COSTS, UnitType } from '../src/types';
-import { getOwnedStructures, INTERIM_STRUCTURE_INCOME } from '../src/game';
+import { getOwnedStructures, getPlayerIncome } from '../src/game';
 
 function income(state: GameState, pid: number): number {
-  return getOwnedStructures(state, pid).length * INTERIM_STRUCTURE_INCOME;
+  return getPlayerIncome(state, pid);
 }
 
 // Cost-weighted army value scaled by current HP fraction (a hurt unit is worth

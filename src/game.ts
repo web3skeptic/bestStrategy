@@ -1,6 +1,6 @@
 import {
   GameState, Unit, UnitStats, UnitType, Player, HexCoord,
-  StrategicSite, StrategicSiteState, FoundingProgress, Capital,
+  StrategicSite, StrategicSiteState, FoundingProgress, Capital, Farm,
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
@@ -13,7 +13,12 @@ import {
   hexKey, generateHexMap, DIRECTIONS, OPPOSING_PAIRS, hexLineDraw,
 } from './hex';
 import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
-import { FACTION_UNITS, FactionUnitDef, STRUCTURES, SITE_ESTABLISH_COST } from './factions';
+import {
+  FACTION_UNITS, FactionUnitDef, STRUCTURES, SITE_ESTABLISH_COST,
+  BASE_INCOME_PER_ROUND, STARTING_ENERGY,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
+  TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
+} from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
 // (see ./combat.ts). The faction-specific v0.2 roster will assign its own
@@ -200,19 +205,21 @@ function rebuildUnitStats(unit: Unit, tech: PlayerTech, faction?: FactionId | nu
 
 let unitIdCounter = 0;
 let siteIdCounter = 0;
+let farmIdCounter = 0;
 
 // Called by server after deserializing saved state to prevent ID collisions
-export function resetCounters(unitMax: number, siteMax: number, tpMax: number): void {
+export function resetCounters(unitMax: number, siteMax: number, tpMax: number, farmMax = 0): void {
   unitIdCounter = unitMax;
   siteIdCounter = siteMax;
   teleportIdCounter = tpMax;
+  farmIdCounter = farmMax;
 }
 
 // Additive: snapshot the global ID counters. Used only by the ML fidelity test
-// (ml/bcRecord.ts) to replay a turn producing the SAME unit/site/teleport ids
-// as the original. No behavior change; nothing in the game paths reads this.
-export function getCounters(): [number, number, number] {
-  return [unitIdCounter, siteIdCounter, teleportIdCounter];
+// (ml/bcRecord.ts) to replay a turn producing the SAME unit/site/teleport/farm
+// ids as the original. No behavior change; nothing in the game paths reads this.
+export function getCounters(): [number, number, number, number] {
+  return [unitIdCounter, siteIdCounter, teleportIdCounter, farmIdCounter];
 }
 
 function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech, faction?: FactionId | null): Unit {
@@ -241,6 +248,20 @@ function createStrategicSite(pos: HexCoord): StrategicSite {
     ownerId: null,
     founding: null,
     hp: 0, maxHp: 0, defense: 0,
+    investmentOwnerId: null,
+    devotionLevel: 0,
+  };
+}
+
+function createFarm(pos: HexCoord, citySiteId: string, ownerId: number): Farm {
+  return {
+    id: `farm_${farmIdCounter++}`,
+    pos: { ...pos },
+    citySiteId,
+    ownerId,
+    hp: STRUCTURES.farm.hp,
+    maxHp: STRUCTURES.farm.hp,
+    defense: STRUCTURES.farm.defense,
   };
 }
 
@@ -530,18 +551,37 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
 // starting value so this needs no further change once Command lands.
 const INTERIM_POPULATION_CAP = 8;
 
-// PHASE 3 PLACEHOLDER: flat aura income per owned structure (Capital or a
-// completed City/Temple), replacing the old temple-level formula now that
-// leveling is gone. Matches the old level-1 default so day-one balance isn't
-// wildly different; phase 4 replaces this with real Farm/Devotion numbers.
-export const INTERIM_STRUCTURE_INCOME = 2;
-
 export function getPopulationCap(_state: GameState, _playerId: number): number {
   return INTERIM_POPULATION_CAP;
 }
 
 export function getPopulationCount(state: GameState, playerId: number): number {
   return state.units.filter(u => u.hp > 0 && u.playerId === playerId).length;
+}
+
+// ── Economy (§12-19) ──
+//
+// Base income is flat and unconditional (always 6⚡/round per player,
+// regardless of the Capital — it's not "owning a structure" income, it's the
+// baseline). On top of that, each OWNED completed City contributes its Farm
+// count (0-2, +1⚡ each) and each owned completed Temple contributes its
+// Devotion level (0-2, +1⚡ each) — see buildFarm/buyDevotion below. A
+// founding/neutral/ruined site contributes nothing (§10).
+export function getPlayerIncome(state: GameState, playerId: number): number {
+  let income = BASE_INCOME_PER_ROUND;
+  for (const site of state.strategicSites) {
+    if (site.ownerId !== playerId) continue;
+    if (site.state === 'city') {
+      income += getCityFarms(state, site.id).length * AGRAR_FARM_INCOME;
+    } else if (site.state === 'temple') {
+      income += site.devotionLevel * TEMPLE_DEVOTION_INCOME;
+    }
+  }
+  return income;
+}
+
+export function getCityFarms(state: GameState, citySiteId: string): Farm[] {
+  return state.farms.filter(f => f.citySiteId === citySiteId);
 }
 
 // ── Temple placement (change #5 + spread hardening) ──
@@ -726,11 +766,12 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   // Balance v2.2 (2026-05-17): Symmetric starting aura. The proper fix for the
   // first-mover gap is randomizing who acts first (see `firstPlayer` below) so
   // no slot is "fixed P0"; with that, asymmetric aura would itself be unfair.
+  // §4: starting energy is 6⚡ (phase 4 — matches the real economy now wired up).
   const players: Player[] = configs.map((cfg, i) => ({
     id: i,
     name: cfg.name,
     color: cfg.color || PLAYER_COLORS[i % PLAYER_COLORS.length]!,
-    aura: 2,
+    aura: STARTING_ENERGY,
     faction: null, // chosen at the end of the Founding Round — see chooseFaction()
   }));
 
@@ -768,7 +809,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const firstPlayer = Math.floor(Math.random() * numPlayers);
 
   const state: GameState = {
-    players, units, strategicSites, capitals, hills, walls, forests, explored,
+    players, units, strategicSites, capitals, farms: [], hills, walls, forests, explored,
     currentPlayerIndex: firstPlayer, firstPlayerIndex: firstPlayer,
     phase: 'playing', mapRadius,
     winner: null,
@@ -941,8 +982,22 @@ export function startFounding(state: GameState, unitId: string): boolean {
   return true;
 }
 
-function completeFounding(site: StrategicSite): void {
+// §17-18 — conquest does not transfer economic investment. If the SAME
+// player who previously invested here reclaims their own former site
+// (recapture, after it was Ruins), their Farms/Devotion come back — nothing
+// was ever deleted. If a DIFFERENT player completes founding (first-time
+// founding of a virgin site, or claiming another player's former site —
+// including converting it to the other faction's structure type), any prior
+// Farms are deleted and Devotion resets to 0: "the old development is
+// permanently erased."
+function completeFounding(state: GameState, site: StrategicSite): void {
   const founding = site.founding!;
+  const isReclaim = site.investmentOwnerId === founding.playerId;
+  if (!isReclaim) {
+    state.farms = state.farms.filter(f => f.citySiteId !== site.id);
+    site.devotionLevel = 0;
+    site.investmentOwnerId = founding.playerId;
+  }
   site.ownerId = founding.playerId;
   site.state = founding.targetState;
   const stats = founding.targetState === 'city' ? STRUCTURES.city : STRUCTURES.temple;
@@ -983,12 +1038,82 @@ function resolveFoundingForPlayer(state: GameState, playerId: number): void {
     const enemyAdjacent = state.units.some(u => u.hp > 0 && u.playerId !== playerId && hexDistance(u.pos, site.pos) === 1);
 
     if (founderStillHere && !enemyOnSite && !enemyAdjacent) {
-      completeFounding(site);
+      completeFounding(state, site);
     } else {
       failFounding(site);
     }
   }
   for (const p of state.players) if (p.id === playerId) updateVisibility(state, playerId);
+}
+
+// ── Agrar Farms (§13-14) ──
+//
+// A Farm is a real, independently-attackable structure — not just an
+// invisible City upgrade (§13). Exactly FARM_DISTANCE_FROM_CITY hexes from
+// its City (never adjacent), so Agrar has to defend an AREA, not one tile.
+export function getValidFarmHexes(state: GameState, citySiteId: string): HexCoord[] {
+  const site = state.strategicSites.find(s => s.id === citySiteId);
+  if (!site || site.state !== 'city') return [];
+  const r = FARM_DISTANCE_FROM_CITY;
+  const result: HexCoord[] = [];
+  for (let dq = -r; dq <= r; dq++) {
+    for (let dr = Math.max(-r, -dq - r); dr <= Math.min(r, -dq + r); dr++) {
+      const hex: HexCoord = { q: site.pos.q + dq, r: site.pos.r + dr };
+      if (hexDistance(site.pos, hex) !== r) continue; // exactly r, not "within" r
+      if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue;
+      if (state.hills.has(hexKey(hex))) continue;
+      if (state.walls.has(hexKey(hex))) continue;
+      if (getStrategicSiteAt(state, hex)) continue;
+      if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
+      if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
+      result.push(hex);
+    }
+  }
+  return result;
+}
+
+export function canBuildFarm(state: GameState, citySiteId: string, pos: HexCoord): boolean {
+  if (isMatchSetupRestricted(state)) return false;
+  const player = getCurrentPlayer(state);
+  const site = state.strategicSites.find(s => s.id === citySiteId);
+  if (!site || site.state !== 'city' || site.ownerId !== player.id) return false;
+  if (getCityFarms(state, citySiteId).length >= FARM_SLOTS_PER_CITY) return false;
+  if (player.aura < AGRAR_FARM_COST) return false;
+  return getValidFarmHexes(state, citySiteId).some(h => hexEqual(h, pos));
+}
+
+export function buildFarm(state: GameState, citySiteId: string, pos: HexCoord): boolean {
+  if (!canBuildFarm(state, citySiteId, pos)) return false;
+  const player = getCurrentPlayer(state);
+  player.aura -= AGRAR_FARM_COST;
+  const site = state.strategicSites.find(s => s.id === citySiteId)!;
+  state.farms.push(createFarm(pos, citySiteId, player.id));
+  site.investmentOwnerId = player.id;
+  return true;
+}
+
+// ── Temple Devotion (§15) ──
+//
+// Concentrated (not physical/spatial like Farms) — two purchasable levels on
+// the Temple site itself, same total cost as a fully-farmed City (§15-16).
+
+export function canBuyDevotion(state: GameState, templeSiteId: string): boolean {
+  if (isMatchSetupRestricted(state)) return false;
+  const player = getCurrentPlayer(state);
+  const site = state.strategicSites.find(s => s.id === templeSiteId);
+  if (!site || site.state !== 'temple' || site.ownerId !== player.id) return false;
+  if (site.devotionLevel >= TEMPLE_DEVOTION_MAX_LEVEL) return false;
+  return player.aura >= TEMPLE_DEVOTION_COST;
+}
+
+export function buyDevotion(state: GameState, templeSiteId: string): boolean {
+  if (!canBuyDevotion(state, templeSiteId)) return false;
+  const player = getCurrentPlayer(state);
+  player.aura -= TEMPLE_DEVOTION_COST;
+  const site = state.strategicSites.find(s => s.id === templeSiteId)!;
+  site.devotionLevel++;
+  site.investmentOwnerId = player.id;
+  return true;
 }
 
 // ── Tech research ──
@@ -1253,6 +1378,9 @@ function updateHighlights(state: GameState): void {
       if ((site.state === 'city' || site.state === 'temple') && site.ownerId !== unit.playerId
         && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
     }
+    for (const farm of state.farms) {
+      if (farm.ownerId !== unit.playerId && hexDistance(unit.pos, farm.pos) <= effectiveRange) enemyStructures.push(farm.pos);
+    }
     state.structureAttackHexes = enemyStructures;
   }
 }
@@ -1464,24 +1592,33 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
 
 export type StructureRef =
   | { kind: 'capital'; capital: Capital }
-  | { kind: 'site'; site: StrategicSite };
+  | { kind: 'site'; site: StrategicSite }
+  | { kind: 'farm'; farm: Farm };
 
-// Only a completed City/Temple or a Capital is a valid combat target —
-// neutral, founding and ruined sites have no HP and can't be attacked.
+// Only a completed City/Temple, a Capital, or a Farm is a valid combat
+// target — neutral, founding and ruined sites have no HP and can't be
+// attacked (§13: Farms ARE independently attackable — "see, attack, protect,
+// and route around them").
 export function getStructureAt(state: GameState, pos: HexCoord): StructureRef | null {
   const capital = state.capitals.find(c => hexEqual(c.pos, pos));
   if (capital) return { kind: 'capital', capital };
   const site = state.strategicSites.find(s => hexEqual(s.pos, pos) && (s.state === 'city' || s.state === 'temple'));
   if (site) return { kind: 'site', site };
+  const farm = state.farms.find(f => hexEqual(f.pos, pos));
+  if (farm) return { kind: 'farm', farm };
   return null;
 }
 
 function structureOwnerId(ref: StructureRef): number {
-  return ref.kind === 'capital' ? ref.capital.playerId : ref.site.ownerId!;
+  if (ref.kind === 'capital') return ref.capital.playerId;
+  if (ref.kind === 'farm') return ref.farm.ownerId;
+  return ref.site.ownerId!;
 }
 
 function structureDefense(ref: StructureRef): number {
-  return ref.kind === 'capital' ? ref.capital.defense : ref.site.defense;
+  if (ref.kind === 'capital') return ref.capital.defense;
+  if (ref.kind === 'farm') return ref.farm.defense;
+  return ref.site.defense;
 }
 
 export interface StructureCombatResult {
@@ -1516,6 +1653,10 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
     ref.capital.hp -= damageDealt;
     destroyed = ref.capital.hp <= 0;
     if (destroyed) ref.capital.hp = 0;
+  } else if (ref.kind === 'farm') {
+    ref.farm.hp -= damageDealt;
+    destroyed = ref.farm.hp <= 0;
+    if (destroyed) state.farms = state.farms.filter(f => f.id !== ref.farm.id); // gone outright, no "ruins" for a field
   } else {
     ref.site.hp -= damageDealt;
     destroyed = ref.site.hp <= 0;
@@ -1523,6 +1664,9 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
       ref.site.hp = 0;
       // §11 — City/Temple destruction goes to Ruins, not a game-over: clear
       // active ownership/production/founding state, keep the site itself.
+      // Farms/Devotion investment is NOT cleared here — it goes dormant
+      // (getPlayerIncome already only counts a 'city'/'temple' site) and
+      // comes back if the SAME player re-founds it (see completeFounding).
       ref.site.state = 'ruins';
       ref.site.ownerId = null;
       ref.site.founding = null;
@@ -1640,11 +1784,9 @@ export function endTurn(state: GameState): void {
   // so a structure that completes right now already contributes this turn.
   resolveFoundingForPlayer(state, newPlayer.id);
 
-  // PHASE 3 PLACEHOLDER economy: flat income per owned structure (Capital +
-  // each completed City/Temple). Replaces the old temple-level-scaled income;
-  // real Farm/Devotion numbers are phase 4 — see INTERIM_STRUCTURE_INCOME.
-  const owned = getOwnedStructures(state, newPlayer.id);
-  newPlayer.aura += owned.length * INTERIM_STRUCTURE_INCOME;
+  // §12-19 — real economy: flat base + each owned City's Farms / Temple's
+  // Devotion. See getPlayerIncome.
+  newPlayer.aura += getPlayerIncome(state, newPlayer.id);
 
   // Healer: restore HP to allies at start of their turn, with distance falloff —
   // full heal within radius 1, half at radius 2, nothing beyond (SUPPORT_RANGE).

@@ -14,6 +14,8 @@ export type UnifiedActionName =
   | 'destroy'
   | 'research'
   | 'build-teleport'
+  | 'build-farm'
+  | 'buy-devotion'
   | 'end-turn'
   | 'resign'
   | 'choose-faction';

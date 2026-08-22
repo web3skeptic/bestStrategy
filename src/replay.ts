@@ -5,7 +5,7 @@
 import { Renderer } from './renderer';
 import {
   GameState, Unit, UnitType, UnitStats, StrategicSite, StrategicSiteState, FoundingProgress,
-  Capital, Player, PlayerTech,
+  Capital, Farm, Player, PlayerTech,
   TeleportBuilding, HexCoord, TechId, FactionId, RULES_VERSION,
 } from './types';
 import { generateHexMap, hexKey } from './hex';
@@ -31,6 +31,10 @@ interface SnapshotCapital { id: string; pos: HexCoord; playerId: number; hp: num
 interface SnapshotSite {
   id: string; pos: HexCoord; state: StrategicSiteState; ownerId: number | null;
   founding: FoundingProgress | null; hp: number; maxHp: number; defense: number;
+  investmentOwnerId: number | null; devotionLevel: number;
+}
+interface SnapshotFarm {
+  id: string; pos: HexCoord; citySiteId: string; ownerId: number; hp: number; maxHp: number; defense: number;
 }
 interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
@@ -48,6 +52,7 @@ interface ApiSnapshot {
     terrain: Record<string, string>;
     capitals: SnapshotCapital[];
     strategicSites: SnapshotSite[];
+    farms: SnapshotFarm[];
     teleportBuildings: SnapshotTeleport[];
   };
   units: SnapshotUnit[];
@@ -113,6 +118,12 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   const strategicSites: StrategicSite[] = s.map.strategicSites.map(site => ({
     id: site.id, pos: site.pos, state: site.state, ownerId: site.ownerId,
     founding: site.founding, hp: site.hp, maxHp: site.maxHp, defense: site.defense,
+    investmentOwnerId: site.investmentOwnerId ?? null, devotionLevel: site.devotionLevel ?? 0,
+  }));
+
+  const farms: Farm[] = (s.map.farms ?? []).map(f => ({
+    id: f.id, pos: f.pos, citySiteId: f.citySiteId, ownerId: f.ownerId,
+    hp: f.hp, maxHp: f.maxHp, defense: f.defense,
   }));
 
   const teleportBuildings: TeleportBuilding[] = s.map.teleportBuildings.map(tp => ({
@@ -160,7 +171,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   }
 
   return {
-    players, units, strategicSites, capitals,
+    players, units, strategicSites, capitals, farms,
     hills, walls, forests,
     explored: players.map(() => new Set<string>(fullyExplored)),
     currentPlayerIndex: s.currentPlayer,

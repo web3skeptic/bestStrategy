@@ -17,14 +17,14 @@
 // these approximations once the new economy (phase 4) lands.
 import { GameState, UnitType } from '../src/types';
 import { TECH_NODES } from '../src/types';
-import { getPopulationCap, getPopulationCount, getEffectiveRange, getOwnedStructures, INTERIM_STRUCTURE_INCOME } from '../src/game';
+import { getPopulationCap, getPopulationCount, getEffectiveRange, getOwnedStructures, getPlayerIncome } from '../src/game';
 import { hexDistance } from '../src/hex';
 
 const UNIT_TYPES: UnitType[] = ['warrior', 'archer', 'catapult', 'horserider', 'heavyknight', 'spearsman', 'healer', 'damageBooster', 'rangeBooster'];
 const TECH_IDS = TECH_NODES.map(n => n.id);
 
 function income(state: GameState, pid: number): number {
-  return getOwnedStructures(state, pid).length * INTERIM_STRUCTURE_INCOME;
+  return getPlayerIncome(state, pid);
 }
 
 // Human-readable feature names (documentation + debugging). Order === vector order.

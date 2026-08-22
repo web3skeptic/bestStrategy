@@ -18,7 +18,7 @@ export type FactionId = 'agrar' | 'temple';
 // v3 (phase 3): temples -> strategicSites + capitals, selectedTempleId ->
 // selectedSiteId, spawnedTempleIds -> spawnedSiteIds, hasCaptured removed,
 // structureAttackHexes added.
-export const RULES_VERSION = 3;
+export const RULES_VERSION = 4;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -121,6 +121,32 @@ export interface StrategicSite {
   founding: FoundingProgress | null;
   // Combat stats — 0 while neutral/founding/ruins (not a valid attack
   // target in those states; see getStructureAt/isAttackableStructure).
+  hp: number;
+  maxHp: number;
+  defense: number;
+  /**
+   * §17-18 (phase 4): who the Farm/Devotion investment on this site belongs
+   * to. Distinct from `ownerId` — it PERSISTS through Ruins (unlike ownerId,
+   * which goes null), so a player who rebuilds their OWN former site gets
+   * their Farms/Devotion back. It is only reset (to the new founder) when a
+   * DIFFERENT player completes founding here — see completeFounding in
+   * game.ts, which is also where old Farms actually get deleted in that case.
+   * Null only for a virgin site that has never been founded.
+   */
+  investmentOwnerId: number | null;
+  /** §15 (phase 4): 0-2, Temple-only. Meaningless (and kept 0) for a City. */
+  devotionLevel: number;
+}
+
+// §13-14 (phase 4) — a physical Agrar economy building, 2 slots per City,
+// placed exactly 2 hexes from it. A real attackable structure (see
+// getStructureAt), not just a City upgrade — the whole point is that Agrar
+// has to defend an AREA, not one tile (§13).
+export interface Farm {
+  id: string;
+  pos: HexCoord;
+  citySiteId: string; // the StrategicSite (state 'city') this Farm belongs to
+  ownerId: number;
   hp: number;
   maxHp: number;
   defense: number;
@@ -270,6 +296,7 @@ export interface GameState {
   units: Unit[];
   strategicSites: StrategicSite[];
   capitals: Capital[];
+  farms: Farm[];
   hills: Set<string>;       // hex keys of hill tiles
   walls: Set<string>;       // hex keys of impassable tiles
   forests: Set<string>;     // hex keys of forest tiles

@@ -28,7 +28,8 @@ export function stateSig(s: GameState): string {
   ).sort().join('|');
   const temples = [
     ...s.capitals.map(c => `${c.id}:${c.playerId}:${c.hp}`),
-    ...s.strategicSites.map(t => `${t.id}:${t.state}:${t.ownerId}:${t.hp}`),
+    ...s.strategicSites.map(t => `${t.id}:${t.state}:${t.ownerId}:${t.hp}:${t.devotionLevel}`),
+    ...s.farms.map(f => `${f.id}:${f.ownerId}:${f.hp}`),
   ].sort().join('|');
   const players = s.players.map(p => `${p.id}:${p.aura}`).sort().join('|');
   const tech = s.playerTech.map((pt, i) => `${i}:${[...pt.researched].sort().join(',')}`).join('|');
@@ -121,7 +122,7 @@ export function fidelityCheck(nGames: number, seedBase: number, maxRounds = 90, 
       // Replay on the pre-state clone under the SAME rolls and SAME id counters,
       // so recruited units/temples/portals get identical ids.
       setRngState(rngBefore);
-      resetCounters(cntBefore[0], cntBefore[1], cntBefore[2]);
+      resetCounters(cntBefore[0], cntBefore[1], cntBefore[2], cntBefore[3]);
       const replay = cloneState(pre);
       let allOk = true;
       for (const m of micros) {
@@ -130,7 +131,7 @@ export function fidelityCheck(nGames: number, seedBase: number, maxRounds = 90, 
         if (!applyMicro(replay, m)) allOk = false;
       }
       setRngState(rngAfter);                // restore real stream for the live game
-      resetCounters(cntAfter[0], cntAfter[1], cntAfter[2]);
+      resetCounters(cntAfter[0], cntAfter[1], cntAfter[2], cntAfter[3]);
 
       const same = stateSig(replay) === postSig;
       const hasTeleportMove = micros.some(m => m.action === 'move' && m.params.to && getTeleportAt(pre, m.params.to as { q: number; r: number }));

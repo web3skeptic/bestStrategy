@@ -101,8 +101,10 @@ export const INCOME_PER_DEVELOPED_SITE = 2;
 export const SITE_ESTABLISH_COST = 4;      // City / Temple founding
 export const AGRAR_FARM_COST = 3;          // x2 farm slots per City
 export const AGRAR_FARM_INCOME = 1;
+export const FARM_SLOTS_PER_CITY = 2;
 export const TEMPLE_DEVOTION_COST = 3;     // x2 devotion levels per Temple
 export const TEMPLE_DEVOTION_INCOME = 1;
+export const TEMPLE_DEVOTION_MAX_LEVEL = 2;
 export const FARM_DISTANCE_FROM_CITY = 2;  // §14
 
 // §23-25 — Agrar-only physical Roads. Temple gets no equivalent bonus.

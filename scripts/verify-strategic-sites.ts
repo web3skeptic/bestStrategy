@@ -8,7 +8,7 @@
 import {
   createGameState, endTurn, chooseFaction, canStartFounding, startFounding,
   attackStructure, getStructureAt, selectUnit, moveUnit, getPlayerCapital,
-  INTERIM_STRUCTURE_INCOME,
+  getPlayerIncome,
 } from '../src/game';
 import { hexNeighbors, hexEqual } from '../src/hex';
 import type { GameState, StrategicSiteState, FactionId } from '../src/types';
@@ -135,9 +135,10 @@ console.log('\n=== Founding interruption (§8) ===');
   const { site, founder } = primeFounding(state, 0);
   startFounding(state, founder.id);
   const auraAfterCharge = player.aura; // 16 — the 4⚡ establish cost, already spent
+  const incomeBeforeRound = getPlayerIncome(state, player.id);
   founder.hp = 0;
   advanceOneRound(state); // also grants one normal turn-start income tick (Capital only) — not a refund
-  const expectedAura = auraAfterCharge + INTERIM_STRUCTURE_INCOME;
+  const expectedAura = auraAfterCharge + incomeBeforeRound;
   check('failed founding does NOT refund the 4⚡ (only normal turn income is added)', player.aura === expectedAura, `aura=${player.aura} expected=${expectedAura}`);
 }
 {

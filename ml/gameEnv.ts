@@ -22,6 +22,7 @@ import {
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getOwnedStructures,
   canBuildTeleportPair, getValidTeleportHexes, getValidTeleportHexesForOtherTemples,
+  canBuildFarm, getValidFarmHexes, canBuyDevotion,
 } from '../src/game';
 import { executeAction, computeUnitActions, UnifiedActionName } from '../server/actionDispatcher';
 import { hexDistance } from '../src/hex';
@@ -110,6 +111,19 @@ export function legalMicros(state: GameState): Micro[] {
     out.push({ action: 'build-teleport', params: { templeId: structure.id, pos: a[0]!, targetPos: posB } });
   }
 
+  // Farms / Devotion — one representative Farm hex per owned City with a free
+  // slot, and a Devotion purchase for each owned Temple below max level.
+  for (const site of state.strategicSites) {
+    if (site.ownerId !== pid) continue;
+    if (site.state === 'city') {
+      for (const hex of getValidFarmHexes(state, site.id)) {
+        if (canBuildFarm(state, site.id, hex)) { out.push({ action: 'build-farm', params: { templeId: site.id, pos: hex } }); break; }
+      }
+    } else if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
+      out.push({ action: 'buy-devotion', params: { templeId: site.id } });
+    }
+  }
+
   // End turn is always legal.
   out.push({ action: 'end-turn', params: {} });
   return out;
@@ -134,6 +148,7 @@ export function cloneState(s: GameState): GameState {
     units: s.units.map(u => ({ ...u })),
     strategicSites: s.strategicSites.map(site => ({ ...site, founding: site.founding ? { ...site.founding } : null })),
     capitals: s.capitals.map(c => ({ ...c })),
+    farms: s.farms.map(f => ({ ...f })),
     hills: s.hills, walls: s.walls, forests: s.forests,
     explored: s.explored.map((e, i) => (i === cur ? new Set(e) : e)),
     currentPlayerIndex: s.currentPlayerIndex,

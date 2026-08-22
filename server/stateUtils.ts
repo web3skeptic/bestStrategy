@@ -2,11 +2,12 @@ import { resetCounters } from '../src/game';
 import { GameState } from '../src/types';
 
 // ── Counter resync after deserialize / new game ──
-// Re-derive the next-id counters (unit_/site_/tp_) from the live entities so
-// freshly created or restored states don't reuse existing ids. Capitals use
-// deterministic per-player ids (capital_<playerId>), so they need no counter.
+// Re-derive the next-id counters (unit_/site_/tp_/farm_) from the live
+// entities so freshly created or restored states don't reuse existing ids.
+// Capitals use deterministic per-player ids (capital_<playerId>), so they
+// need no counter.
 export function resyncCounters(state: GameState): void {
-  let unitMax = 0, siteMax = 0, tpMax = 0;
+  let unitMax = 0, siteMax = 0, tpMax = 0, farmMax = 0;
   for (const u of state.units) {
     const n = parseInt(u.id.replace('unit_', ''), 10);
     if (!isNaN(n) && n >= unitMax) unitMax = n + 1;
@@ -19,5 +20,9 @@ export function resyncCounters(state: GameState): void {
     const n = parseInt(tp.id.replace('tp_', ''), 10);
     if (!isNaN(n) && n >= tpMax) tpMax = n + 1;
   }
-  resetCounters(unitMax, siteMax, tpMax);
+  for (const f of state.farms) {
+    const n = parseInt(f.id.replace('farm_', ''), 10);
+    if (!isNaN(n) && n >= farmMax) farmMax = n + 1;
+  }
+  resetCounters(unitMax, siteMax, tpMax, farmMax);
 }
