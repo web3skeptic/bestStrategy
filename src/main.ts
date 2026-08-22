@@ -1,4 +1,4 @@
-import { GameState, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
+import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
 import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
@@ -53,14 +53,14 @@ import {
   buyDevotion,
   canBuildRoad,
   buildRoad,
-  isFoundingRound,
+  getRoadAt,
   isAwaitingFactionReveal,
   chooseFaction,
   founderDisplayName,
   unitDisplayName,
   getUnitCost,
 } from './game';
-import { getUnitThumbnail, getPortalThumbnail } from './unitThumbnails';
+import { getUnitThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from './serializer';
@@ -87,9 +87,8 @@ const UNIT_ART: Record<UnitType, string> = {
   healer:       healerImg,
   damageBooster: damageBoosterImg,
   rangeBooster:  rangeBoosterImg,
-  // Placeholder — Founder/Builder/Acolyte has no dedicated art yet (§70 asset
-  // fallback policy). Reuses the Warrior thumbnail; it's never recruitable via
-  // the build-card UI anyway (starts on the board, converts in place).
+  // Placeholder — Builder/Acolyte has no dedicated art yet (§46 asset
+  // fallback policy). Reuses the Warrior thumbnail.
   founder:      warriorImg,
 };
 
@@ -124,11 +123,6 @@ let mpClient: MultiplayerClient | null = null;
 // is applied locally before the server confirms; cleared on the next authoritative
 // state_update, or restored if the server rejects the action.
 let researchRollback: SerializedGameState | null = null;
-
-// After spawning in MP we don't know the server-assigned unit id, so remember the
-// temple we spawned from and auto-select whatever unit lands on it in the next
-// state_update (mirrors the local path's spawn→select for instant move range).
-let pendingSpawnSelectTempleId: string | null = null;
 
 // Hot-seat hand-off: true while the opaque privacy curtain is up between two local
 // human seats (see doEndTurn / dismissHandoff). Never set in vs-AI or online games.
@@ -183,7 +177,7 @@ const spawnBar = document.getElementById('spawnBar')!;
 const spawnBarWrap = document.getElementById('spawnBarWrap')!;
 const spawnArrowLeft = document.getElementById('spawnArrowLeft') as HTMLButtonElement;
 const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButtonElement;
-const captureBtn = document.getElementById('captureBtn')!;
+const captureBtn = document.getElementById('captureBtn') as HTMLButtonElement;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
 const economyBtn = document.getElementById('economyBtn') as HTMLButtonElement;
 
@@ -226,7 +220,7 @@ const fcTitle = document.getElementById('fcTitle')!;
 const fcAgrarCard = document.getElementById('fcAgrarCard')!;
 const fcTempleCard = document.getElementById('fcTempleCard')!;
 const fcLockedNote = document.getElementById('fcLockedNote')!;
-const foundingRoundBanner = document.getElementById('foundingRoundBanner')!;
+const trainingQueueBanner = document.getElementById('trainingQueueBanner')!;
 
 // ── Toast notifications (carved-stone chips, auto-dismiss, stack) ──
 function showToast(msg: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): void {
@@ -335,22 +329,6 @@ function sendOrCall(action: object, localFn: () => void): void {
   } else {
     localFn();
     render();
-  }
-}
-
-// After a MP spawn, select the unit the server placed on the flagged temple so
-// its movement range shows immediately — matching the local spawn→select flow.
-// Also nudges the server's selection so a follow-up move validates against it.
-function maybeAutoSelectSpawned(): void {
-  if (!pendingSpawnSelectTempleId || !multiplayerMode || spectatorMode) { pendingSpawnSelectTempleId = null; return; }
-  const structureId = pendingSpawnSelectTempleId;
-  pendingSpawnSelectTempleId = null;
-  if (state.currentPlayerIndex !== myPlayerSlot) return;   // not my turn anymore
-  const structure = getOwnedStructures(state, myPlayerSlot).find(s => s.id === structureId);
-  const unit = structure ? getUnitAt(state, structure.pos) : null;
-  if (unit && unit.playerId === myPlayerSlot && state.selectedUnitId !== unit.id) {
-    selectUnit(state, unit.id);                                     // local: instant range
-    mpClient?.sendAction({ type: 'action_select_unit', unitId: unit.id }); // keep server in sync
   }
 }
 
@@ -475,7 +453,6 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
     case 'state_update': {
       researchRollback = null;   // authoritative state supersedes any optimistic research
       applyStateWithAnimation(deserialize(event.state)); // tween visible moves, don't teleport
-      maybeAutoSelectSpawned();  // auto-select a freshly-spawned unit (task: instant range)
       // If the tech tree is open (view-only browsing during the opponent's turn),
       // re-render it so node clickability tracks whose turn it now is.
       if (!techOverlay.classList.contains('hidden')) renderTechTree();
@@ -882,7 +859,7 @@ setupPlayersDec.addEventListener('click', () => {});
 setupPlayersInc.addEventListener('click', () => {});
 setupStartBtn.addEventListener('click', () => startLocalGame(setupKinds));
 
-// ── Faction choice (end of the Founding Round, §5-6) ──
+// ── Faction choice (immediate, before Round 1 — phase 11 §1-3) ──
 //
 // Local (hotseat/vs-AI) faction secrecy is honor-system only: unlike online
 // play (server-authoritative hiding — see gameManager.ts stripHiddenFaction),
@@ -961,12 +938,52 @@ function updateFactionOverlay(): void {
     : `${state.players[slot]?.name ?? `Player ${slot + 1}`} — choose your civilization`;
 }
 
+// §40-42 (phase 11 correction) — human-readable reasons an Agrar Builder's
+// Build Farm/Build Road button is disabled right now, mirroring the
+// preconditions of canStartFarm/canBuildRoad in game.ts. Returns null when
+// the action is currently available. Checked in priority order: energy,
+// per-action cap/occupancy, activation, then placement.
+function farmBlockReason(state: GameState, unit: Unit): string | null {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return 'not your unit';
+  if (player.aura < AGRAR_FARM_COST) return `not enough Energy (need ⚡${AGRAR_FARM_COST})`;
+  const activeFarms = state.farms.filter(f => f.ownerId === player.id).length;
+  if (activeFarms >= MAX_ACTIVE_FARMS) return `maximum Farms reached (${MAX_ACTIVE_FARMS}/${MAX_ACTIVE_FARMS})`;
+  if (unit.hasMoved || unit.hasAttacked) return 'Builder has already acted this round';
+  if (getValidFarmHexes(state, unit).length === 0) return 'no valid Farm location adjacent to this Builder';
+  return null;
+}
+
+function roadBlockReason(state: GameState, unit: Unit): string | null {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return 'not your unit';
+  const cost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+  if (player.aura < cost) return `not enough Energy (need ⚡${cost})`;
+  if (unit.hasMoved || unit.hasAttacked) return 'Builder has already acted this round';
+  if (getRoadAt(state, unit.pos)) return 'already a Road here';
+  if (getStructureAt(state, unit.pos)) return 'cannot build under a structure';
+  if (state.farms.some(f => hexEqual(f.pos, unit.pos))) return 'cannot build under a Farm';
+  return null;
+}
+
 // ── Render & UI ──
 
 function render(): void {
   maybeAutoChooseFactionForAI();
   updateFactionOverlay();
-  foundingRoundBanner.classList.toggle('hidden', !(gameStarted && !spectatorMode && isFoundingRound(state)));
+  // §5 (phase 11 correction) — recruits no longer appear instantly, so make
+  // the wait visible: a small banner listing what's currently queued for the
+  // local viewer's own player, deploying at the start of their next round.
+  const vSlotForBanner = gameStarted && !spectatorMode ? viewerPlayerSlot() : null;
+  const queuedForViewer = vSlotForBanner !== null ? state.trainingQueue.filter(o => o.playerId === vSlotForBanner) : [];
+  if (queuedForViewer.length > 0) {
+    const viewerFaction = state.players[vSlotForBanner!]?.faction;
+    const names = queuedForViewer.map(o => unitDisplayName(o.unitType, viewerFaction)).join(', ');
+    trainingQueueBanner.textContent = `🏭 Training: ${names} — deploys next round`;
+    trainingQueueBanner.classList.remove('hidden');
+  } else {
+    trainingQueueBanner.classList.add('hidden');
+  }
   checkTempleCaptureToasts(); // raise a toast for any temple that changed hands
   if (spectatorMode) {
     // Spectators always see the full board (no fog, no player-specific view)
@@ -1197,34 +1214,41 @@ function updateUI(): void {
       unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${supportNote}`;
 
       const foundable = canStartFounding(state, unit);
+      const isAgrarBuilder = unit.type === 'founder' && player.faction === 'agrar';
       if (foundable) {
         captureBtn.style.display = 'block';
+        captureBtn.disabled = false;
+        captureBtn.title = '';
         captureBtn.textContent = `⚒ Found Temple (⚡${SITE_ESTABLISH_COST})`;
-      } else if (canBuildRoad(state, unit)) {
+      } else if (isAgrarBuilder) {
+        // §39-40 (phase 11 correction) — Build Road is ALWAYS shown for an
+        // Agrar Builder, never hidden behind a hidden precondition; disabled
+        // states carry a human-readable reason (title + on-button text).
+        const reason = roadBlockReason(state, unit);
         const roadCost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
         captureBtn.style.display = 'block';
-        captureBtn.textContent = `🛤 Build Road (⚡${roadCost})`;
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.textContent = reason ? `🛤 Build Road — ${reason}` : `🛤 Build Road (⚡${roadCost})`;
       } else {
         captureBtn.style.display = 'none';
       }
 
-      // Build Farm button (§6-9, Agrar's Builder only) — a separate action
-      // from Found/Road above so the Builder can have both available at once
-      // (e.g. standing on open land near the Capital). Ring-pick hex mode,
-      // like the old per-City flow, but keyed off the Builder unit, not a site.
-      if (myTurn && unit.type === 'founder' && player.faction === 'agrar') {
-        const hasHex = getValidFarmHexes(state, player.id).some(h => canStartFarm(state, unit, h));
-        if (hasHex || buildingFarm?.unitId === unit.id) {
-          economyBtn.style.display = 'block';
-          economyBtn.disabled = false;
-          economyBtn.classList.toggle('active', buildingFarm?.unitId === unit.id);
-          economyBtn.textContent = buildingFarm?.unitId === unit.id
-            ? '⚑ Pick a hex for the Farm…'
-            : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
-        } else {
-          economyBtn.style.display = 'none';
-          if (buildingFarm?.unitId === unit.id) clearBuildFarm();
-        }
+      // Build Farm button (§6-9, phase 10; always-visible §39-40, phase 11) —
+      // a separate action from Found/Road above so the Builder can have both
+      // available at once. ALWAYS shown for a selected Agrar Builder, with an
+      // explicit disabled-state reason rather than being hidden — see
+      // farmBlockReason. Ring-pick hex mode, keyed off the Builder unit.
+      if (myTurn && isAgrarBuilder) {
+        const picking = buildingFarm?.unitId === unit.id;
+        const reason = picking ? null : farmBlockReason(state, unit);
+        economyBtn.style.display = 'block';
+        economyBtn.disabled = !!reason;
+        economyBtn.title = reason ?? '';
+        economyBtn.classList.toggle('active', picking);
+        economyBtn.textContent = picking
+          ? '⚑ Pick a hex for the Farm…'
+          : reason ? `⚑ Build Farm — ${reason}` : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
       } else {
         economyBtn.style.display = 'none';
         if (buildingFarm) clearBuildFarm();
@@ -1248,6 +1272,8 @@ function updateUI(): void {
     const site = capital ? undefined : state.strategicSites.find(s => s.id === siteId);
     const structurePos = capital?.pos ?? site?.pos;
     if (structurePos) {
+      // §5 (phase 11) — recruiting always queues regardless of tile
+      // occupancy; occupancy only matters later, at deployment.
       const unitOnStructure = getUnitAt(state, structurePos);
       const economyNote = site
         ? ` | 🕯 Devotion: ${site.devotionLevel}/${TEMPLE_DEVOTION_MAX_LEVEL}`
@@ -1258,8 +1284,8 @@ function updateUI(): void {
       const existingPortals = state.teleportBuildings.filter(t => t.templeId === siteId).length;
       const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
       unitInfoEl.textContent = unitOnStructure
-        ? `${label} (occupied — clear tile to spawn)${portalNote}`
-        : `${label} — Spawn unit${portalNote}`;
+        ? `${label} (occupied — deploys once the tile is clear)${portalNote}`
+        : `${label} — Recruit here${portalNote}`;
 
       // Build teleport button
       if (canBuildTeleportPair(state, siteId)) {
@@ -1419,11 +1445,14 @@ const UNIT_CARD_NAMES: Record<UnitType, string> = {
   healer:       'Healer',
   damageBooster: 'Dmg Boost',
   rangeBooster:  'Rng Boost',
-  founder:      'Founder', // not recruitable — see founderDisplayName for the in-game label
+  founder:      'Founder', // faction-flavored name (Builder/Acolyte) comes from unitDisplayName below
 };
 
-// Order matches the original spawn bar.
+// §5 (phase 11 correction) — the Builder/Acolyte leads the bar: it's usually
+// the first thing either faction needs to recruit, since nothing else can be
+// built or founded without it.
 const UNIT_CARD_ORDER: UnitType[] = [
+  'founder',
   'warrior', 'archer', 'catapult', 'horserider', 'heavyknight',
   'spearsman', 'healer', 'damageBooster', 'rangeBooster',
 ];
@@ -1497,12 +1526,11 @@ window.addEventListener('resize', () => {
 function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
-  // A unit standing on the selected structure's tile blocks spawning (can't
-  // stack onto an occupied spawn tile) — grey every card while occupied.
-  const selStructure = state.selectionMode === 'site' && state.selectedSiteId
-    ? getOwnedStructures(state, player.id).find(s => s.id === state.selectedSiteId)
-    : undefined;
-  const templeOccupied = selStructure ? !!getUnitAt(state, selStructure.pos) : false;
+  // §5 (phase 11) — recruiting only QUEUES a TrainingOrder now; tile
+  // occupancy at the structure is checked at DEPLOYMENT time (start of the
+  // recruiting player's next round), not here, so a structure with a unit
+  // standing on it is still a legal recruit target — no card should grey out
+  // for that reason.
   for (const type of UNIT_CARD_ORDER) {
     const card = unitCards.get(type)!;
     // Match the old build menu: locked units are hidden entirely.
@@ -1511,7 +1539,7 @@ function updateUnitCards(): void {
       continue;
     }
     card.style.display = '';
-    const affordable = canAfford(state, type) && !templeOccupied;
+    const affordable = canAfford(state, type);
     card.classList.toggle('disabled', !affordable);
 
     // Card art = a 3D render of the unit model, team-tinted to the current
@@ -1595,8 +1623,9 @@ interface BuildFarmState {
 let buildingFarm: BuildFarmState | null = null;
 
 function enterBuildFarm(unitId: string): void {
+  const unit = state.units.find(u => u.id === unitId);
   buildingFarm = { unitId };
-  state.buildHexes = getValidFarmHexes(state, getCurrentPlayer(state).id);
+  state.buildHexes = unit ? getValidFarmHexes(state, unit) : [];
   render();
 }
 
@@ -1619,7 +1648,7 @@ economyBtn.addEventListener('click', () => {
   // Agrar: Build Farm — triggered from the Builder's own unit selection.
   if (state.selectionMode === 'unit' && state.selectedUnitId) {
     const unit = state.units.find(u => u.id === state.selectedUnitId);
-    if (unit && getValidFarmHexes(state, unit.playerId).some(h => canStartFarm(state, unit, h))) {
+    if (unit && getValidFarmHexes(state, unit).some(h => canStartFarm(state, unit, h))) {
       enterBuildFarm(unit.id);
     }
     return;
@@ -1766,16 +1795,24 @@ function renderTechTree(): void {
 
   techBody.innerHTML = '';
 
-  // Section 1: Unit unlocks (no branch)
-  const unitUnlockNodes = TECH_NODES.filter(n => n.unitUnlock && !n.branch && n.prereqs.length === 0);
-  appendSection(techBody, 'Unit Unlocks', undefined, unitUnlockNodes, tech, player.aura, player.color, player.faction);
+  // Phase 11 §33-34 — Siege and Heavy-unit lines are faction-specific, each
+  // a real 2-step prerequisite chain now (not a flat unlock). Only the
+  // current player's own faction variant is ever shown — see node.faction.
+  const own = (n: typeof TECH_NODES[number]) => !n.faction || n.faction === player.faction;
 
-  // Section 2: Catapult sub-upgrade
-  const catapultUpgrade = TECH_NODES.filter(n => n.id === 'catapult_splash');
-  appendSection(techBody, 'Catapult Upgrade', undefined, catapultUpgrade, tech, player.aura, player.color, player.faction);
+  const siegeNodes = TECH_NODES.filter(n => own(n) && (n.id === 'agrar_siegecraft' || n.id === 'agrar_siegecraft_splash' || n.id === 'temple_mobile_siege_tech' || n.id === 'temple_mobile_siege_splash'));
+  appendSection(techBody, 'Siege', undefined, siegeNodes, tech, player.aura, player.color, player.faction);
 
-  // Section 3+: Branches
-  const branches = ['movement', 'stat_bonus', 'support'];
+  const heavyNodes = TECH_NODES.filter(n => own(n) && (n.id === 'agrar_heavy_armor' || n.id === 'agrar_heavy_knight_tech' || n.id === 'temple_warrior_rite' || n.id === 'temple_champion_rite'));
+  appendSection(techBody, 'Heavy Unit', undefined, heavyNodes, tech, player.aura, player.color, player.faction);
+
+  // Command — linear (not a branch pick-one); prereqs alone keep II gated
+  // behind I. Also the prereq for each faction's Heavy-unit tier 2 above.
+  const commandNodes = TECH_NODES.filter(n => n.id === 'command_1' || n.id === 'command_2');
+  appendSection(techBody, 'Command', undefined, commandNodes, tech, player.aura, player.color, player.faction);
+
+  // Branches — shared by both factions.
+  const branches = ['stat_bonus', 'support'];
   for (const branch of branches) {
     const nodes = TECH_NODES.filter(n => n.branch === branch);
     const meta = BRANCH_META[branch]!;
@@ -1783,13 +1820,12 @@ function renderTechTree(): void {
   }
 }
 
-// The art a tech card "stands for": the unlocked unit, the teleport portal, or
-// the catapult for its splash sub-upgrade. Rendered (team-coloured) the same way
-// as the build-card thumbnails, so the tech tree shows the actual game model.
+// The art a tech card "stands for": the unlocked unit, or the Catapult/Mobile
+// Siege model for its splash sub-upgrade. Rendered (team-coloured) the same
+// way as the build-card thumbnails, so the tech tree shows the actual model.
 function techNodeArt(node: typeof TECH_NODES[number], color: string, faction: FactionId | null): string | null {
   if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color, faction);
-  if (node.id === 'teleports') return getPortalThumbnail(color);
-  if (node.id === 'catapult_splash') return getUnitThumbnail('catapult', color, faction);
+  if (node.id === 'agrar_siegecraft_splash' || node.id === 'temple_mobile_siege_splash') return getUnitThumbnail('catapult', color, faction);
   return null;
 }
 
@@ -2117,28 +2153,17 @@ function handleSpawnBtn(type: UnitType): void {
   if (state.selectionMode !== 'site' || !state.selectedSiteId) return;
   if (!canAfford(state, type)) return;
   const structureId = state.selectedSiteId;
-  // Block spawning onto an occupied structure tile, with feedback.
-  const selStructure = getOwnedStructures(state, getCurrentPlayer(state).id).find(s => s.id === structureId);
-  if (selStructure && getUnitAt(state, selStructure.pos)) {
-    logCombat('Cannot spawn: a unit is standing on the structure');
-    return;
-  }
-  // MP: no local mutation runs, so flag the structure for auto-select once the
-  // server echoes back the spawned unit (see the state_update handler).
-  if (multiplayerMode) pendingSpawnSelectTempleId = structureId;
+  // §5 (phase 11) — recruiting only QUEUES a TrainingOrder now; it does NOT
+  // require (or create) a unit on the structure's tile immediately, so there
+  // is nothing to block here even if the tile is currently occupied.
   sendOrCall({ type: 'action_spawn', templeId: structureId, unitType: type }, () => {
     try {
       if (spawnUnit(state, structureId, type)) {
         const spawnPlayer = getCurrentPlayer(state);
-        logCombat(`Spawned ${unitDisplayName(type, spawnPlayer.faction)} for ${getUnitCost(type, spawnPlayer.faction)} aura`);
-        const structure = getOwnedStructures(state, getCurrentPlayer(state).id).find(s => s.id === structureId);
-        if (structure) {
-          const newUnit = getUnitAt(state, structure.pos);
-          if (newUnit) selectUnit(state, newUnit.id);   // show its move range at once
-        }
+        logCombat(`Queued ${unitDisplayName(type, spawnPlayer.faction)} for ${getUnitCost(type, spawnPlayer.faction)} aura — deploys next round`);
       }
     } catch (e: unknown) {
-      logCombat(e instanceof Error ? e.message : 'Cannot spawn unit');
+      logCombat(e instanceof Error ? e.message : 'Cannot recruit unit');
     }
   });
 }

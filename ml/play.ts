@@ -3,7 +3,7 @@ import { GameState } from '../src/types';
 import { applyMicro, cloneState, reset, isAlive, Micro } from './gameEnv';
 import { runHardAITurn, runAITurn } from '../src/ai';
 import { endTurn, canAfford, canResearch, canBuildTeleportPair,
-  getUnlockedUnits, getPopulationCap, getPopulationCount, getUnitAt,
+  getUnlockedUnits, getPopulationCap, getPopulationCount,
   getValidTeleportHexes, getValidTeleportHexesForOtherTemples, getOwnedStructures,
   getEffectiveRange, getEffectiveSpeed, getZocHexes, getPlayerVisible, isForestUnitRevealed, canStartFounding } from '../src/game';
 import { TECH_NODES, UnitType } from '../src/types';
@@ -64,11 +64,13 @@ export function botCandidates(s: GameState): Micro[] {
     for (const m of scored.slice(0, MOVES_PER_UNIT)) out.push({ action: 'move', params: { unitId: u.id, to: m.to } });
   }
 
-  // Recruit (few free structures × unlocked affordable types).
+  // Recruit (structures × unlocked affordable types). §5 (phase 11) — recruiting
+  // only QUEUES a TrainingOrder now; tile occupancy is checked at deployment
+  // time (resolveTrainingForPlayer), not here, so a structure with a unit
+  // standing on it is still a legal recruit target.
   if (getPopulationCount(s, pid) < getPopulationCap(s, pid)) {
     const unlocked = getUnlockedUnits(s.playerTech[pid]!, s.players[pid]?.faction);
     for (const structure of getOwnedStructures(s, pid)) {
-      if (getUnitAt(s, structure.pos)) continue;
       for (const type of unlocked) if (canAfford(s, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: structure.id } });
     }
   }

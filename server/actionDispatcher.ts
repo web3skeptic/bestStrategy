@@ -30,7 +30,7 @@ import {
   getPlayerVisible, isForestUnitRevealed,
   UNIT_STATS, HEALER_HEAL_AMOUNT, DAMAGE_BOOST_AMOUNT, RANGE_BOOST_AMOUNT,
   UNIT_CLASS,
-  chooseFaction, isFoundingRound, isAwaitingFactionReveal,
+  chooseFaction, isAwaitingFactionReveal,
   getOwnedStructures,
   startFarm, canStartFarm, getValidFarmHexes, buyDevotion,
   canBuildRoad, buildRoad,
@@ -41,11 +41,10 @@ import {
   mapRadiusForPlayers, neutralSiteCountForPlayers,
   HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE,
-  TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
 } from '../src/types';
 import {
-  SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_DISTANCE_FROM_CAPITAL, FARM_MIN_SPACING, CULTIVATION_RADIUS,
+  SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS, STARTING_ENERGY,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_MIN_SPACING, CULTIVATION_RADIUS,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -135,9 +134,8 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
     for (const h of reachable) actions.push({ type: 'move', to: h });
   }
 
-  // Attack actions — available unless already attacked, cantShootAfterMove+hasMoved,
-  // or it's still the Founding Round (no combat allowed — §5).
-  const canAttack = !isFoundingRound(state) && !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
+  // Attack actions — available unless already attacked, or cantShootAfterMove+hasMoved.
+  const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
   if (canAttack) {
     const effectiveRange = getEffectiveRange(state, unit);
     const visible = getPlayerVisible(state, unit.playerId);
@@ -180,7 +178,7 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   if (unit.type === 'founder') {
     const player = state.players.find(p => p.id === unit.playerId);
     if (player?.faction === 'agrar') {
-      const validHexes = getValidFarmHexes(state, unit.playerId);
+      const validHexes = getValidFarmHexes(state, unit);
       for (const hex of validHexes) {
         if (canStartFarm(state, unit, hex)) actions.push({ type: 'build-farm', targetPos: hex });
       }
@@ -267,7 +265,6 @@ export function buildRulesPayload(): Record<string, unknown> {
   const factionRosters: Record<string, unknown> = {};
   for (const [faction, roster] of Object.entries(FACTION_UNITS)) {
     factionRosters[faction] = roster
-      .filter(u => u.slot !== 'founder') // Builder/Acolyte: display-name-only, never recruitable — see foundingRound.factions below
       .map(u => ({
         slot: u.slot,
         name: u.displayName,
@@ -288,7 +285,7 @@ export function buildRulesPayload(): Record<string, unknown> {
     factions: factionRosters,
     techTree,
     strategicSites: {
-      note: 'Temple-only expansion (phase 10 correction — Agrar never founds a site, see economy.agrarFarms instead). A neutral or ruined site is founded by an Acolyte into an actual Temple over a multi-turn process — see the "found" action and the foundingRound/structures blocks below.',
+      note: 'Temple-only expansion (phase 10 correction — Agrar never founds a site, see economy.agrarFarms instead). A neutral or ruined site is founded by an Acolyte into an actual Temple over a multi-turn process — see the "found" action and the openingFlow/structures blocks below.',
       establishCost: SITE_ESTABLISH_COST,
       states: ['neutral', 'foundingTemple', 'temple', 'ruins'],
       foundingRules: [
@@ -314,9 +311,10 @@ export function buildRulesPayload(): Record<string, unknown> {
         cost: AGRAR_FARM_COST,
         incomePerFarm: AGRAR_FARM_INCOME,
         maxActiveFarms: MAX_ACTIVE_FARMS,
-        placement: `A new Farm must be within ${FARM_DISTANCE_FROM_CAPITAL} hexes of the Capital OR an existing ACTIVE Farm, but never within ${FARM_MIN_SPACING} hexes of any other Farm (founding or active) — Agrar spreads as a network, not a cluster.`,
+        placement: `A new Farm must be a direct hex NEIGHBOR of the Builder's current position — no distance-chain requirement to the Capital or any other Farm. It must be empty/passable terrain, not a sacred site/Capital/structure/unit, never within ${FARM_MIN_SPACING} hexes of another Farm (founding or active), and never within ${FARM_MIN_SPACING} hexes of the Agrar Capital. The Builder's own movement is what limits expansion — see the "build-farm" action.`,
+        constructionInterruption: 'A Farm still under construction fails outright (removed, no refund) if by the time it resolves the Builder has been killed, is no longer adjacent to (or standing on) the construction hex, or an enemy now occupies the hex.',
         cultivation: {
-          note: 'Every ACTIVE Farm projects cultivated territory onto its own hex + its 6 neighbours (CULTIVATION_RADIUS). A neutral or ruined strategic site inside an ENEMY Agrar player\'s cultivated territory cannot be founded/rebuilt by Temple — this is Agrar\'s area-denial tool, NOT combat, vision, movement, or a buff (see foundingRound/strategicSites for the founding-block itself).',
+          note: 'Every ACTIVE Farm projects cultivated territory onto its own hex + its 6 neighbours (CULTIVATION_RADIUS). A neutral or ruined strategic site inside an ENEMY Agrar player\'s cultivated territory cannot be founded/rebuilt by Temple — this is Agrar\'s area-denial tool, NOT combat, vision, movement, or a buff (see strategicSites for the founding-block itself).',
           radius: CULTIVATION_RADIUS,
         },
       },
@@ -333,16 +331,16 @@ export function buildRulesPayload(): Record<string, unknown> {
       populationCap: { tiers: COMMAND_TIERS, note: 'Starts at COMMAND_TIERS.start; the "command_1"/"command_2" techs (linear, II requires I) raise it to commandI then commandII.' },
       populationCost: 'Each unit spends its faction def\'s commandCost against the cap (see the `factions` block above) — NOT a flat 1 per unit. Heavier units (cavalry/heavy) cost more of the cap than light ones.',
       productionSlots: {
-        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit occupies one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds — the unit itself still appears immediately, only the SLOT is on cooldown (frees up at the start of that player\'s next round, same timing convention as founding). Both factions start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS, reached via different territory: Agrar centralizes all training at its Capital and scales slots with active Farm count (2 Farms -> +1, 4 Farms -> +1 more); Temple distributes production — each active owned Temple site itself grants +1 slot AND is a valid recruiting location (see recruit below), not just the Capital.',
+        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit pays its cost immediately and enters a training queue, occupying one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds. The unit does NOT exist on the battlefield yet — it deploys at the start of the recruiting player\'s NEXT round (at the structure that trained it), which also frees the slot. If that structure\'s tile is occupied at that moment, the completed unit stays queued (pending deployment) rather than being lost — nothing is destroyed or refunded. Both factions start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS, reached via different territory: Agrar centralizes all training at its Capital and scales slots with active Farm count (2 Farms -> +1, 4 Farms -> +1 more); Temple distributes production — each active owned Temple site itself grants +1 slot AND is a valid recruiting/deployment location (see recruit below), not just the Capital.',
         baseSlots: PRODUCTION_BASE_SLOTS,
         maxSlots: PRODUCTION_MAX_SLOTS,
         trainingRounds: UNIT_TRAINING_ROUNDS,
       },
     },
     roads: {
-      note: 'Agrar-only physical road tiles (phase 7, §23-25). Only a Builder (a "founder"-type unit belonging to an Agrar player) can build one, on the hex it\'s currently standing on — consumes its whole activation, same as founding. Temple has no equivalent way to build one.',
+      note: 'Agrar-only physical road tiles (phase 7, §23-25; movement bonus restricted to Agrar phase 11 §26). Only a Builder (a "founder"-type unit belonging to an Agrar player) can build one, on the hex it\'s currently standing on — consumes its whole activation, same as founding. Temple has no equivalent way to build one.',
       costPerHex: ROAD_COST_PER_HEX,
-      movementBonus: { amount: ROAD_MOVEMENT_BONUS, note: 'Applies to WHOEVER is standing on the road, not just its owner\'s units — it\'s a real road, not a faction-locked buff.' },
+      movementBonus: { amount: ROAD_MOVEMENT_BONUS, note: 'Applies to Agrar units ONLY (only Agrar can build a Road in the first place). A Temple unit moving over an Agrar Road receives no bonus — it treats the tile as normal terrain.' },
       pillage: {
         note: 'Any unit that ends its move on a road it does NOT own destroys it on arrival — no separate action needed, it just happens as a side effect of "move". A pillaged hex is cheaper to rebuild than to build fresh.',
         rebuildCost: ROAD_PILLAGE_REBUILD_COST,
@@ -374,10 +372,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       note: 'Support units affect all allies within SUPPORT_RANGE hexes. Healer heals at start of owning player turn.',
     },
     teleports: {
-      buildCost: TELEPORT_BUILD_COST,
-      radius: TELEPORT_RADIUS,
-      maxPerTemple: TELEPORT_MAX_PER_TEMPLE,
-      note: 'Requires "teleports" tech. Each portal must be within radius of a different owned structure (Capital or completed Temple — Farms are not valid anchors). Unit stepping on portal teleports to free neighbour of partner portal.',
+      note: 'Removed (phase 11 §32). There is no "teleports" tech anymore, so canBuildTeleportPair always returns false — fully dormant, not exposed in UI, not constructible.',
     },
     combat: {
       deterministic: true,
@@ -405,36 +400,35 @@ export function buildRulesPayload(): Record<string, unknown> {
       ],
       availableActions: [
         'move — move a unit to a reachable hex',
-        'attack — attack an enemy unit within range (blocked during the Founding Round)',
+        'attack — attack an enemy unit within range (blocked during the pre-game faction-reveal pause)',
         'attack-structure — { unitId, targetPos } attack an enemy Capital/Temple/Farm within range (same restriction). Structures never revenge.',
-        'recruit — spawn a unit at an owned structure (blocked during Founding Round / faction-reveal pause) — for Agrar this is the Capital ONLY (centralized production); for Temple it\'s the Capital plus each owned Temple site (distributed production) — see command.productionSlots.',
+        'recruit — { unitType, templeId (target structure id) } pay the unit\'s cost and queue it for training (blocked during the pre-game faction-reveal pause) — for Agrar this is the Capital ONLY (centralized production); for Temple it\'s the Capital plus each owned Temple site (distributed production) — see command.productionSlots. The unit does NOT appear immediately; it deploys at the start of the recruiting player\'s next round.',
         'found — { unitId } start founding at the neutral/ruined site the Acolyte is standing on (same restriction, Temple only) — see strategicSites above.',
-        'build-farm — { unitId, pos } the Builder starts building a Farm at a valid hex (same restriction) — Agrar only, see economy.agrarFarms above. Completes next round like founding.',
+        'build-farm — { unitId, pos } the Builder starts building a Farm at a valid adjacent hex (same restriction) — Agrar only, see economy.agrarFarms above. Completes next round like founding.',
         'buy-devotion — { templeId (owned Temple id) } purchase the next Devotion level on that Temple (same restriction) — Temple faction only, see economy above.',
         'build-road — { unitId } the Builder builds a road on its current hex (same restriction) — Agrar faction only, see roads above.',
-        'research — research a tech (same restriction)',
-        'build-teleport — build a teleport portal pair (same restriction)',
-        'end-turn — end the current player\'s turn (blocked only during the faction-reveal pause)',
+        'research — research a tech (same restriction). A tech node with a `faction` set (see techTree) may only be researched by a player of that faction.',
+        'end-turn — end the current player\'s turn (blocked only during the pre-game faction-reveal pause)',
         'resign — concede the game, opponent wins (always available)',
-        'choose-faction — { faction: "agrar" | "temple" }. Only legal once Round 1 has ended for BOTH players; not tied to turn order — either player may submit any time. Secret until both have chosen, then reveals simultaneously and converts Round-1 Warrior/Archer/Founder in place.',
+        'choose-faction — { faction: "agrar" | "temple" }. Legal immediately at match start, before any other action, for either player independently — see openingFlow below.',
       ],
       constraints: [
         'A unit can move then attack, or just attack, or just move — but not attack then move.',
         'Attacking (unit or structure) also sets hasMoved=true.',
-        'A structure may recruit MULTIPLE units per turn — there is no per-structure spawn gate. Successive spawns are throttled by aura, the population cap (commandCost-weighted, see command block), the player\'s overall production-slot pool (see command.productionSlots), and tile occupancy (a freshly spawned unit stands on the structure and must move off before it can spawn again).',
+        'A structure may have MULTIPLE recruit orders queued against it over time — there is no per-structure spawn gate. What actually caps recruiting is aura, the population cap (commandCost-weighted, see command block — queued-but-undeployed orders count against it too), and the player\'s overall production-slot pool (see command.productionSlots).',
         'Founding is a separate action from move/attack — it consumes the founder\'s WHOLE activation (both move and attack) the instant it starts.',
       ],
     },
-    foundingRound: {
-      note: 'Round 1 (turnNumber === 1) is a neutral Founding Round — move-only scouting for both players, no combat/recruit/research/capture/build. Once BOTH players have ended turn 1, the match pauses (turnNumber becomes 2 but nothing else is legal) until EACH player independently submits choose-faction. The instant both have chosen, they reveal simultaneously and Round-1 Warrior/Archer/Founder units convert to that faction\'s stats (Founder becomes Builder/Agrar or Acolyte/Temple — display name only, stats are identical). From then on, every "recruit" draws from that player\'s full faction roster — see the top-level `factions` block for the real per-faction costs/stats/unlock timing.',
+    openingFlow: {
+      note: 'Phase 11 correction — there is no more Founding Round, no starting units, and no move-only scouting phase. Faction choice happens immediately, secretly and simultaneously, before any gameplay: each player independently submits choose-faction any time after match start; once BOTH have chosen, they reveal simultaneously and Round 1 begins with each player owning only their Capital, STARTING_ENERGY aura, PRODUCTION_BASE_SLOTS production slots, and ZERO units. The player\'s first units — including the Builder/Acolyte itself — are part of the opening strategy, recruited like any other unit (see the `recruit` action and command.productionSlots).',
       factions: ['agrar', 'temple'],
     },
     winConditions: [
       'Destroy the enemy Capital (hp <= 0) → immediate win. This is the ONLY normal victory condition — there is no more "own every site" check and no elimination-by-attrition fallback; a Capital is permanent until destroyed.',
     ],
     startingConditions: {
-      startingAura: 2,
-      startingUnits: '1 Warrior + 1 Archer + 1 Founder per player, placed near their Capital (Founding Round loadout — see foundingRound above). Faction-flavored recruiting begins only after the faction reveal.',
+      startingAura: STARTING_ENERGY,
+      startingUnits: 'Zero. Every unit, including the Builder/Acolyte, is recruited — see openingFlow above and the top-level `factions` block for per-faction costs/stats/unlock timing.',
       siteLayout: 'One permanent Capital per player + neutralSiteCountForPlayers(N) shared neutral strategic sites (2p → 2 Capitals + 2 neutral sites), placed randomly each game with a minimum separation and maximized spread.',
       mapScalesWithPlayers: true,
       mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2); 1v1 (the only supported online match size) is a fixed radius 5',
@@ -481,7 +475,7 @@ export function executeAction(
 
   // Turn guard — resign is allowed even on the opponent's turn (concede
   // early); choose-faction is allowed regardless of turn order (both players
-  // commit independently once Round 1 ends — see §5-6).
+  // commit independently right at match start, before Round 1 begins).
   if (action !== 'resign' && action !== 'choose-faction' && state.currentPlayerIndex !== playerSlot) {
     return fail(
       state,

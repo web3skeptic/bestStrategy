@@ -36,7 +36,7 @@ export function stateSig(s: GameState): string {
   const tp = s.teleportBuildings.map(b =>
     `${b.builtByPlayerId}:${b.templeId}:${b.pos.q},${b.pos.r}:${b.pairedId ?? ''}`
   ).sort().join('|');
-  const prod = s.productionOrders.map(o => `${o.playerId}:${o.freeAtRound}`).sort().join('|');
+  const prod = s.trainingQueue.map(o => `${o.playerId}:${o.unitType}:${o.structureId}:${o.readyAtRound}`).sort().join('|');
   return `U[${units}]T[${temples}]P[${players}]R[${tech}]X[${tp}]Q[${prod}]#${s.phase}`;
 }
 

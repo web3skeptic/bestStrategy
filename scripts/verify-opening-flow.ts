@@ -1,12 +1,13 @@
-// Integration test for the Founding Round + secret simultaneous faction
-// reveal (phase 2 of the "Asymmetric Tribes v0.2" redesign). Spins up a real
-// server instance (isolated temp DB, ephemeral port) and drives two real
-// WebSocket clients through: founding round restrictions -> both end turn 1
-// -> the reveal pause -> secret choose-faction -> simultaneous reveal ->
-// post-reveal stat conversion. Asserts the server NEVER leaks an unrevealed
-// faction pick to the opponent's client.
+// Integration test for the phase 11 opening flow: immediate secret
+// simultaneous faction reveal (no Founding Round), zero starting units, and
+// deferred (training-queue) recruitment. Spins up a real server instance
+// (isolated temp DB, ephemeral port) and drives two real WebSocket clients
+// through: match start -> zero units/faction=null for both -> pre-reveal
+// action rejection -> secret choose-faction -> simultaneous reveal -> a
+// recruit that does NOT appear on the battlefield immediately -> the unit
+// deploying at the start of the recruiting player's next round.
 //
-// Run with: npx tsx scripts/verify-founding-round.ts
+// Run with: npx tsx scripts/verify-opening-flow.ts
 
 import { randomBytes } from 'crypto';
 import path from 'path';
@@ -26,16 +27,7 @@ function check(name: string, cond: boolean, detail?: string): void {
 
 interface Client {
   send: (m: object) => void;
-  // Strict FIFO per message type: only ever returns a message that arrived
-  // AFTER this call (or was queued from earlier and not yet consumed) —
-  // never re-matches an already-consumed message. Rejects after timeoutMs so
-  // a protocol regression fails loudly instead of hanging the test forever.
   next: (type: string, timeoutMs?: number) => Promise<any>;
-  // Wait for whichever of several message types arrives first. Registers a
-  // SINGLE handler across all requested type queues and deregisters it from
-  // every queue the instant it fires — unlike `Promise.race([next(a), next(b)])`,
-  // which leaves the losing call's waiter permanently registered and can
-  // resolve a LATER unrelated call to the same type with stale data.
   nextEither: (types: string[], timeoutMs?: number) => Promise<any>;
   close: () => void;
 }
@@ -115,39 +107,30 @@ async function main(): Promise<void> {
   const gsA = await A.next('game_start');
   const gsB = await B.next('game_start');
 
-  check('game starts at turnNumber 1 (Founding Round)', gsA.state.turnNumber === 1);
+  // ── §3, §45 — no Founding Round: match starts at turnNumber 1 already
+  // awaiting the (immediate) faction reveal, zero units for anyone. ──
+  check('game starts at turnNumber 1', gsA.state.turnNumber === 1);
   check('both players start with faction=null', gsA.state.players.every((p: any) => p.faction === null));
-  const startUnitsA = gsA.state.units.filter((u: any) => u.playerId === gsA.playerSlot);
-  check('each player starts with exactly 3 units (Warrior+Archer+Founder)', startUnitsA.length === 3, `got ${startUnitsA.length}`);
-  check('starting loadout is warrior+archer+founder', ['warrior', 'archer', 'founder'].every(t => startUnitsA.some((u: any) => u.type === t)));
+  check('player A starts with ZERO units', gsA.state.units.filter((u: any) => u.playerId === gsA.playerSlot).length === 0);
+  check('player B starts with ZERO units', gsB.state.units.filter((u: any) => u.playerId === gsB.playerSlot).length === 0);
+  check('each player has exactly one Capital', gsA.state.capitals.length === 2);
+  check('starting aura matches STARTING_ENERGY', gsA.state.players.every((p: any) => p.aura === 6), JSON.stringify(gsA.state.players.map((p: any) => p.aura)));
 
   const slotA = gsA.playerSlot as number;
   const slotB = gsB.playerSlot as number;
   const clientBySlot: Record<number, Client> = { [slotA]: A, [slotB]: B };
 
-  // ── Founding Round restriction: recruit must be rejected ──
+  // ── Pre-reveal restriction: recruit must be rejected, end-turn is a no-op ──
   const firstActingSlot = gsA.state.currentPlayerIndex;
   const firstActing = clientBySlot[firstActingSlot]!;
   const myCapital = gsA.state.capitals.find((c: any) => c.playerId === firstActingSlot);
   firstActing.send({ type: 'action', action: 'recruit', params: { unitType: 'warrior', templeId: myCapital.id } });
   const recruitErr = await firstActing.next('action_error');
-  check('recruit is rejected during the Founding Round', !!recruitErr.message);
+  check('recruit is rejected before the faction reveal', !!recruitErr.message);
 
-  // ── End turn 1 for both players ──
   firstActing.send({ type: 'action', action: 'end-turn', params: {} });
-  await Promise.all([A.next('state_update'), B.next('state_update')]);
-  const secondActing = firstActing === A ? B : A;
-  secondActing.send({ type: 'action', action: 'end-turn', params: {} });
-  const [su1A, su1B] = await Promise.all([A.next('state_update'), B.next('state_update')]);
-
-  check('turnNumber becomes 2 once both end turn 1', su1A.state.turnNumber === 2, `got ${su1A.state.turnNumber}`);
-  check('both clients agree on turnNumber', su1A.state.turnNumber === su1B.state.turnNumber);
-
-  // ── Awaiting-reveal pause: move must be rejected for everyone ──
-  const someUnit = su1A.state.units.find((u: any) => u.playerId === slotA);
-  A.send({ type: 'action', action: 'move', params: { unitId: someUnit.id, to: { q: someUnit.pos.q + 1, r: someUnit.pos.r } } });
-  const moveErr = await A.next('action_error');
-  check('move is rejected during the faction-reveal pause', !!moveErr.message);
+  const [noopA, noopB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
+  check('end-turn is a no-op before the reveal (turnNumber unchanged)', noopA.state.turnNumber === 1 && noopB.state.turnNumber === 1);
 
   // ── A chooses a faction. B must NOT see it yet. ──
   A.send({ type: 'action', action: 'choose-faction', params: { faction: 'agrar' } });
@@ -159,13 +142,10 @@ async function main(): Promise<void> {
   check('B does NOT see A\'s unrevealed faction over the wire', aSeenByB === null, `got ${aSeenByB}`);
   check('A does NOT see B\'s (still unset) faction as anything but null', bSeenByA === null);
 
-  // Duplicate submission of the SAME faction is a no-op success (idempotent) —
-  // still produces a state_update broadcast (not an error).
+  // Duplicate submission of the SAME faction is a no-op success (idempotent).
   A.send({ type: 'action', action: 'choose-faction', params: { faction: 'agrar' } });
   const dupMsg = await A.nextEither(['state_update', 'action_error']);
   check('resubmitting the SAME faction is idempotent (not an error)', dupMsg.type === 'state_update', `got ${dupMsg.type}`);
-  // The idempotent resubmit is still a successful action -> broadcastToBoth,
-  // so B also receives (and must drain) a copy before the next real step.
   if (dupMsg.type === 'state_update') await B.next('state_update');
 
   // A different faction after already locking is rejected.
@@ -182,22 +162,32 @@ async function main(): Promise<void> {
   check('after both choose, A\'s client sees A=agrar', aFactionFinalA === 'agrar');
   check('after both choose, B\'s client ALSO sees A=agrar (revealed)', aFactionFinalB === 'agrar');
   check('after both choose, A\'s client sees B=temple (revealed)', bFactionFinalA === 'temple');
+  check('Round 1 begins right after reveal — still turnNumber 1', ruA.state.turnNumber === 1, `got ${ruA.state.turnNumber}`);
+  check('still zero units for both players right after reveal', ruA.state.units.length === 0);
 
-  // ── Conversion: warrior/archer stats now match the faction tables ──
-  const agrarWarrior = ruA.state.units.find((u: any) => u.playerId === slotA && u.type === 'warrior');
-  const templeWarrior = ruA.state.units.find((u: any) => u.playerId === slotB && u.type === 'warrior');
-  check('Agrar warrior converted to Agrar stats (atk=9, spd=1)', agrarWarrior.stats.attack === 9 && agrarWarrior.stats.speed === 1, JSON.stringify(agrarWarrior.stats));
-  check('Temple warrior converted to Temple stats (atk=10, spd=2)', templeWarrior.stats.attack === 10 && templeWarrior.stats.speed === 2, JSON.stringify(templeWarrior.stats));
-
-  // ── Match resumes: end-turn / move now legal again ──
+  // ── §5 — recruit queues, does NOT create a unit immediately ──
   const nowActingSlot = ruA.state.currentPlayerIndex;
   const nowActing = clientBySlot[nowActingSlot]!;
+  const nowActingFaction = ruA.state.players.find((p: any) => p.id === nowActingSlot).faction;
+  const actingCapital = ruA.state.capitals.find((c: any) => c.playerId === nowActingSlot);
+  nowActing.send({ type: 'action', action: 'recruit', params: { unitType: 'founder', templeId: actingCapital.id } });
+  const [postRecruitA, postRecruitB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
+  check('the recruited unit does NOT exist on the battlefield immediately', postRecruitA.state.units.filter((u: any) => u.playerId === nowActingSlot).length === 0);
+  check('the recruiting player was charged the Builder/Acolyte cost (2⚡)', postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 4, `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
+
+  // ── End this player's turn, then the opponent's — the order should deploy
+  // at the start of the RECRUITING player's next round (their turn comes
+  // back around after the opponent's). ──
   nowActing.send({ type: 'action', action: 'end-turn', params: {} });
-  const resumed = await Promise.race([
-    Promise.all([A.next('state_update'), B.next('state_update')]).then(() => 'ok'),
-    new Promise(r => setTimeout(() => r('timeout'), 3000)),
-  ]);
-  check('play resumes normally after reveal (end-turn succeeds)', resumed === 'ok');
+  await Promise.all([A.next('state_update'), B.next('state_update')]);
+  const otherActing = nowActing === A ? B : A;
+  otherActing.send({ type: 'action', action: 'end-turn', params: {} });
+  const [deployA, deployB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
+  const deployedUnit = deployA.state.units.find((u: any) => u.playerId === nowActingSlot);
+  check('the Builder/Acolyte deploys at the start of the recruiting player\'s next round', !!deployedUnit, `units now: ${JSON.stringify(deployA.state.units.map((u: any) => ({ p: u.playerId, t: u.type })))}`);
+  check('the deployed unit is the correct type (founder)', deployedUnit?.type === 'founder');
+  check('both clients agree on the deployed unit', deployB.state.units.some((u: any) => u.id === deployedUnit?.id));
+  check('the deployed unit can act immediately (hasMoved/hasAttacked false)', deployedUnit && !deployedUnit.hasMoved && !deployedUnit.hasAttacked);
 
   A.close(); B.close();
   console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);

@@ -6,6 +6,7 @@
 import {
   createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, getRoadAt,
   getEffectiveSpeed, selectUnit, moveUnit, getPlayerCapital, getStructureAt,
+  createUnit,
 } from '../src/game';
 import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST } from '../src/factions';
 import { hexNeighbors, hexEqual, hexKey } from '../src/hex';
@@ -17,15 +18,23 @@ function check(name: string, cond: boolean, detail?: string): void {
   else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-// A fresh 2-player game, fast-forwarded past the Founding Round and faction
-// reveal (Agrar=P0, Temple=P1), with generous aura for testing.
+// A fresh 2-player game with factions chosen immediately (phase 11 — no more
+// Founding Round to skip past), with generous aura for testing. These tests
+// exercise Road mechanics directly, not the recruit-then-wait training queue
+// itself (see verify-opening-flow.ts for that) — place a Builder/Acolyte + a
+// Warrior for each player straight onto the board.
 function setup(): GameState {
   const state = createGameState();
-  endTurn(state);
-  endTurn(state);
   chooseFaction(state, 0, 'agrar');
   chooseFaction(state, 1, 'temple');
   for (const p of state.players) p.aura = 100;
+  for (const player of state.players) {
+    const capital = state.capitals.find(c => c.playerId === player.id)!;
+    const [n0, n1] = hexNeighbors(capital.pos);
+    const tech = state.playerTech[player.id];
+    state.units.push(createUnit('founder', player.id, n0!, tech, player.faction));
+    state.units.push(createUnit('warrior', player.id, n1!, tech, player.faction));
+  }
   return state;
 }
 
@@ -128,8 +137,8 @@ console.log('\n=== Cost + activation (§23) ===');
   check('getStructureAt confirms the Capital occupies that hex', getStructureAt(state, cap.pos)?.kind === 'capital');
 }
 
-// ── Movement bonus (§23) — applies to WHOEVER stands on it ──
-console.log('\n=== Movement bonus applies to any unit, not just the owner (§23) ===');
+// ── Movement bonus (§23, phase 7; Agrar-only phase 11 §26) ──
+console.log('\n=== Movement bonus applies to Agrar units ONLY (§26) ===');
 {
   const state = setup();
   const builder = primeBuilder(state, 0);
@@ -141,12 +150,12 @@ console.log('\n=== Movement bonus applies to any unit, not just the owner (§23)
   agrarWarrior.pos = { q: roadPos.q + 50, r: roadPos.r + 50 }; // off any road
   check('off-road speed is the base stat', getEffectiveSpeed(state, agrarWarrior) === baseSpeed);
   agrarWarrior.pos = { ...roadPos };
-  check('on the OWNER\'s road, speed gets +ROAD_MOVEMENT_BONUS', getEffectiveSpeed(state, agrarWarrior) === baseSpeed + ROAD_MOVEMENT_BONUS);
+  check('an Agrar unit on the road gets +ROAD_MOVEMENT_BONUS', getEffectiveSpeed(state, agrarWarrior) === baseSpeed + ROAD_MOVEMENT_BONUS);
 
   const templeWarrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
   const templeBaseSpeed = templeWarrior.stats.speed;
   templeWarrior.pos = { ...roadPos };
-  check('an ENEMY unit also gets the bonus while standing on the road (it\'s a real road)', getEffectiveSpeed(state, templeWarrior) === templeBaseSpeed + ROAD_MOVEMENT_BONUS);
+  check('a Temple unit standing on the SAME road gets NO bonus — treats it as normal terrain (§26)', getEffectiveSpeed(state, templeWarrior) === templeBaseSpeed);
 }
 
 // ── Pillage (§25) ──

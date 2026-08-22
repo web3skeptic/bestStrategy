@@ -197,7 +197,7 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
       playerId: i,
       researched: pt.researched,
     })),
-    productionOrders: s.productionOrders.map(o => ({ playerId: o.playerId, freeAtRound: o.freeAtRound })),
+    trainingQueue: s.trainingQueue.map(o => ({ playerId: o.playerId, unitType: o.unitType, structureId: o.structureId, readyAtRound: o.readyAtRound })),
     winner: s.winner ? { id: s.winner.id, name: s.winner.name } : null,
   };
 

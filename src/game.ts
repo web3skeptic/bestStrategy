@@ -1,6 +1,6 @@
 import {
   GameState, Unit, UnitStats, UnitType, Player, HexCoord,
-  StrategicSite, StrategicSiteState, FoundingProgress, Capital, Farm, Road,
+  StrategicSite, StrategicSiteState, FoundingProgress, Capital, Farm, Road, TrainingOrder,
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
@@ -16,7 +16,7 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_DISTANCE_FROM_CAPITAL, FARM_MIN_SPACING,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_MIN_SPACING,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -100,16 +100,23 @@ const RANGE_BOOSTER_STATS: UnitStats = {
   range: 0, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
-// The Founding Round starter (§6). Identical stats regardless of eventual
-// faction — becomes "Builder" (Agrar) or "Acolyte" (Temple) in display only
-// once the player's faction is revealed (see factionDisplayName in this file).
+// The Builder/Acolyte base stats (§5). Identical regardless of faction — it's
+// "Builder" (Agrar) or "Acolyte" (Temple) in display only (see
+// founderDisplayName in this file); an ordinary recruitable unit like any
+// other, not a special starting-only one.
 const FOUNDER_STATS: UnitStats = {
   maxHp: 12, attack: 5, defense: 3, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
-export const HEALER_HEAL_AMOUNT = 5;
-export const DAMAGE_BOOST_AMOUNT = 5;
+// §27 (phase 11 correction): +2 at distance 1, +1 at distance 2 (via
+// supportFalloffAmount's built-in half-at-range-2 falloff) — the old flat +5
+// was far too strong. Same-type support effects never STACK (two Healers
+// near the same ally don't add up) — see getSupportBoostsForUnit and the
+// healer heal-application loop in endTurn, both of which take the max
+// contribution across allies of the same support type, not a sum.
+export const HEALER_HEAL_AMOUNT = 2;
+export const DAMAGE_BOOST_AMOUNT = 2;
 export const RANGE_BOOST_AMOUNT = 1;
 
 export const UNIT_STATS: Record<UnitType, UnitStats> = {
@@ -127,9 +134,10 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
 
 // ── Tech helpers ──
 
-// Fallback set for when no faction is known yet (e.g. the Founding Round,
-// before reveal — recruiting itself is blocked then by isMatchSetupRestricted,
-// so this only matters for tooling that calls getUnlockedUnits pre-reveal).
+// Fallback set for when no faction is known yet (phase 11: before both
+// players reveal, right at the start of the match — recruiting itself is
+// blocked then by isMatchSetupRestricted, so this only matters for tooling
+// that calls getUnlockedUnits pre-reveal).
 export const DEFAULT_UNLOCKED_UNITS: UnitType[] = ['warrior', 'archer', 'horserider'];
 
 // §39 — once a player's faction is known, their early-unlock set (see
@@ -157,10 +165,9 @@ function cloneStats(base: UnitStats): UnitStats {
 
 function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): UnitStats {
   const r = tech.researched;
-  if (r.has('roads')) stats.speed += 1;
   if (r.has('infantry_move') && (type === 'warrior' || type === 'spearsman')) stats.speed += 1;
   if (r.has('longrange_hp') && (type === 'archer' || type === 'catapult')) stats.maxHp += 5;
-  if (r.has('catapult_splash') && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.4; }
+  if ((r.has('agrar_siegecraft_splash') || r.has('temple_mobile_siege_splash')) && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.4; }
   if (r.has('horse_sight') && (type === 'horserider' || type === 'heavyknight')) stats.vision += 1;
   return stats;
 }
@@ -173,8 +180,9 @@ function factionUnitDef(faction: FactionId, type: UnitType): FactionUnitDef | un
 
 // Overwrite a unit's combat stats with its faction's flavor of the same base
 // slot (§37/§38). Founder deliberately excluded — Builder/Acolyte are
-// mechanically identical, display-name-only (§6, see unitDisplayName). No-op
-// for any other type without a faction-specific entry.
+// mechanically identical between factions, display-name-only (§4-6, see
+// unitDisplayName) even though phase 11 makes both ordinarily recruitable.
+// No-op for any other type without a faction-specific entry.
 function applyFactionToStats(stats: UnitStats, type: UnitType, faction: FactionId | null | undefined): UnitStats {
   if (!faction || type === 'founder') return stats;
   const def = factionUnitDef(faction, type);
@@ -190,7 +198,7 @@ function applyFactionToStats(stats: UnitStats, type: UnitType, faction: FactionI
 
 // Faction-flavored recruit cost (§37/§38 — e.g. Agrar's Knight costs more
 // than Temple's Raider). Falls back to the universal UNIT_COSTS baseline for
-// founder (never recruitable) or when no faction is known yet.
+// founder (identical cost either faction anyway) or when no faction is known yet.
 export function getUnitCost(type: UnitType, faction: FactionId | null | undefined): number {
   if (faction && type !== 'founder') {
     const def = factionUnitDef(faction, type);
@@ -202,8 +210,8 @@ export function getUnitCost(type: UnitType, faction: FactionId | null | undefine
 // Faction-flavored display name for a recruitable unit slot (e.g. 'spearsman'
 // -> "Pikeman" for Agrar, "Spearsman" for Temple). Falls back to the generic
 // engine name pre-reveal. Founder has its own dedicated helper (see
-// founderDisplayName) since it's never recruitable and handled separately
-// throughout the UI.
+// founderDisplayName) since its display name is what actually differs
+// between factions, not its stats — used throughout the UI.
 export function unitDisplayName(type: UnitType, faction: FactionId | null | undefined): string {
   if (faction) {
     const def = factionUnitDef(faction, type);
@@ -222,8 +230,7 @@ const GENERIC_UNIT_NAMES: Record<UnitType, string> = {
  * Rebuild a living unit's stats from base + currently-researched tech +
  * (if revealed) its owner's faction flavor. Used by `researchTech()` to
  * retroactively apply tech effects to units that were spawned before the
- * tech was researched, and by `chooseFaction()` to convert Round-1 neutral
- * units the instant both players reveal.
+ * tech was researched.
  *
  * Idempotent — always starts from `UNIT_STATS[unit.type]`, so calling multiple
  * times never double-applies. Preserves current HP (and clamps it to the new
@@ -259,7 +266,11 @@ export function getCounters(): [number, number, number, number] {
   return [unitIdCounter, siteIdCounter, teleportIdCounter, farmIdCounter];
 }
 
-function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech, faction?: FactionId | null): Unit {
+// Exported for test scripts (scripts/verify-*.ts) that need to place a unit
+// directly for setup convenience, bypassing the real recruit-then-wait
+// training-queue flow (spawnUnit/resolveTrainingForPlayer) that live play
+// always goes through.
+export function createUnit(type: UnitType, playerId: number, pos: HexCoord, tech?: PlayerTech, faction?: FactionId | null): Unit {
   const stats = cloneStats(UNIT_STATS[type]);
   if (tech) applyTechToStats(stats, type, tech);
   applyFactionToStats(stats, type, faction);
@@ -528,6 +539,9 @@ export function supportFalloffAmount(base: number, dist: number): number {
   return 0;
 }
 
+// §27 — same-type support effects never stack: two Drummers/Chanters near
+// the same unit don't add up to +4, they just extend coverage. Each support
+// type's contribution is the BEST single nearby booster, not a sum.
 export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageBonus: number; rangeBonus: number } {
   let damageBonus = 0;
   let rangeBonus = 0;
@@ -535,11 +549,11 @@ export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageB
     if (ally.hp <= 0 || ally.playerId !== unit.playerId || ally.id === unit.id) continue;
     const dist = hexDistance(ally.pos, unit.pos);
     if (ally.type === 'damageBooster') {
-      damageBonus += supportFalloffAmount(DAMAGE_BOOST_AMOUNT, dist);
+      damageBonus = Math.max(damageBonus, supportFalloffAmount(DAMAGE_BOOST_AMOUNT, dist));
     } else if (ally.type === 'rangeBooster') {
       // Range boost is binary within a tight radius — a fractional range bonus
       // makes no sense, so no falloff: full +RANGE within RANGE_BOOST_RADIUS.
-      if (dist <= RANGE_BOOST_RADIUS) rangeBonus += RANGE_BOOST_AMOUNT;
+      if (dist <= RANGE_BOOST_RADIUS) rangeBonus = Math.max(rangeBonus, RANGE_BOOST_AMOUNT);
     }
   }
   return { damageBonus, rangeBonus };
@@ -567,9 +581,12 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
   return unit.stats.range + hillBonus + rangeBonus;
 }
 
-// §23-25 — a road grants its movement bonus to WHOEVER is standing on it, not
-// just its owner's units (it's a physical road, not a faction-locked buff).
+// §25 (phase 11 correction) — a road grants its movement bonus to Agrar
+// units ONLY. Temple units treat an Agrar road as normal terrain — Agrar's
+// physical infrastructure is a faction-locked mechanic, not a map-wide buff.
 export function getEffectiveSpeed(state: GameState, unit: Unit): number {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (player?.faction !== 'agrar') return unit.stats.speed;
   const onRoad = state.roads.some(r => hexEqual(r.pos, unit.pos));
   return unit.stats.speed + (onRoad ? ROAD_MOVEMENT_BONUS : 0);
 }
@@ -631,12 +648,19 @@ function getUnitCommandCost(type: UnitType, faction: FactionId | null | undefine
   return 1;
 }
 
+// Counts both deployed units AND units still in the training queue (§5) —
+// otherwise a player could queue arbitrarily many recruits past their pop
+// cap in one turn and have them all land over-cap once deployed.
 export function getPopulationCount(state: GameState, playerId: number): number {
   const faction = state.players.find(p => p.id === playerId)?.faction;
   let count = 0;
   for (const u of state.units) {
     if (u.hp <= 0 || u.playerId !== playerId) continue;
     count += getUnitCommandCost(u.type, faction);
+  }
+  for (const order of state.trainingQueue) {
+    if (order.playerId !== playerId) continue;
+    count += getUnitCommandCost(order.unitType, faction);
   }
   return count;
 }
@@ -647,9 +671,9 @@ export function getPopulationCount(state: GameState, playerId: number): number {
 // active neutral-Temple count). Both start at PRODUCTION_BASE_SLOTS and cap
 // at PRODUCTION_MAX_SLOTS — the two curves reach the same ceiling by
 // different map structures, matching the area-vs-points asymmetry. A
-// recruit occupies one of the recruiting player's slots for
-// UNIT_TRAINING_ROUNDS rounds (the unit itself still appears immediately —
-// only the slot is on cooldown, mirroring founding's "completes next round").
+// recruit occupies one of the recruiting player's slots for the full
+// training duration (§5) — the unit itself does NOT exist on the battlefield
+// until it deploys at the start of the player's next round.
 export function getProductionSlots(state: GameState, playerId: number): number {
   const player = state.players.find(p => p.id === playerId);
   if (player?.faction === 'agrar') {
@@ -666,15 +690,39 @@ export function getProductionSlots(state: GameState, playerId: number): number {
   return PRODUCTION_BASE_SLOTS;
 }
 
+// A slot is busy for exactly as long as its TrainingOrder is still queued —
+// from the instant it's queued until the unit actually deploys (§5). See
+// resolveTrainingForPlayer for deployment.
 export function getBusyProductionSlotCount(state: GameState, playerId: number): number {
-  return state.productionOrders.filter(o => o.playerId === playerId && state.turnNumber < o.freeAtRound).length;
+  return state.trainingQueue.filter(o => o.playerId === playerId).length;
 }
 
-// Called once per player, right when it becomes their turn (mirrors
-// resolveFoundingForPlayer) — drops any of their orders that have freed up,
-// so a stale array doesn't grow forever.
-function resolveProductionForPlayer(state: GameState, playerId: number): void {
-  state.productionOrders = state.productionOrders.filter(o => o.playerId !== playerId || state.turnNumber < o.freeAtRound);
+// §5 — called once per player, right when it becomes their turn (mirrors
+// resolveFoundingForPlayer). Every due TrainingOrder (readyAtRound reached)
+// attempts to deploy: if the target structure's tile is free, the real Unit
+// is created there and the order clears (freeing its slot); if the tile is
+// still occupied, the order just keeps waiting — NOTHING is destroyed or
+// refunded, deployment is simply deterministic and patient (§5, §14).
+function resolveTrainingForPlayer(state: GameState, playerId: number): void {
+  const tech = state.playerTech[playerId]!;
+  const player = state.players.find(p => p.id === playerId)!;
+  const stillWaiting: TrainingOrder[] = [];
+  for (const order of state.trainingQueue) {
+    if (order.playerId !== playerId) continue;
+    if (state.turnNumber < order.readyAtRound) { stillWaiting.push(order); continue; }
+
+    const structure = getOwnedStructures(state, playerId).find(s => s.id === order.structureId);
+    if (!structure || getUnitAt(state, structure.pos)) { stillWaiting.push(order); continue; }
+
+    const unit = createUnit(order.unitType, playerId, structure.pos, tech, player.faction);
+    unit.hasMoved = false;
+    unit.hasAttacked = false;
+    state.units.push(unit);
+  }
+  state.trainingQueue = [
+    ...state.trainingQueue.filter(o => o.playerId !== playerId),
+    ...stillWaiting,
+  ];
 }
 
 // ── Economy (§4-19, phase 10 correction) ──
@@ -719,7 +767,9 @@ const TEMPLE_SPREAD_CANDIDATES = 18;
 // per-temple best-candidate sampling.
 const TEMPLE_LAYOUT_ATTEMPTS = 16;
 
-// §5 — each player's Founding Round starters: Warrior + Archer + Founder.
+// §3 — map generation still reserves this many free tiles near each Capital
+// (kept clear of terrain/sites) even though no units are actually placed on
+// them at game start any more — early recruits need somewhere to deploy.
 const STARTING_UNITS_PER_PLAYER = 3;
 
 function shuffle<T>(arr: T[]): T[] {
@@ -883,7 +933,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     name: cfg.name,
     color: cfg.color || PLAYER_COLORS[i % PLAYER_COLORS.length]!,
     aura: STARTING_ENERGY,
-    faction: null, // chosen at the end of the Founding Round — see chooseFaction()
+    faction: null, // chosen right at the start of the match — see chooseFaction()
   }));
 
   const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>() }));
@@ -897,22 +947,18 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const capitals: Capital[] = layout.starts.map((pos, i) => createCapital(i, pos));
   const strategicSites: StrategicSite[] = layout.neutrals.map(pos => createStrategicSite(pos));
 
+  // layout.unitPositions is no longer used to seed starting units (phase 11
+  // — a match starts with zero units, see §3), but the reserved-tile
+  // computation is still passed into generateTerrain so those tiles around
+  // each Capital stay clear/passable for the player's first recruits.
   const allSitePositions = [...layout.starts, ...layout.neutrals];
   const allUnitPositions = layout.unitPositions.flat();
   const { hills, walls, forests } = generateTerrain(mapRadius, allSitePositions, allUnitPositions);
 
-  // §5 Founding Round: each player starts with a neutral Warrior + Archer +
-  // Founder already on the board (not recruited) — genuinely faction-agnostic
-  // until the reveal (chooseFaction converts them in place).
+  // §3 — a match starts with the Capital only: no neutral Warrior/Archer/
+  // Founder, no Founding Round. Faction choice happens immediately (see
+  // chooseFaction) and the player's first units come from recruiting.
   const units: Unit[] = [];
-  const FOUNDING_LOADOUT: UnitType[] = ['warrior', 'archer', 'founder'];
-  layout.unitPositions.forEach((positions, playerIdx) => {
-    positions.forEach((pos, i) => {
-      const type = FOUNDING_LOADOUT[i];
-      if (!type) return; // extra reserved tiles (shouldn't happen at STARTING_UNITS_PER_PLAYER=3)
-      units.push(createUnit(type, playerIdx, pos));
-    });
-  });
 
   const explored: Set<string>[] = players.map(() => new Set<string>());
 
@@ -931,7 +977,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     playerTech,
     teleportBuildings: [],
     buildHexes: [],
-    productionOrders: [],
+    trainingQueue: [],
     roads: [],
     pillagedRoadHexes: new Set(),
   };
@@ -943,49 +989,28 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   return state;
 }
 
-// ── Founding Round / faction reveal (§5-6) ──
+// ── Faction reveal (§2, phase 11 — no more Founding Round) ──
 //
-// Round 1 (turnNumber === 1) is the neutral Founding Round: scouting/movement
-// only, no combat, recruiting, research, capture, or construction. Once BOTH
-// players have ended their turn 1 (turnNumber becomes 2 — endTurn()'s existing
-// wrap-to-firstPlayerIndex logic needs no changes for this), the match pauses:
-// every action except choosing a faction (or resigning) is rejected until
+// A match starts with zero units and an empty board (§3) — there's nothing
+// to scout, so faction choice happens immediately, before any other action.
+// Every action except choosing a faction (or resigning) is rejected until
 // EACH player has independently and secretly locked Agrar or Temple. The
-// instant the second player locks, both reveal simultaneously and every
-// Round-1 neutral unit converts in place (see applyFactionConversion).
+// instant the second player locks, both reveal simultaneously and real
+// turn 1 play (recruiting, etc.) becomes available right away.
 //
 // Secrecy is NOT enforced here — chooseFaction always writes the true value
 // into the authoritative Player.faction. Hiding an unrevealed pick from the
 // opponent is the transport layer's job (see stripHiddenFaction in
 // server/gameManager.ts) — this file only ever deals in ground truth.
 
-export function isFoundingRound(state: GameState): boolean {
-  return state.turnNumber === 1;
-}
-
 export function isAwaitingFactionReveal(state: GameState): boolean {
-  return state.turnNumber >= 2 && state.players.some(p => p.faction === null);
+  return state.players.some(p => p.faction === null);
 }
 
-// True while combat/recruit/research/capture/construction actions are
-// rejected — during Round 1 itself, and during the post-Round-1 pause.
+// True while combat/recruit/research/construction actions are rejected —
+// only during the pre-reveal window now (no more Founding Round on top).
 export function isMatchSetupRestricted(state: GameState): boolean {
-  return isFoundingRound(state) || isAwaitingFactionReveal(state);
-}
-
-// Convert a player's Round-1 neutral units to their revealed faction's flavor
-// (§37/§38 stat tables). Founder keeps its stats (identical either faction,
-// §6) — only its DISPLAY name changes (see founderDisplayName), driven purely
-// by Player.faction, no unit-level field needed. rebuildUnitStats/
-// applyFactionToStats already no-op for 'founder', so this can run
-// unconditionally over every living unit.
-function applyFactionConversion(state: GameState, player: Player): void {
-  if (!player.faction) return;
-  const tech = state.playerTech[player.id]!;
-  for (const unit of state.units) {
-    if (unit.playerId !== player.id || unit.hp <= 0) continue;
-    rebuildUnitStats(unit, tech, player.faction);
-  }
+  return isAwaitingFactionReveal(state);
 }
 
 /**
@@ -993,7 +1018,8 @@ function applyFactionConversion(state: GameState, player: Player): void {
  * identical choice (a duplicate submit — e.g. a retried request — succeeds
  * as a no-op); rejected if the player already chose a DIFFERENT faction, since
  * the choice is permanent once made (§5). The instant both players have
- * chosen, reveal + conversion happens atomically for both.
+ * chosen, reveal happens atomically for both and normal play begins — there
+ * are no Round-1 units left to convert (§3), so nothing else to do here.
  */
 export function chooseFaction(state: GameState, playerId: number, faction: FactionId): boolean {
   if (!isAwaitingFactionReveal(state)) return false;
@@ -1002,10 +1028,6 @@ export function chooseFaction(state: GameState, playerId: number, faction: Facti
   if (player.faction !== null) return player.faction === faction;
 
   player.faction = faction;
-
-  if (state.players.every(p => p.faction !== null)) {
-    for (const p of state.players) applyFactionConversion(state, p);
-  }
   return true;
 }
 
@@ -1181,26 +1203,32 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
   return state.farms.filter(f => f.ownerId === playerId);
 }
 
-// A new Farm must be within FARM_DISTANCE_FROM_CAPITAL of the Capital OR an
-// existing ACTIVE Farm (§8 — the network spreads from either anchor), but
-// never within FARM_MIN_SPACING of ANY existing Farm, founding or active
-// (§8 — "may NOT be directly adjacent"). Scans the whole (small) map rather
-// than a ring, since there can be multiple anchors.
-export function getValidFarmHexes(state: GameState, playerId: number): HexCoord[] {
-  const capital = state.capitals.find(c => c.playerId === playerId);
+// §10-14 (phase 11 correction) — a new Farm must be a direct NEIGHBOR of the
+// Builder's own position — no distance-chain requirement to the Capital or
+// any other Farm exists anymore, the Builder's physical movement is what
+// limits expansion. It must also be: on the map, empty/passable terrain, not
+// a sacred site/Capital/structure, not occupied by a unit, not adjacent to
+// another existing Farm (founding or active — never `distance < FARM_MIN_
+// SPACING`, and never the other way either), and not adjacent to the
+// player's own Agrar Capital (so a starting economy can never be fully
+// walled in).
+export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return [];
+  const capital = state.capitals.find(c => c.playerId === player.id);
   if (!capital) return [];
-  const anchors = [capital.pos, ...activeFarmsOf(state, playerId).map(f => f.pos)];
-  const allOwn = allFarmsOf(state, playerId);
+  const allOwn = allFarmsOf(state, player.id);
   const result: HexCoord[] = [];
-  for (const hex of generateHexMap(state.mapRadius)) {
+  for (const hex of hexNeighbors(unit.pos)) {
+    if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue; // off-map
     const key = hexKey(hex);
     if (state.hills.has(key) || state.walls.has(key)) continue;
     if (getStrategicSiteAt(state, hex)) continue;
     if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
     if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
     if (getUnitAt(state, hex)) continue;
-    if (!anchors.some(a => hexDistance(a, hex) <= FARM_DISTANCE_FROM_CAPITAL)) continue;
-    if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue;
+    if (hexDistance(capital.pos, hex) < FARM_MIN_SPACING) continue; // not adjacent to Capital
+    if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue; // not adjacent to another Farm
     result.push(hex);
   }
   return result;
@@ -1215,7 +1243,7 @@ export function canStartFarm(state: GameState, unit: Unit, pos: HexCoord): boole
   if (!player || player.faction !== 'agrar') return false; // §28 — Temple has no equivalent
   if (allFarmsOf(state, player.id).length >= MAX_ACTIVE_FARMS) return false;
   if (player.aura < AGRAR_FARM_COST) return false;
-  return getValidFarmHexes(state, player.id).some(h => hexEqual(h, pos));
+  return getValidFarmHexes(state, unit).some(h => hexEqual(h, pos));
 }
 
 // Begin building: charges AGRAR_FARM_COST immediately (same "commit the
@@ -1240,17 +1268,20 @@ export function startFarm(state: GameState, unitId: string, pos: HexCoord): bool
   return true;
 }
 
-// §9-style interruption: a Farm still under construction that an enemy unit
-// has occupied by the time it's due simply fails — removed outright, no
-// refund, no "Ruins" (Farms don't have one, §15). Otherwise it completes and
-// becomes a real structure.
+// §14 interruption: construction fails outright (removed, no refund, no
+// "Ruins" — Farms don't have one, §15) if by the time it's due the Builder
+// has been killed, or is no longer adjacent to (or standing on) the
+// construction hex, or an enemy now occupies the hex. Otherwise it completes
+// and becomes a real structure.
 function resolveFarmFoundingForPlayer(state: GameState, playerId: number): void {
   const stillFounding: Farm[] = [];
   for (const farm of state.farms) {
     if (farm.state !== 'foundingFarm' || !farm.founding || farm.founding.playerId !== playerId) continue;
     if (state.turnNumber < farm.founding.completesRound) continue;
+    const builder = state.units.find(u => u.id === farm.founding!.unitId && u.hp > 0);
+    const builderNear = !!builder && hexDistance(builder.pos, farm.pos) <= 1;
     const enemyOnHex = state.units.some(u => u.hp > 0 && u.playerId !== playerId && hexEqual(u.pos, farm.pos));
-    if (enemyOnHex) { stillFounding.push(farm); continue; }
+    if (!builderNear || enemyOnHex) { stillFounding.push(farm); continue; }
     farm.state = 'farm';
     farm.founding = null;
     farm.hp = STRUCTURES.farm.hp;
@@ -1366,6 +1397,7 @@ export function canResearch(state: GameState, techId: TechId): boolean {
 
   const node = TECH_NODES.find(n => n.id === techId);
   if (!node) return false;
+  if (node.faction && node.faction !== player.faction) return false;
 
   for (const prereq of node.prereqs) {
     if (!tech.researched.has(prereq)) return false;
@@ -1419,23 +1451,23 @@ export function canAfford(state: GameState, unitType: UnitType): boolean {
   return unlocked.has(unitType);
 }
 
+// §5, §19-20 — recruiting queues a TrainingOrder, it does NOT create a Unit.
+// The unit does not exist on the battlefield until it deploys at the start
+// of the recruiting player's next round (resolveTrainingForPlayer). A
+// structure may have MORE THAN ONE order queued against it over time — the
+// player's overall production-slot pool is what actually caps how many can
+// be in flight at once, not a per-structure gate.
 export function spawnUnit(state: GameState, structureId: string, unitType: UnitType): boolean {
   if (isMatchSetupRestricted(state)) return false;
   const player = getCurrentPlayer(state);
   const structure = getOwnedStructures(state, player.id).find(s => s.id === structureId);
   if (!structure) return false;
 
-  // A structure may spawn MORE THAN ONE unit per turn — there is no per-
-  // structure spawn gate. Successive spawns are throttled by (a) the
-  // tile-occupancy check below — the freshly spawned unit stands on the
-  // structure, so the player must move it off before that structure spawns
-  // again — and (b) the player's overall production-slot pool (§19-20),
-  // which is what actually caps total recruits per round now.
-
   const cost = getUnitCost(unitType, player.faction);
   if (player.aura < cost) return false;
 
   // Population cap check — commandCost-weighted (§19), not flat 1-per-unit.
+  // getPopulationCount already includes queued (not-yet-deployed) orders.
   const cap = getPopulationCap(state, player.id);
   const count = getPopulationCount(state, player.id);
   const commandCost = getUnitCommandCost(unitType, player.faction);
@@ -1448,19 +1480,13 @@ export function spawnUnit(state: GameState, structureId: string, unitType: UnitT
   const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
   if (!unlocked.has(unitType)) return false;
 
-  if (getUnitAt(state, structure.pos)) return false;
-
   player.aura -= cost;
-  const unit = createUnit(unitType, player.id, structure.pos, state.playerTech[player.id], player.faction);
-  // Unit may move and attack on the turn it is spawned
-  unit.hasMoved = false;
-  unit.hasAttacked = false;
-  state.units.push(unit);
-  state.productionOrders.push({ playerId: player.id, freeAtRound: state.turnNumber + UNIT_TRAINING_ROUNDS });
-
-  state.spawnedSiteIds.add(structureId);
-
-  revealForPlayer(state, player.id, unit.pos, unit.stats.vision);
+  state.trainingQueue.push({
+    playerId: player.id,
+    unitType,
+    structureId,
+    readyAtRound: state.turnNumber + UNIT_TRAINING_ROUNDS,
+  });
 
   return true;
 }
@@ -1669,8 +1695,8 @@ export interface MoveResult {
 }
 
 export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
-  // Movement/scouting IS allowed during the Founding Round itself (§5) — only
-  // the post-Round-1 faction-reveal pause blocks everything.
+  // Blocked only during the pre-game faction-reveal pause (§3) — there's no
+  // separate Founding Round to gate on top of that any more.
   if (isAwaitingFactionReveal(state)) return { moved: false };
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit || unit.hasMoved || unit.hasAttacked) return { moved: false };
@@ -1741,7 +1767,7 @@ export interface CombatResult {
 }
 
 export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult | null {
-  // No combat during the Founding Round (§5) or the faction-reveal pause.
+  // No combat during the pre-game faction-reveal pause (§3).
   if (isMatchSetupRestricted(state)) return null;
   const attacker = state.units.find(u => u.id === state.selectedUnitId);
   if (!attacker || attacker.hasAttacked) return null;
@@ -2002,9 +2028,8 @@ export function destroyUnit(state: GameState, unitId: string): boolean {
 
 export function endTurn(state: GameState): void {
   if (state.phase === 'gameOver') return;
-  // Ending a turn is how Round 1 progresses (§5), so it stays available during
-  // the Founding Round itself — but the post-Round-1 pause blocks everything,
-  // including this, until both factions are locked.
+  // The pre-game faction-reveal pause blocks everything, including this,
+  // until both players have locked in a faction (§3).
   if (isAwaitingFactionReveal(state)) return;
   deselectAll(state);
 
@@ -2038,9 +2063,9 @@ export function endTurn(state: GameState): void {
   resolveFoundingForPlayer(state, newPlayer.id);
   resolveFarmFoundingForPlayer(state, newPlayer.id);
 
-  // §19-20 — free up any of this player's production slots whose cooldown has
-  // elapsed (see getProductionSlots/getBusyProductionSlotCount).
-  resolveProductionForPlayer(state, newPlayer.id);
+  // §5 — deploy any due TrainingOrders (units queued by recruiting), which
+  // also frees their production slots on success.
+  resolveTrainingForPlayer(state, newPlayer.id);
 
   // §4-19 — real economy: flat base + Agrar's active Farms / Temple's
   // Devotion. See getPlayerIncome.
@@ -2048,14 +2073,18 @@ export function endTurn(state: GameState): void {
 
   // Healer: restore HP to allies at start of their turn, with distance falloff —
   // full heal within radius 1, half at radius 2, nothing beyond (SUPPORT_RANGE).
+  // §27 — multiple Healers near the same ally don't stack; take the best
+  // single heal amount, same as the damage/range booster non-stacking rule.
   const healers = state.units.filter(u => u.hp > 0 && u.playerId === newPlayer.id && u.type === 'healer');
-  for (const healer of healers) {
-    for (const ally of state.units) {
-      if (ally.hp <= 0 || ally.playerId !== newPlayer.id || ally.id === healer.id) continue;
+  for (const ally of state.units) {
+    if (ally.hp <= 0 || ally.playerId !== newPlayer.id) continue;
+    let heal = 0;
+    for (const healer of healers) {
+      if (healer.id === ally.id) continue;
       const dist = hexDistance(healer.pos, ally.pos);
-      const heal = supportFalloffAmount(HEALER_HEAL_AMOUNT, dist);
-      if (heal > 0) ally.hp = Math.min(ally.stats.maxHp, ally.hp + heal);
+      heal = Math.max(heal, supportFalloffAmount(HEALER_HEAL_AMOUNT, dist));
     }
+    if (heal > 0) ally.hp = Math.min(ally.stats.maxHp, ally.hp + heal);
   }
 
   updateVisibility(state, newPlayer.id);
@@ -2118,17 +2147,11 @@ export function getValidTeleportHexesForOtherTemples(state: GameState, excludeAn
   return result;
 }
 
-export function canBuildTeleportPair(state: GameState, anchorId: string): boolean {
-  if (isMatchSetupRestricted(state)) return false;
-  const player = getCurrentPlayer(state);
-  const anchor = getOwnedStructures(state, player.id).find(s => s.id === anchorId);
-  if (!anchor) return false;
-  if (!state.playerTech[player.id]?.researched.has('teleports')) return false;
-  const existing = state.teleportBuildings.filter(t => t.templeId === anchorId);
-  if (existing.length >= TELEPORT_MAX_PER_TEMPLE) return false;
-  if (player.aura < TELEPORT_BUILD_COST) return false;
-  if (getValidTeleportHexes(state, anchorId).length < 1) return false;
-  return getValidTeleportHexesForOtherTemples(state, anchorId).length >= 1;
+// §45 (phase 11 correction) — teleports are fully dormant: the 'teleports'
+// tech no longer exists in TECH_NODES, so it can never be researched, and
+// this always returns false. Not exposed in UI, not constructible.
+export function canBuildTeleportPair(_state: GameState, _anchorId: string): boolean {
+  return false;
 }
 
 export function buildTeleportPair(

@@ -1,7 +1,7 @@
 import {
   GameState, HexCoord, Unit, UnitType, TechId,
   UNIT_COSTS, TECH_COST,
-  TELEPORT_BUILD_COST, SUPPORT_RANGE,
+  SUPPORT_RANGE,
 } from './types';
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
 import { calculateDamage } from './combat';
@@ -12,8 +12,7 @@ import {
   attackStructure, getStructureAt,
   getOwnedStructures, getPlayerCapital,
   researchTech, canResearch,
-  buildTeleportPair, canBuildTeleportPair, getValidTeleportHexes,
-  getValidTeleportHexesForOtherTemples, getTeleportAt,
+  getTeleportAt,
   canStartFarm, startFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
   canBuildRoad, buildRoad,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
@@ -22,7 +21,6 @@ import {
   getUnitTypeMultiplier,
   getUnitCost,
 } from './game';
-import { runRLHardTurn } from '../ml/botClient';
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -270,7 +268,7 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
   if (hard && unit.type === 'founder') {
     const player = state.players[aiPlayerId]!;
     if (player.faction === 'agrar') {
-      const farmHex = getValidFarmHexes(state, aiPlayerId).find(h => canStartFarm(state, unit, h));
+      const farmHex = getValidFarmHexes(state, unit).find(h => canStartFarm(state, unit, h));
       if (farmHex) {
         observe(state, 'build-farm', { unitId: unit.id, pos: farmHex });
         startFarm(state, unit.id, farmHex);
@@ -391,25 +389,38 @@ function actSupportUnit(state: GameState, unit: Unit, aiPlayerId: number, action
 
 // ── Economy (hard AI) ──
 
-// Coherent tech build: siege core (catapult + fortified ranged), a force-
-// multiplier support unit, cross-map teleports (great now that temples are far
-// apart), then splash and elite/anti-cavalry unlocks. canResearch enforces
-// branch exclusivity, so unreachable picks are skipped automatically.
-const HARD_RESEARCH_PLAN: TechId[] = [
-  'unlock_catapult',
-  'longrange_hp',
-  'unlock_damagebooster',
-  'teleports',
-  'catapult_splash',
-  'unlock_heavyknight',
-  'unlock_spearsman',
-];
+// Coherent tech build: siege core, a force-multiplier support unit, then
+// splash and the elite/anti-cavalry line (which now needs its prerequisite
+// first — see TECH_NODES). Siege/elite lines are faction-specific (phase 11
+// §33-34); canResearch also enforces branch exclusivity and faction gating,
+// so unreachable picks are skipped automatically.
+const HARD_RESEARCH_PLAN: Record<'agrar' | 'temple', TechId[]> = {
+  agrar: [
+    'agrar_siegecraft',
+    'longrange_hp',
+    'unlock_damagebooster',
+    'agrar_siegecraft_splash',
+    'agrar_heavy_armor',
+    'command_1',
+    'agrar_heavy_knight_tech',
+  ],
+  temple: [
+    'temple_mobile_siege_tech',
+    'longrange_hp',
+    'unlock_damagebooster',
+    'temple_mobile_siege_splash',
+    'temple_warrior_rite',
+    'command_1',
+    'temple_champion_rite',
+  ],
+};
 
 function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   const player = state.players[aiPlayerId]!;
   if (player.aura < TECH_COST) return;
   const home = getPlayerCapital(state, aiPlayerId);
-  for (const tech of HARD_RESEARCH_PLAN) {
+  const plan = player.faction ? HARD_RESEARCH_PLAN[player.faction] : [];
+  for (const tech of plan) {
     if (!canResearch(state, tech)) continue;
     observe(state, 'research', { techId: tech });
     if (researchTech(state, tech)) {
@@ -438,24 +449,10 @@ function getOwnedSites(state: GameState, aiPlayerId: number) {
   return state.strategicSites.filter(s => s.ownerId === aiPlayerId && s.state === 'temple');
 }
 
-function doTeleport(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
-  if (!state.playerTech[aiPlayerId]?.researched.has('teleports')) return;
-  const player = state.players[aiPlayerId]!;
-  if (player.aura < TELEPORT_BUILD_COST) return;
-  for (const anchor of getOwnedStructures(state, aiPlayerId)) {
-    if (!canBuildTeleportPair(state, anchor.id)) continue;
-    const hexesA = getValidTeleportHexes(state, anchor.id);
-    const hexesB = getValidTeleportHexesForOtherTemples(state, anchor.id);
-    if (hexesA.length === 0 || hexesB.length === 0) continue;
-    // Connect the two most-distant structures for maximum redeploy value.
-    const posB = bestBy(hexesB, h => hexDistance(anchor.pos, h))!;
-    observe(state, 'build-teleport', { templeId: anchor.id, pos: hexesA[0]!, targetPos: posB });
-    if (buildTeleportPair(state, anchor.id, hexesA[0]!, posB)) {
-      actions.push({ type: 'upgrade', pos: { ...hexesA[0]! }, description: `Hard AI builds teleport at (${hexesA[0]!.q},${hexesA[0]!.r})` });
-      return; // one pair per turn
-    }
-  }
-}
+// Teleports removed (phase 11 §32) — the 'teleports' tech no longer exists,
+// so canBuildTeleportPair always returns false. Kept as a no-op rather than
+// deleted so callers/imports don't need to change.
+function doTeleport(_state: GameState, _aiPlayerId: number, _actions: AIAction[]): void {}
 
 // ── Recruiting ──
 
@@ -466,6 +463,14 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
   const combat = mine.filter(u => !isSupport(u.type)).length;
   const faction = state.players[aiPlayerId]?.faction;
   const cost = (t: UnitType) => getUnitCost(t, faction);
+
+  // §5, §39 (phase 11 correction) — there are zero starting units now, so
+  // the Builder/Acolyte is recruited like anything else. Get exactly one
+  // out first — without it Agrar can never build a Farm/Road and Temple can
+  // never found a Temple, so this takes priority over any combat unit.
+  if (unlocked.has('founder') && count('founder') === 0 && aura >= cost('founder')) {
+    return 'founder';
+  }
 
   if (hard) {
     // Keep exactly one damage booster as a force multiplier once a core exists.
@@ -555,24 +560,21 @@ export function runAITurn(state: GameState, aiPlayerId: number = getCurrentPlaye
   return runTurn(state, aiPlayerId, false);
 }
 
-// The "Hard AI" is now the trained RL bot: policy-g2 policy net + turn-level
-// search (K=12, temp=1.0, depth=1, blend leaf; value-net-v2mc-best) — ~92% vs the
-// hand-crafted hard AI (see ml/botClient.ts / docs M4-RL-REBUILD-REPORT). The
-// original hand-crafted hard-AI turn is preserved as `hardAILogicTurn` and used as
-// the search's opponent model (the legitimate, plan-blessed opponent model).
+// §45 (phase 11) — "Hard AI" was the trained RL bot (policy-g2 policy net +
+// turn-level search, ~92% vs the hand-crafted hard AI — see ml/botClient.ts
+// / docs M4-RL-REBUILD-REPORT), but those nets were trained under the
+// PRE-phase-11 rules (Founding Round, starting units, instant recruiting).
+// Under the new zero-start/training-queue opening the trained policy
+// essentially never chooses to recruit, so it builds no army at all. Until
+// the nets are retrained against the phase 11 rules, "Hard AI" routes
+// straight through the hand-crafted logic below (verified to recruit/build
+// Farms/fight correctly) instead of the stale RL search — a working
+// difficulty beats a broken one. To restore the RL bot once a retrained
+// checkpoint lands: `import { runRLHardTurn } from '../ml/botClient';` and
+// call `runRLHardTurn(state, s => { runTurn(s, getCurrentPlayer(s).id, true); if (s.phase === 'playing') endTurn(s); })`.
 //
-// Contract is unchanged from the old runHardAITurn: mutate `state` with the AI's
-// completed turn, return AIAction[] for the combat log, and do NOT end the turn.
-const hardAILogicTurn = (s: GameState): void => {
-  runTurn(s, getCurrentPlayer(s).id, true);
-  if (s.phase === 'playing') endTurn(s);
-};
-
+// Contract: mutate `state` with the AI's completed turn, return AIAction[]
+// for the combat log, and do NOT end the turn — the caller does that.
 export function runHardAITurn(state: GameState, aiPlayerId: number = getCurrentPlayer(state).id): AIAction[] {
-  // The RL bot reasons from the current player's seat. Guard the (not used in
-  // practice) off-turn case by falling back to the hand-crafted hard AI.
-  if (state.phase !== 'playing' || getCurrentPlayer(state).id !== aiPlayerId) {
-    return runTurn(state, aiPlayerId, true);
-  }
-  return runRLHardTurn(state, hardAILogicTurn);
+  return runTurn(state, aiPlayerId, true);
 }

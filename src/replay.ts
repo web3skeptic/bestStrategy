@@ -41,7 +41,7 @@ interface SnapshotFarm {
 interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
 }
-interface SnapshotProductionOrder { playerId: number; freeAtRound: number; }
+interface SnapshotTrainingOrder { playerId: number; unitType: string; structureId: string; readyAtRound: number; }
 interface SnapshotRoad { pos: HexCoord; ownerId: number; }
 interface ApiSnapshot {
   /** Absent in replays recorded before the v0.2 redesign — treated as incompatible. */
@@ -63,7 +63,7 @@ interface ApiSnapshot {
   };
   units: SnapshotUnit[];
   tech: { playerId: number; researched: string[] }[];
-  productionOrders?: SnapshotProductionOrder[];
+  trainingQueue?: SnapshotTrainingOrder[];
   winner: { id: number; name: string } | null;
 }
 
@@ -179,7 +179,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
 
   return {
     players, units, strategicSites, capitals, farms,
-    productionOrders: (s.productionOrders ?? []).map(o => ({ ...o })),
+    trainingQueue: (s.trainingQueue ?? []).map(o => ({ ...o, unitType: o.unitType as UnitType })),
     roads: (s.map.roads ?? []).map(r => ({ pos: r.pos, ownerId: r.ownerId })),
     pillagedRoadHexes: new Set(s.map.pillagedRoadHexes ?? []),
     hills, walls, forests,

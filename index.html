@@ -897,7 +897,7 @@
     #opponentTurnCard .label { font-weight: bold; font-size: 24px; margin-top: 8px; color: #fff; }
     #opponentTurnCard .opp-name { color: #4a90d9; font-size: 18px; margin-top: 4px; }
     #opponentTurnCard .sublabel { font-size: 14px; color: #556; margin-top: 12px; letter-spacing: 0.05em; }
-    /* ── Faction choice overlay (end of the Founding Round) ── */
+    /* ── Faction choice overlay (immediate, before Round 1) ── */
     #factionChoiceOverlay {
       position: fixed;
       inset: 0;
@@ -962,7 +962,7 @@
       white-space: nowrap;
     }
     #waitingIndicator.hidden { display: none; }
-    #foundingRoundBanner {
+    #trainingQueueBanner {
       position: fixed;
       top: 16px;
       left: 50%;
@@ -988,7 +988,7 @@
       user-select: none;
       white-space: nowrap;
     }
-    #foundingRoundBanner.hidden { display: none; }
+    #trainingQueueBanner.hidden { display: none; }
     #waitingIndicator .wi-dot {
       width: 10px; height: 10px; border-radius: 50%;
       background: #ffd98a;
@@ -1475,8 +1475,8 @@
       <div class="sublabel">Please wait — the board is hidden during their turn.</div>
     </div>
   </div>
-  <!-- Faction choice overlay: shown to a player who still needs to pick once
-       the Founding Round (Round 1) has ended for both players. -->
+  <!-- Faction choice overlay: shown immediately at match start (phase 11 —
+       no more Founding Round), before either player has any units. -->
   <div id="factionChoiceOverlay" class="hidden">
     <div class="fc-title" id="fcTitle">Choose your civilization</div>
     <div class="fc-sub">Your pick is secret until your opponent also chooses. Once made, it cannot be changed.</div>
@@ -1485,16 +1485,16 @@
         <div class="fc-name">⚒ Agrar</div>
         <ul>
           <li>Slower, sturdier units</li>
-          <li>Farms, Cities, Roads</li>
-          <li>Build the network — move the fortress</li>
+          <li>Farms • Roads • Durable Armies</li>
+          <li>Area Control — build the network</li>
         </ul>
       </div>
       <div class="fc-card fc-temple" id="fcTempleCard">
         <div class="fc-name">🔥 Temple</div>
         <ul>
           <li>Faster, lighter units</li>
-          <li>Temples, mobile pressure</li>
-          <li>Own the nodes — be everywhere</li>
+          <li>Temples • Mobility • Distributed Armies</li>
+          <li>Point Control — be everywhere</li>
         </ul>
       </div>
     </div>
@@ -1507,8 +1507,8 @@
     <span class="wi-dot"></span>
     <span>Waiting for <span class="wi-name" id="waitingIndicatorName"></span> to move…</span>
   </div>
-  <!-- Founding Round (Round 1) reminder: scouting only, no combat/recruit/research yet -->
-  <div id="foundingRoundBanner" class="hidden">🔍 Founding Round — scouting only, no combat or recruiting yet</div>
+  <!-- Training queue reminder: what's currently recruiting for the local viewer's player (§5 — deploys next round) -->
+  <div id="trainingQueueBanner" class="hidden"></div>
   <script type="module" src="./src/main.ts"></script>
   <!-- In-game agent chat drawer (button top-right). Self-mounting; independent of main.ts. -->
   <script type="module" src="./src/chatPanel.ts"></script>

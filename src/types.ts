@@ -7,8 +7,8 @@ export interface HexCoord {
 export type UnitType = 'warrior' | 'archer' | 'catapult' | 'horserider' | 'heavyknight' | 'spearsman' | 'healer' | 'damageBooster' | 'rangeBooster' | 'founder';
 
 // The two civilizations of the "Asymmetric Tribes v0.2" redesign. Chosen
-// secretly at the end of the Founding Round (Round 1) — see chooseFaction in
-// game.ts and the reveal-secrecy handling in server/gameManager.ts.
+// secretly right at match start, before Round 1 begins — see chooseFaction
+// in game.ts and the reveal-secrecy handling in server/gameManager.ts.
 export type FactionId = 'agrar' | 'temple';
 
 // Bumped whenever the match/save shape changes incompatibly. Saved games,
@@ -25,7 +25,16 @@ export type FactionId = 'agrar' | 'temple';
 // longer founds sites at all); Farm drops citySiteId, gains state/founding
 // (Farms are now Capital/Farm-network-placed, not City-owned, and found over
 // a round like a site instead of instantly).
-export const RULES_VERSION = 7;
+// v8 (phase 11): opening/recruitment correction — no more Founding Round or
+// starting units (players choose faction immediately, then start with an
+// empty Capital); Builder/Acolyte are now ordinary recruitable units;
+// recruiting queues a unit for one round instead of creating it instantly
+// (ProductionOrder -> TrainingOrder, carries unitType/structureId); Farm
+// placement is adjacency-only (drops the old distance-chain constants);
+// Roads' speed bonus is Agrar-only; the tech tree drops the old
+// Roads/Teleports movement techs and the flat Catapult/Heavy Knight
+// unlocks in favor of faction-specific, prerequisite-gated ones.
+export const RULES_VERSION = 8;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -145,12 +154,14 @@ export interface StrategicSite {
 
 // Phase 10 correction — a Farm is Agrar's economy engine, built directly by
 // the Builder on open land (NOT tied to a City/StrategicSite — Agrar never
-// owns one of those). Global cap MAX_ACTIVE_FARMS per player, placed within
-// FARM_DISTANCE_FROM_CAPITAL of the Capital or an existing active Farm, but
-// never closer than FARM_MIN_SPACING to another Farm — Agrar expands as a
-// spreading network, not a tight cluster (§8). A real attackable structure
-// (see getStructureAt). Founds over one round like a strategic site, not
-// instantly — see startFarm/resolveFarmFoundingForPlayer in game.ts.
+// owns one of those). Global cap MAX_ACTIVE_FARMS per player. Phase 11:
+// placement is adjacency-only — a new Farm must be a hex NEIGHBOUR of the
+// Builder's current position, and not adjacent to another Farm or to the
+// Capital (§10-12) — the Builder's own movement is what limits expansion,
+// not a separate distance-chain rule. A real attackable structure (see
+// getStructureAt). Founds over one round like a strategic site, not
+// instantly — the Builder must stay ADJACENT to the site until it
+// completes (§14) — see startFarm/resolveFarmFoundingForPlayer in game.ts.
 export interface Farm {
   id: string;
   pos: HexCoord;
@@ -187,8 +198,9 @@ export interface Player {
   color: string;
   aura: number;
   /**
-   * Civilization chosen at the end of the Founding Round — null during Round 1
-   * and while awaiting the opponent's pick. Set once by chooseFaction() and
+   * Civilization chosen right at the start of the match, before any
+   * gameplay happens (phase 11 — there is no more neutral Founding Round) —
+   * null while awaiting the opponent's pick. Set once by chooseFaction() and
    * never changed after (§6). The server never broadcasts this to the
    * opponent's client until BOTH players have chosen — see
    * stripHiddenFaction in server/gameManager.ts. This field is the sole
@@ -236,13 +248,24 @@ export type SelectionMode = 'unit' | 'site' | null;
 
 // ── Tech tree ──
 
+// Phase 11: Pikeman/Spearsman no longer need research at all (both factions'
+// early rosters already include them, §39/EARLY_UNLOCKED_SLOTS) — the old
+// 'unlock_spearsman' tech was dead weight (it added a slot the player
+// already had). Catapult/Heavy Knight unlocks are now faction-specific,
+// prerequisite-gated techs (different names/flavor per faction, same
+// underlying unitUnlock slot) rather than one flat 5⚡ unlock. The old
+// Roads/Teleports "movement" branch is gone — Agrar's physical Roads (see
+// factions.ts) are the only speed mechanic now, and Teleports directly
+// conflicted with the Temple-mobility/Agrar-infrastructure asymmetry.
 export type TechId =
-  | 'unlock_catapult'
-  | 'unlock_heavyknight'
-  | 'unlock_spearsman'
-  | 'catapult_splash'
-  | 'roads'
-  | 'teleports'
+  | 'agrar_siegecraft'
+  | 'agrar_siegecraft_splash'
+  | 'agrar_heavy_armor'
+  | 'agrar_heavy_knight_tech'
+  | 'temple_mobile_siege_tech'
+  | 'temple_mobile_siege_splash'
+  | 'temple_warrior_rite'
+  | 'temple_champion_rite'
   | 'infantry_move'
   | 'longrange_hp'
   | 'horse_sight'
@@ -261,25 +284,28 @@ export interface TechNode {
   description: string;
   cost: number;
   prereqs: TechId[];
-  branch?: string;       // branch id — only one per branch can be researched
-  unitUnlock?: UnitType; // if set, this tech unlocks a unit type
+  branch?: string;         // branch id — only one per branch can be researched
+  unitUnlock?: UnitType;   // if set, this tech unlocks a unit type
+  faction?: FactionId;     // if set, only that faction can research/see this node
 }
 
 export const TECH_NODES: TechNode[] = [
-  // Unit unlocks
-  { id: 'unlock_spearsman',    name: 'Spearsman',         description: 'Unlock Spearsman — counter-cavalry infantry with bonus damage vs horseriders and knights.', cost: TECH_COST, prereqs: [], unitUnlock: 'spearsman' },
-  { id: 'unlock_heavyknight',  name: 'Heavy Knight',      description: 'Unlock Heavy Knight — heavily armoured mounted unit with high HP and attack.',              cost: TECH_COST, prereqs: [], unitUnlock: 'heavyknight' },
-  { id: 'unlock_catapult',     name: 'Catapult',          description: 'Unlock Catapult — long-range siege weapon with area splash damage.',                        cost: TECH_COST, prereqs: [], unitUnlock: 'catapult' },
-  // Catapult sub-upgrade
-  { id: 'catapult_splash',     name: 'Splash Range +1',   description: 'Catapults gain splash radius 1.',                                                           cost: TECH_COST, prereqs: ['unlock_catapult'] },
-  // Branch: Movement (pick ONE)
-  { id: 'roads',               name: 'Roads',             description: 'All your units gain +1 movement speed.',                                                    cost: TECH_COST, prereqs: [], branch: 'movement' },
-  { id: 'teleports',           name: 'Teleports',         description: 'Unlock teleport portals. Build a portal pair (5⚡) — one near each of two different temples. Any unit stepping on a portal is instantly transported to its partner.',               cost: TECH_COST, prereqs: [], branch: 'movement' },
-  // Branch: Stat Bonus (pick ONE)
+  // Siege line — faction-specific, no prereq for the base unlock.
+  { id: 'agrar_siegecraft',        name: 'Siegecraft',      description: 'Unlock the Catapult — long-range siege weapon with area splash damage.', cost: TECH_COST, prereqs: [], unitUnlock: 'catapult', faction: 'agrar' },
+  { id: 'agrar_siegecraft_splash', name: 'Splash Range +1', description: 'Catapults gain splash radius 1.',                                        cost: TECH_COST, prereqs: ['agrar_siegecraft'], faction: 'agrar' },
+  { id: 'temple_mobile_siege_tech',   name: 'Mobile Siege',    description: 'Unlock Mobile Siege — long-range siege weapon with area splash damage.', cost: TECH_COST, prereqs: [], unitUnlock: 'catapult', faction: 'temple' },
+  { id: 'temple_mobile_siege_splash', name: 'Splash Range +1', description: 'Mobile Siege gains splash radius 1.',                                    cost: TECH_COST, prereqs: ['temple_mobile_siege_tech'], faction: 'temple' },
+  // Heavy-unit line — faction-specific, genuinely gated (needs the tier-1
+  // tech AND Command I, not a single flat 5⚡ unlock — §30).
+  { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for Heavy Knight.',                                                cost: TECH_COST, prereqs: [], faction: 'agrar' },
+  { id: 'agrar_heavy_knight_tech', name: 'Heavy Knight',    description: 'Unlock the Heavy Knight — heavily armoured mounted unit with high HP and attack. Requires Heavy Armor and Command I.', cost: TECH_COST, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
+  { id: 'temple_warrior_rite',    name: 'Warrior Rite',     description: 'Prerequisite for Champion.',                                                    cost: TECH_COST, prereqs: [], faction: 'temple' },
+  { id: 'temple_champion_rite',   name: 'Champion',         description: 'Unlock the Champion — heavily armoured mounted unit with high HP and attack. Requires Warrior Rite and Command I.', cost: TECH_COST, prereqs: ['temple_warrior_rite', 'command_1'], unitUnlock: 'heavyknight', faction: 'temple' },
+  // Branch: Stat Bonus (pick ONE) — shared by both factions.
   { id: 'infantry_move',       name: 'Infantry March',    description: 'Warriors and Spearsmen gain +1 movement speed.',                                            cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
   { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +5 max HP.',                                                    cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
   { id: 'horse_sight',         name: 'Scout Cavalry',     description: 'Horseriders and Heavy Knights gain +1 vision range.',                                       cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
-  // Branch: Support Unit (pick ONE)
+  // Branch: Support Unit (pick ONE) — shared by both factions.
   { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'healer' },
   { id: 'unlock_damagebooster',name: 'Damage Booster',    description: 'Unlock Damage Booster — support unit that increases attack of nearby allies.',             cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'damageBooster' },
   { id: 'unlock_rangebooster', name: 'Range Booster',     description: 'Unlock Range Booster — support unit that increases attack range of nearby allies.',        cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'rangeBooster' },
@@ -295,12 +321,11 @@ export interface PlayerTech {
 
 // ── Teleport buildings ──
 //
-// Dormant in the v0.2 ruleset (kept — not deleted — per the redesign brief's
-// asset/code-reuse policy; the 'teleports' tech is still live for now since
-// phase 3 doesn't touch the tech tree, but Agrar Roads/Phase 6 movement work
-// will likely replace or remove this). `templeId` is a legacy field name —
-// it anchors to any OWNED structure id now (Capital or a completed
-// city/temple StrategicSite), not the old Temple type.
+// Fully dormant (phase 11): the 'teleports' tech no longer exists in
+// TECH_NODES at all, so this can never be researched or built again —
+// kept, not deleted, per the redesign brief's asset/code-reuse policy.
+// `templeId` is a legacy field name — it anchors to any OWNED structure id
+// (Capital or a completed Temple StrategicSite), not the old Temple type.
 export const TELEPORT_BUILD_COST = 5;
 export const TELEPORT_RADIUS = 2;      // max dist from owning structure
 export const TELEPORT_MAX_PER_TEMPLE = 1; // one portal per structure (pairs connect two different structures)
@@ -371,13 +396,16 @@ export interface GameState {
   teleportBuildings: TeleportBuilding[];
   /** @uiOnly hexes highlighted during build-placement mode */
   buildHexes: HexCoord[];
-  // §19-22 (phase 6, Command system) — recruiting draws on a limited pool of
-  // production slots (Capital + owned City/Temple expansions), not an
-  // unlimited one. Each recruit occupies ONE of the recruiting player's slots
-  // until the start of that player's next round (see getProductionSlots /
-  // getBusyProductionSlotCount / resolveProductionForPlayer in game.ts) — the
-  // unit itself still appears immediately, only the SLOT is on cooldown.
-  productionOrders: ProductionOrder[];
+  // §5, §19-22 (phase 6 Command system, reworked phase 11) — recruiting
+  // queues a TrainingOrder instead of creating the unit instantly: it
+  // occupies one of the recruiting player's limited production slots AND
+  // represents the pending unit itself. It deploys (the real Unit is
+  // created) at the start of that player's next round if the structure's
+  // tile is free — see getProductionSlots / getBusyProductionSlotCount /
+  // resolveTrainingForPlayer in game.ts. If the tile stays blocked, the
+  // order just keeps waiting (still occupying its slot) rather than being
+  // lost — no unit is ever destroyed by a blocked deployment.
+  trainingQueue: TrainingOrder[];
   // §23-25 (phase 7) — Agrar-only physical road tiles. A road grants
   // ROAD_MOVEMENT_BONUS speed to WHOEVER stands on it (not just its owner's
   // units — it's a real road, not a magic one), but any unit that ends its
@@ -389,9 +417,11 @@ export interface GameState {
   pillagedRoadHexes: Set<string>;
 }
 
-export interface ProductionOrder {
+export interface TrainingOrder {
   playerId: number;
-  freeAtRound: number; // the round (turnNumber) at which this slot frees up
+  unitType: UnitType;
+  structureId: string;   // Capital or owned Temple site — where the unit deploys
+  readyAtRound: number;  // turnNumber at/after which deployment is attempted
 }
 
 export interface Road {

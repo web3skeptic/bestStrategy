@@ -9,7 +9,7 @@ export interface SerializedGameState {
   strategicSites: GameState['strategicSites'];
   capitals: GameState['capitals'];
   farms: GameState['farms'];
-  productionOrders: GameState['productionOrders'];
+  trainingQueue: GameState['trainingQueue'];
   roads: GameState['roads'];
   pillagedRoadHexes: string[];
   hills: string[];

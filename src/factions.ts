@@ -2,9 +2,12 @@
 //
 // STATUS: fully wired — sites/farms/structures (phase 3-4), the full unit
 // roster (phase 5), Command population (phase 6), Agrar Roads (phase 7),
-// ZOC (phase 8, keyed off unitClass — see game.ts ZOC_CLASSES) and the
-// per-faction visual banner accent (phase 9, see voxelFactionAccent.ts) all
-// read from this file rather than duplicating numbers.
+// ZOC (phase 8, keyed off unitClass — see game.ts ZOC_CLASSES), the
+// per-faction visual banner accent (phase 9, see voxelFactionAccent.ts), the
+// Farm-network macro-economy correction (phase 10), and the opening/
+// recruitment correction (phase 11 — no Founding Round, Builder/Acolyte
+// recruitable, training queue, adjacency-only Farms, Agrar-only Road speed)
+// all read from this file rather than duplicating numbers.
 import type { UnitClass } from './combat';
 import type { FactionId, UnitType } from './types';
 
@@ -84,12 +87,13 @@ export const FACTION_UNITS: Record<FactionId, FactionUnitDef[]> = {
 
 // §39 — units available immediately after faction lock, before any tech
 // (derived from each def's earlyUnlock flag — single source of truth).
-// Founder/Builder/Acolyte is deliberately excluded even though earlyUnlock is
-// true for it (present on the board from turn 1) — it's never RECRUITABLE
-// via a structure at any point, regardless of tech (§6).
+// Phase 11: Builder/Acolyte (slot 'founder') is an ordinary recruitable
+// early-unlock unit now, same as Warrior/Archer/Pikeman-or-Spearsman/
+// Knight-or-Raider — there's no more "on-board only, never recruitable"
+// restriction (§4-5). If one dies, the player can just recruit another.
 export const EARLY_UNLOCKED_SLOTS: Record<FactionId, UnitType[]> = {
-  agrar: AGRAR_UNITS.filter(u => u.earlyUnlock && u.slot !== 'founder').map(u => u.slot),
-  temple: TEMPLE_UNITS.filter(u => u.earlyUnlock && u.slot !== 'founder').map(u => u.slot),
+  agrar: AGRAR_UNITS.filter(u => u.earlyUnlock).map(u => u.slot),
+  temple: TEMPLE_UNITS.filter(u => u.earlyUnlock).map(u => u.slot),
 };
 
 // §51 — structure stats. No more 'city' — Agrar's only structures are its
@@ -117,14 +121,19 @@ export const STARTING_ENERGY = 6;
 export const BASE_INCOME_PER_ROUND = 6;
 export const SITE_ESTABLISH_COST = 4;      // Temple founding only — Agrar never founds a site (§28)
 
-// §6-9 (phase 10) — Agrar's Farm network: its ONLY economic expansion, built
-// directly by the Builder on open land, never tied to a captured site.
+// §6-14 (phase 10, placement simplified phase 11) — Agrar's Farm network:
+// its ONLY economic expansion, built directly by the Builder on open land,
+// never tied to a captured site. Placement is adjacency-only now: a new
+// Farm must be a hex NEIGHBOUR of the Builder (distance 1), never adjacent
+// to another Farm or to the Capital (FARM_MIN_SPACING applies to both —
+// "never directly next to X" = distance >= FARM_MIN_SPACING from X). The
+// Builder's own movement — not a separate distance-chain rule — is what
+// limits how far the network can reach.
 export const AGRAR_FARM_COST = 5;
 export const AGRAR_FARM_INCOME = 1;
 export const MAX_ACTIVE_FARMS = 4;
-export const FARM_DISTANCE_FROM_CAPITAL = 2; // a new Farm must be within this of the Capital OR an existing active Farm
-export const FARM_MIN_SPACING = 2;           // two Farms may never be closer than this to each other (no direct adjacency)
-export const CULTIVATION_RADIUS = 1;         // §10 — an active Farm's own hex + its 6 neighbours
+export const FARM_MIN_SPACING = 2;   // never directly adjacent to another Farm, or to the Capital
+export const CULTIVATION_RADIUS = 1; // §10 — an active Farm's own hex + its 6 neighbours
 
 export const TEMPLE_DEVOTION_COST = 3;     // x2 devotion levels per Temple
 export const TEMPLE_DEVOTION_INCOME = 1;

@@ -88,8 +88,8 @@ function stripSelectionState(s: ReturnType<typeof serialize>): ReturnType<typeof
   };
 }
 
-// The Founding Round secret faction pick (§5-6) is a real information
-// boundary, not just a UI nicety: until BOTH players have chosen, a viewer
+// The immediate, pre-Round-1 secret faction pick (§3, phase 11) is a real
+// information boundary, not just a UI nicety: until BOTH players have chosen, a viewer
 // may see their OWN pick (if they made one) but never the opponent's —
 // regardless of whether they're the acting player, the other seat, or a
 // spectator. `viewerSlot` is null for spectators (and anyone else with no

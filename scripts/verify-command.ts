@@ -1,7 +1,8 @@
-// Phase 6 verification: the Command system — population cap tiers,
-// commandCost-weighted population spend, and the production-slot pool
-// (design brief §19-22). Exercises the real engine mutators end-to-end (no
-// forked logic) — createGameState, chooseFaction, researchTech, spawnUnit, endTurn.
+// Phase 6 verification (updated phase 11): the Command system — population
+// cap tiers, commandCost-weighted population spend (now including queued,
+// not-yet-deployed training orders), and the production-slot pool (design
+// brief §19-22). Exercises the real engine mutators end-to-end (no forked
+// logic) — createGameState, chooseFaction, researchTech, spawnUnit, endTurn.
 //
 // Run with: npx tsx scripts/verify-command.ts
 import {
@@ -18,12 +19,10 @@ function check(name: string, cond: boolean, detail?: string): void {
   else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-// A fresh 2-player game, fast-forwarded past the Founding Round and faction
-// reveal (Agrar=P0, Temple=P1), with generous aura for testing.
+// A fresh 2-player game with factions chosen immediately (phase 11 — no more
+// Founding Round to skip past), with generous aura for testing.
 function setup(): GameState {
   const state = createGameState();
-  endTurn(state);
-  endTurn(state);
   chooseFaction(state, 0, 'agrar');
   chooseFaction(state, 1, 'temple');
   for (const p of state.players) p.aura = 200;
@@ -37,6 +36,38 @@ function capitalId(state: GameState, playerId: number): string {
 function advanceOneRound(state: GameState): void {
   endTurn(state);
   endTurn(state);
+}
+
+// §5 (phase 11) — a deployed recruit that lands ON the Capital tile blocks
+// every FUTURE deployment there until it moves off (resolveTrainingForPlayer
+// just leaves a blocked order queued forever, it never fails it) — sweep it
+// away between rounds so repeated recruiting in these tests keeps flowing.
+let sweepCounter = 0;
+function sweepUnitsOffCapital(state: GameState, playerId: number): void {
+  const pos = getPlayerCapital(state, playerId)!.pos;
+  for (const u of state.units) {
+    if (u.playerId === playerId && u.hp > 0 && u.pos.q === pos.q && u.pos.r === pos.r) {
+      u.pos = { q: 200 + sweepCounter, r: 200 + sweepCounter };
+      sweepCounter++;
+    }
+  }
+}
+
+// Queues 'warrior' recruits (commandCost 1 each) for playerId until
+// getPopulationCount reaches `target`, advancing rounds (and sweeping the
+// Capital clear) whenever the production-slot pool fills up.
+function fillPopulationTo(state: GameState, playerId: number, target: number): void {
+  const cap = capitalId(state, playerId);
+  let guard = target + PRODUCTION_BASE_SLOTS + 20; // safety valve against an infinite loop on a real bug
+  while (getPopulationCount(state, playerId) < target && guard-- > 0) {
+    state.currentPlayerIndex = playerId;
+    if (getBusyProductionSlotCount(state, playerId) >= getProductionSlots(state, playerId)) {
+      advanceOneRound(state);
+      sweepUnitsOffCapital(state, playerId);
+      continue;
+    }
+    if (!spawnUnit(state, cap, 'warrior')) break;
+  }
 }
 
 // ── Population cap tiers (§21) ──
@@ -60,31 +91,24 @@ console.log('\n=== Population cost is commandCost-weighted, not flat 1-per-unit 
 {
   const state = setup();
   state.currentPlayerIndex = 0;
-  researchTech(state, 'unlock_heavyknight');
+  researchTech(state, 'agrar_heavy_armor');
+  researchTech(state, 'command_1');
+  researchTech(state, 'agrar_heavy_knight_tech');
   const cap = getPopulationCap(state, 0);
-  // Every player starts with 3 Founding-Round units (Warrior + Archer +
-  // Founder), each commandCost 1 -> population starts at 3, not 0.
-  check('fresh player starts at population 3 (Warrior+Archer+Founder)', getPopulationCount(state, 0) === 3, `got ${getPopulationCount(state, 0)}`);
+  // §3 (phase 11) — zero starting units: a fresh player starts at population 0.
+  check('fresh player starts at population 0 (zero starting units)', getPopulationCount(state, 0) === 0, `got ${getPopulationCount(state, 0)}`);
 
-  // Fill up to cap-1 with warriors (commandCost 1 each) so pop === cap-1,
-  // spread across turns to avoid hitting the production-slot cap.
-  const capitalPos = getPlayerCapital(state, 0)!.pos;
-  let spawned = 0;
-  while (getPopulationCount(state, 0) < cap - 1 && spawned < cap) {
-    const unit = state.units.find(u => u.hp > 0 && u.pos.q === capitalPos.q && u.pos.r === capitalPos.r);
-    if (unit) { unit.pos = { q: unit.pos.q + 10 + spawned, r: unit.pos.r + 10 + spawned }; }
-    if (getBusyProductionSlotCount(state, 0) >= getProductionSlots(state, 0)) advanceOneRound(state);
-    state.currentPlayerIndex = 0;
-    if (!spawnUnit(state, capitalId(state, 0), 'warrior')) break;
-    spawned++;
-  }
+  fillPopulationTo(state, 0, cap - 1);
   const popBefore = getPopulationCount(state, 0);
   check(`population sits at cap-1 (${cap - 1})`, popBefore === cap - 1, `got ${popBefore}`);
 
-  // Clear the capital tile + refresh production slots for a clean check.
-  const onCap = state.units.find(u => u.hp > 0 && u.pos.q === capitalPos.q && u.pos.r === capitalPos.r);
-  if (onCap) onCap.pos = { q: onCap.pos.q + 30, r: onCap.pos.r + 30 };
-  while (getBusyProductionSlotCount(state, 0) >= getProductionSlots(state, 0)) advanceOneRound(state);
+  // Make sure a production slot + a clear Capital tile are both available
+  // for a clean check.
+  while (getBusyProductionSlotCount(state, 0) >= getProductionSlots(state, 0)) {
+    advanceOneRound(state);
+    sweepUnitsOffCapital(state, 0);
+  }
+  sweepUnitsOffCapital(state, 0);
   state.currentPlayerIndex = 0;
 
   check('a light unit (commandCost 1) still fits at cap-1', canAfford(state, 'warrior'));
@@ -100,29 +124,31 @@ console.log('\n=== Production slots (§19-20) ===');
   check('no slots busy at game start', getBusyProductionSlotCount(state, 0) === 0);
 
   const cap = capitalId(state, 0);
-  const capPos = getPlayerCapital(state, 0)!.pos;
-  const clearCapital = () => {
-    const u = state.units.find(x => x.hp > 0 && x.pos.q === capPos.q && x.pos.r === capPos.r);
-    if (u) u.pos = { q: u.pos.q + 20, r: u.pos.r + 20 };
-  };
 
-  clearCapital();
   const s1 = spawnUnit(state, cap, 'warrior');
   check('recruit 1/2 succeeds', s1);
   check('1 slot busy after one recruit', getBusyProductionSlotCount(state, 0) === 1);
-  clearCapital();
   const s2 = spawnUnit(state, cap, 'warrior');
   check('recruit 2/2 succeeds (still within slot pool)', s2);
   check('2 slots busy after two recruits', getBusyProductionSlotCount(state, 0) === 2);
-  clearCapital();
   check('canAfford is false once every slot is busy, regardless of aura/pop room', !canAfford(state, 'warrior'));
   const s3 = spawnUnit(state, cap, 'warrior');
   check('a 3rd recruit is rejected while all slots are busy', !s3);
+  check('a queued recruit does NOT exist on the battlefield yet (§5)', state.units.filter(u => u.playerId === 0).length === 0);
 
-  advanceOneRound(state); // this player's next round
-  check('slots free up at the start of this player\'s next round', getBusyProductionSlotCount(state, 0) === 0);
-  clearCapital();
-  check('recruiting is available again after the cooldown', canAfford(state, 'warrior'));
+  advanceOneRound(state); // this player's next round — both orders target the
+  // SAME Capital tile, so only the first can actually deploy there; the
+  // second stays queued (pending, not lost — §5) until the tile is clear.
+  check('one recruit deploys and frees its slot', getBusyProductionSlotCount(state, 0) === 1, `got ${getBusyProductionSlotCount(state, 0)}`);
+  check('exactly one queued recruit deployed this round', state.units.filter(u => u.playerId === 0 && u.type === 'warrior' && u.hp > 0).length === 1);
+  sweepUnitsOffCapital(state, 0);
+  state.currentPlayerIndex = 0;
+  check('recruiting is available again once a slot is free', canAfford(state, 'warrior'));
+
+  advanceOneRound(state); // now the Capital is clear — the second one deploys too
+  sweepUnitsOffCapital(state, 0);
+  check('the second queued recruit deploys once the Capital is clear', getBusyProductionSlotCount(state, 0) === 0);
+  check('both queued recruits eventually deployed', state.units.filter(u => u.playerId === 0 && u.type === 'warrior' && u.hp > 0).length === 2);
 }
 {
   // Temple founding a site grants +1 production slot (phase 10: Temple's
@@ -130,11 +156,16 @@ console.log('\n=== Production slots (§19-20) ===');
   // the full per-faction production curve, including Agrar's Farm-based one).
   const state = setup();
   const site = state.strategicSites[0]!;
-  const acolyte = state.units.find(u => u.playerId === 1 && u.type === 'founder')!;
+  state.currentPlayerIndex = 1;
+  const acolyteRecruited = spawnUnit(state, capitalId(state, 1), 'founder');
+  check('Temple can queue an Acolyte recruit', acolyteRecruited);
+  const before = getProductionSlots(state, 1);
+  advanceOneRound(state); // deploy the Acolyte
+  sweepUnitsOffCapital(state, 1);
+  const acolyte = state.units.find(u => u.playerId === 1 && u.type === 'founder' && u.hp > 0)!;
   acolyte.pos = { ...site.pos };
   acolyte.hasMoved = false; acolyte.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  const before = getProductionSlots(state, 1);
   startFounding(state, acolyte.id);
   endTurn(state); // opponent's turn
   endTurn(state); // back to this player -> founding resolves (uncontested)
@@ -148,9 +179,6 @@ console.log('\n=== Per-player independence ===');
 {
   const state = setup();
   state.currentPlayerIndex = 0;
-  const capPos0 = getPlayerCapital(state, 0)!.pos;
-  const u0 = state.units.find(x => x.hp > 0 && x.pos.q === capPos0.q && x.pos.r === capPos0.r);
-  if (u0) u0.pos = { q: u0.pos.q + 20, r: u0.pos.r + 20 };
   const p1PopBefore = getPopulationCount(state, 1);
   spawnUnit(state, capitalId(state, 0), 'warrior');
   check('P0 recruiting does not touch P1 slots', getBusyProductionSlotCount(state, 1) === 0);

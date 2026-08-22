@@ -18,7 +18,7 @@ import { GameState, UnitType, HexCoord } from '../src/types';
 import { TECH_NODES, UNIT_COSTS } from '../src/types';
 import {
   createGameState, PlayerConfig,
-  getUnitAt, canAfford, canResearch,
+  canAfford, canResearch,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getOwnedStructures,
   canBuildTeleportPair, getValidTeleportHexes, getValidTeleportHexesForOtherTemples,
@@ -83,13 +83,15 @@ export function legalMicros(state: GameState): Micro[] {
     }
   }
 
-  // Recruit: for each owned, unoccupied structure (Capital or completed City/
-  // Temple), each unlocked+affordable unit type (population cap permitting).
+  // Recruit: for each owned structure (Capital or completed Temple), each
+  // unlocked+affordable unit type (population cap permitting). §5 (phase 11)
+  // — recruiting only QUEUES a TrainingOrder; tile occupancy is checked at
+  // deployment time (resolveTrainingForPlayer), not here, so a structure
+  // with a unit standing on it is still a legal recruit target.
   const unlocked = getUnlockedUnits(state.playerTech[pid]!, state.players[pid]?.faction);
   const underCap = getPopulationCount(state, pid) < getPopulationCap(state, pid);
   if (underCap) {
     for (const structure of getOwnedStructures(state, pid)) {
-      if (getUnitAt(state, structure.pos)) continue;
       for (const type of unlocked) {
         if (canAfford(state, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: structure.id } });
       }
@@ -147,7 +149,7 @@ export function cloneState(s: GameState): GameState {
     strategicSites: s.strategicSites.map(site => ({ ...site, founding: site.founding ? { ...site.founding } : null })),
     capitals: s.capitals.map(c => ({ ...c })),
     farms: s.farms.map(f => ({ ...f })),
-    productionOrders: s.productionOrders.map(o => ({ ...o })),
+    trainingQueue: s.trainingQueue.map(o => ({ ...o })),
     roads: s.roads.map(r => ({ ...r })),
     pillagedRoadHexes: new Set(s.pillagedRoadHexes),
     hills: s.hills, walls: s.walls, forests: s.forests,

@@ -10,6 +10,7 @@
 import {
   createGameState, endTurn, chooseFaction, canStartFounding, startFounding,
   attackStructure, getStructureAt, selectUnit, moveUnit, getPlayerCapital,
+  createUnit,
 } from '../src/game';
 import { hexNeighbors, hexEqual } from '../src/hex';
 import type { GameState, StrategicSiteState } from '../src/types';
@@ -20,15 +21,23 @@ function check(name: string, cond: boolean, detail?: string): void {
   else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-// A fresh 2-player game, fast-forwarded past the Founding Round and faction
-// reveal (Agrar=P0, Temple=P1), with generous aura for testing.
+// A fresh 2-player game with factions chosen immediately (phase 11 — no more
+// Founding Round to skip past), generous aura for testing. These tests
+// exercise founding/combat mechanics directly, not the recruit-then-wait
+// training queue itself (see verify-opening-flow.ts for that) — place a
+// Builder/Acolyte + a Warrior for each player straight onto the board.
 function setup(): GameState {
   const state = createGameState();
-  endTurn(state);
-  endTurn(state);
   chooseFaction(state, 0, 'agrar');
   chooseFaction(state, 1, 'temple');
   for (const p of state.players) p.aura = 20;
+  for (const player of state.players) {
+    const capital = state.capitals.find(c => c.playerId === player.id)!;
+    const [n0, n1] = hexNeighbors(capital.pos);
+    const tech = state.playerTech[player.id];
+    state.units.push(createUnit('founder', player.id, n0!, tech, player.faction));
+    state.units.push(createUnit('warrior', player.id, n1!, tech, player.faction));
+  }
   return state;
 }
 

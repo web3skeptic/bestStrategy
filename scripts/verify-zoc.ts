@@ -7,7 +7,7 @@
 import { getReachableHexes, hexNeighbors, hexKey, hexDistance } from '../src/hex';
 import {
   createGameState, endTurn, chooseFaction, selectUnit,
-  unitProjectsZoc, getZocHexes,
+  unitProjectsZoc, getZocHexes, createUnit,
 } from '../src/game';
 import type { GameState, UnitType } from '../src/types';
 
@@ -17,13 +17,24 @@ function check(name: string, cond: boolean, detail?: string): void {
   else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
+// A fresh 2-player game with factions chosen immediately (phase 11 — no more
+// Founding Round to skip past). These tests exercise ZOC mechanics directly,
+// not the recruit-then-wait training queue itself (see verify-opening-flow.ts
+// for that) — place a Builder/Acolyte + a Warrior + an Archer for each player
+// straight onto the board.
 function setup(): GameState {
   const state = createGameState();
-  endTurn(state);
-  endTurn(state);
   chooseFaction(state, 0, 'agrar');
   chooseFaction(state, 1, 'temple');
   for (const p of state.players) p.aura = 100;
+  for (const player of state.players) {
+    const capital = state.capitals.find(c => c.playerId === player.id)!;
+    const neighbors = hexNeighbors(capital.pos);
+    const tech = state.playerTech[player.id];
+    state.units.push(createUnit('founder', player.id, neighbors[0]!, tech, player.faction));
+    state.units.push(createUnit('warrior', player.id, neighbors[1]!, tech, player.faction));
+    state.units.push(createUnit('archer', player.id, neighbors[2]!, tech, player.faction));
+  }
   return state;
 }
 
