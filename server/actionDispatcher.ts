@@ -42,7 +42,7 @@ import {
   TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
 } from '../src/types';
 import {
-  SITE_ESTABLISH_COST, STRUCTURES,
+  SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS,
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
 } from '../src/factions';
@@ -229,8 +229,33 @@ export function buildRulesPayload(): Record<string, unknown> {
     unitUnlock: n.unitUnlock ?? null,
   }));
 
+  // §37/§38 — once a player's faction is revealed, recruiting uses THESE
+  // numbers (via getUnitCost/getUnlockedUnits/applyFactionToStats), not the
+  // generic `units` block above — the generic block is only the pre-reveal
+  // baseline / display fallback. Keyed by the same universal `slot` (UnitType)
+  // so a faction's flavor of a slot is directly comparable to `units[slot]`.
+  const factionRosters: Record<string, unknown> = {};
+  for (const [faction, roster] of Object.entries(FACTION_UNITS)) {
+    factionRosters[faction] = roster
+      .filter(u => u.slot !== 'founder') // Builder/Acolyte: display-name-only, never recruitable — see foundingRound.factions below
+      .map(u => ({
+        slot: u.slot,
+        name: u.displayName,
+        cost: u.cost,
+        hp: u.hp,
+        atk: u.attack,
+        def: u.defense,
+        spd: u.speed,
+        rng: u.range,
+        vision: u.vision,
+        unitClass: u.unitClass,
+        earlyUnlock: u.earlyUnlock,
+      }));
+  }
+
   return {
     units: unitTypes,
+    factions: factionRosters,
     techTree,
     strategicSites: {
       note: 'Replaces the old instant-capture temple system entirely (phase 3). A neutral or ruined site is founded by a Builder/Acolyte into a City (Agrar) or an actual Temple (Temple faction) over a multi-turn process — see the "found" action and the foundingRound/structures blocks below.',
@@ -340,7 +365,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       ],
     },
     foundingRound: {
-      note: 'Round 1 (turnNumber === 1) is a neutral Founding Round — move-only scouting for both players, no combat/recruit/research/capture/build. Once BOTH players have ended turn 1, the match pauses (turnNumber becomes 2 but nothing else is legal) until EACH player independently submits choose-faction. The instant both have chosen, they reveal simultaneously and Round-1 Warrior/Archer/Founder units convert to that faction\'s stats (Founder becomes Builder/Agrar or Acolyte/Temple — display name only, stats are identical).',
+      note: 'Round 1 (turnNumber === 1) is a neutral Founding Round — move-only scouting for both players, no combat/recruit/research/capture/build. Once BOTH players have ended turn 1, the match pauses (turnNumber becomes 2 but nothing else is legal) until EACH player independently submits choose-faction. The instant both have chosen, they reveal simultaneously and Round-1 Warrior/Archer/Founder units convert to that faction\'s stats (Founder becomes Builder/Agrar or Acolyte/Temple — display name only, stats are identical). From then on, every "recruit" draws from that player\'s full faction roster — see the top-level `factions` block for the real per-faction costs/stats/unlock timing.',
       factions: ['agrar', 'temple'],
     },
     winConditions: [

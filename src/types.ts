@@ -45,7 +45,7 @@ export const UNIT_COSTS: Record<UnitType, number> = {
   archer:       2,
   catapult:     4,
   horserider:   3,
-  heavyknight:  7,
+  heavyknight:  6,
   spearsman:    2,
   healer:       3,
   damageBooster: 3,

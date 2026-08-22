@@ -13,7 +13,8 @@
     "test:founding-round": "tsx scripts/verify-founding-round.ts",
     "test:strategic-sites": "tsx scripts/verify-strategic-sites.ts",
     "test:economy": "tsx scripts/verify-economy.ts",
-    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites && npm run test:economy",
+    "test:faction-rosters": "tsx scripts/verify-faction-rosters.ts",
+    "test": "npm run test:combat && npm run test:founding-round && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters",
     "build:root": "vite build"
   },
   "keywords": [],

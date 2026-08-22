@@ -66,7 +66,7 @@ export function botCandidates(s: GameState): Micro[] {
 
   // Recruit (few free structures × unlocked affordable types).
   if (getPopulationCount(s, pid) < getPopulationCap(s, pid)) {
-    const unlocked = getUnlockedUnits(s.playerTech[pid]!);
+    const unlocked = getUnlockedUnits(s.playerTech[pid]!, s.players[pid]?.faction);
     for (const structure of getOwnedStructures(s, pid)) {
       if (getUnitAt(s, structure.pos)) continue;
       for (const type of unlocked) if (canAfford(s, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: structure.id } });

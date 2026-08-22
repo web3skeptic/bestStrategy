@@ -54,6 +54,8 @@ import {
   isAwaitingFactionReveal,
   chooseFaction,
   founderDisplayName,
+  unitDisplayName,
+  getUnitCost,
 } from './game';
 import { getUnitThumbnail, getPortalThumbnail } from './unitThumbnails';
 import { runAITurn, runHardAITurn } from './ai';
@@ -1470,7 +1472,7 @@ window.addEventListener('resize', () => {
 
 function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
-  const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
+  const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
   // A unit standing on the selected structure's tile blocks spawning (can't
   // stack onto an occupied spawn tile) — grey every card while occupied.
   const selStructure = state.selectionMode === 'site' && state.selectedSiteId
@@ -1496,9 +1498,14 @@ function updateUnitCards(): void {
       catch { /* keep the PNG fallback set in buildUnitCards */ }
     }
 
-    // Refresh cost (editable via the settings panel).
+    // Faction-flavored name (§37/§38 — e.g. Pikeman vs Spearsman for the same slot).
+    const name = card.querySelector('.unit-card-name')!;
+    name.textContent = unitDisplayName(type, player.faction);
+
+    // Refresh cost (faction-flavored; base UNIT_COSTS is still editable via
+    // the settings panel and used as the fallback pre-reveal).
     const cost = card.querySelector('.unit-card-cost')!;
-    cost.innerHTML = `<span class="cost-icon">⚡</span>${UNIT_COSTS[type]}`;
+    cost.innerHTML = `<span class="cost-icon">⚡</span>${getUnitCost(type, player.faction)}`;
   }
   // Visible card count can change as units unlock → recheck overflow/arrows.
   updateSpawnArrows();
@@ -2077,7 +2084,8 @@ function handleSpawnBtn(type: UnitType): void {
   sendOrCall({ type: 'action_spawn', templeId: structureId, unitType: type }, () => {
     try {
       if (spawnUnit(state, structureId, type)) {
-        logCombat(`Spawned ${type} for ${UNIT_COSTS[type]} aura`);
+        const spawnPlayer = getCurrentPlayer(state);
+        logCombat(`Spawned ${unitDisplayName(type, spawnPlayer.faction)} for ${getUnitCost(type, spawnPlayer.faction)} aura`);
         const structure = getOwnedStructures(state, getCurrentPlayer(state).id).find(s => s.id === structureId);
         if (structure) {
           const newUnit = getUnitAt(state, structure.pos);

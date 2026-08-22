@@ -83,7 +83,7 @@ export function legalMicros(state: GameState): Micro[] {
 
   // Recruit: for each owned, unoccupied structure (Capital or completed City/
   // Temple), each unlocked+affordable unit type (population cap permitting).
-  const unlocked = getUnlockedUnits(state.playerTech[pid]!);
+  const unlocked = getUnlockedUnits(state.playerTech[pid]!, state.players[pid]?.faction);
   const underCap = getPopulationCount(state, pid) < getPopulationCap(state, pid);
   if (underCap) {
     for (const structure of getOwnedStructures(state, pid)) {

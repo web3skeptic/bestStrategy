@@ -14,7 +14,7 @@ import {
 } from './hex';
 import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
-  FACTION_UNITS, FactionUnitDef, STRUCTURES, SITE_ESTABLISH_COST,
+  FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, FARM_SLOTS_PER_CITY, FARM_DISTANCE_FROM_CITY,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
@@ -125,10 +125,16 @@ export const UNIT_STATS: Record<UnitType, UnitStats> = {
 
 // ── Tech helpers ──
 
+// Fallback set for when no faction is known yet (e.g. the Founding Round,
+// before reveal — recruiting itself is blocked then by isMatchSetupRestricted,
+// so this only matters for tooling that calls getUnlockedUnits pre-reveal).
 export const DEFAULT_UNLOCKED_UNITS: UnitType[] = ['warrior', 'archer', 'horserider'];
 
-export function getUnlockedUnits(tech: PlayerTech): Set<UnitType> {
-  const unlocked = new Set<UnitType>(DEFAULT_UNLOCKED_UNITS);
+// §39 — once a player's faction is known, their early-unlock set (see
+// EARLY_UNLOCKED_SLOTS) replaces the generic default; tech then adds more.
+export function getUnlockedUnits(tech: PlayerTech, faction?: FactionId | null): Set<UnitType> {
+  const base = faction ? EARLY_UNLOCKED_SLOTS[faction] : DEFAULT_UNLOCKED_UNITS;
+  const unlocked = new Set<UnitType>(base);
   for (const node of TECH_NODES) {
     if (node.unitUnlock && tech.researched.has(node.id)) {
       unlocked.add(node.unitUnlock);
@@ -157,19 +163,18 @@ function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): U
   return stats;
 }
 
-// Types that get faction-flavored stats once their owner's faction is
-// revealed (§37/§38 Agrar/Temple rosters). Other unit types keep the
-// universal roster's numbers until faction-specific recruitment is built.
-const FACTION_FLAVORED_TYPES: ReadonlySet<UnitType> = new Set(['warrior', 'archer']);
-
+// Look up a faction's flavor of a given universal-roster "slot" (§37/§38 —
+// e.g. slot 'spearsman' -> Agrar's Pikeman or Temple's Spearsman).
 function factionUnitDef(faction: FactionId, type: UnitType): FactionUnitDef | undefined {
-  return FACTION_UNITS[faction].find(u => u.id === `${faction}_${type}`);
+  return FACTION_UNITS[faction].find(u => u.slot === type);
 }
 
 // Overwrite a unit's combat stats with its faction's flavor of the same base
-// type (§37/§38). No-op for types without a faction-specific entry.
+// slot (§37/§38). Founder deliberately excluded — Builder/Acolyte are
+// mechanically identical, display-name-only (§6, see unitDisplayName). No-op
+// for any other type without a faction-specific entry.
 function applyFactionToStats(stats: UnitStats, type: UnitType, faction: FactionId | null | undefined): UnitStats {
-  if (!faction || !FACTION_FLAVORED_TYPES.has(type)) return stats;
+  if (!faction || type === 'founder') return stats;
   const def = factionUnitDef(faction, type);
   if (!def) return stats;
   stats.maxHp = def.hp;
@@ -180,6 +185,36 @@ function applyFactionToStats(stats: UnitStats, type: UnitType, faction: FactionI
   stats.vision = def.vision;
   return stats;
 }
+
+// Faction-flavored recruit cost (§37/§38 — e.g. Agrar's Knight costs more
+// than Temple's Raider). Falls back to the universal UNIT_COSTS baseline for
+// founder (never recruitable) or when no faction is known yet.
+export function getUnitCost(type: UnitType, faction: FactionId | null | undefined): number {
+  if (faction && type !== 'founder') {
+    const def = factionUnitDef(faction, type);
+    if (def) return def.cost;
+  }
+  return UNIT_COSTS[type];
+}
+
+// Faction-flavored display name for a recruitable unit slot (e.g. 'spearsman'
+// -> "Pikeman" for Agrar, "Spearsman" for Temple). Falls back to the generic
+// engine name pre-reveal. Founder has its own dedicated helper (see
+// founderDisplayName) since it's never recruitable and handled separately
+// throughout the UI.
+export function unitDisplayName(type: UnitType, faction: FactionId | null | undefined): string {
+  if (faction) {
+    const def = factionUnitDef(faction, type);
+    if (def) return def.displayName;
+  }
+  return GENERIC_UNIT_NAMES[type];
+}
+
+const GENERIC_UNIT_NAMES: Record<UnitType, string> = {
+  warrior: 'Warrior', archer: 'Archer', catapult: 'Catapult', horserider: 'Horserider',
+  heavyknight: 'Heavy Knight', spearsman: 'Spearsman', healer: 'Healer',
+  damageBooster: 'Damage Booster', rangeBooster: 'Range Booster', founder: 'Founder',
+};
 
 /**
  * Rebuild a living unit's stats from base + currently-researched tech +
@@ -861,14 +896,15 @@ export function isMatchSetupRestricted(state: GameState): boolean {
 
 // Convert a player's Round-1 neutral units to their revealed faction's flavor
 // (§37/§38 stat tables). Founder keeps its stats (identical either faction,
-// §6) — only its DISPLAY name changes (see factionDisplayName), driven purely
-// by Player.faction, no unit-level field needed.
+// §6) — only its DISPLAY name changes (see founderDisplayName), driven purely
+// by Player.faction, no unit-level field needed. rebuildUnitStats/
+// applyFactionToStats already no-op for 'founder', so this can run
+// unconditionally over every living unit.
 function applyFactionConversion(state: GameState, player: Player): void {
   if (!player.faction) return;
   const tech = state.playerTech[player.id]!;
   for (const unit of state.units) {
     if (unit.playerId !== player.id || unit.hp <= 0) continue;
-    if (!FACTION_FLAVORED_TYPES.has(unit.type)) continue;
     rebuildUnitStats(unit, tech, player.faction);
   }
 }
@@ -1167,13 +1203,13 @@ export function researchTech(state: GameState, techId: TechId): boolean {
 
 export function canAfford(state: GameState, unitType: UnitType): boolean {
   const player = getCurrentPlayer(state);
-  if (player.aura < UNIT_COSTS[unitType]) return false;
+  if (player.aura < getUnitCost(unitType, player.faction)) return false;
   // Check population cap
   const cap = getPopulationCap(state, player.id);
   const count = getPopulationCount(state, player.id);
   if (count >= cap) return false;
-  // Check unit is unlocked via tech
-  const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
+  // Check unit is unlocked (faction early-unlock + tech)
+  const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
   return unlocked.has(unitType);
 }
 
@@ -1188,7 +1224,7 @@ export function spawnUnit(state: GameState, structureId: string, unitType: UnitT
   // check below: the freshly spawned unit stands on the structure, so the
   // player must move it off before that structure can spawn again.
 
-  const cost = UNIT_COSTS[unitType];
+  const cost = getUnitCost(unitType, player.faction);
   if (player.aura < cost) return false;
 
   // Population cap check
@@ -1196,8 +1232,8 @@ export function spawnUnit(state: GameState, structureId: string, unitType: UnitT
   const count = getPopulationCount(state, player.id);
   if (count >= cap) return false;
 
-  // Tech unlock check
-  const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
+  // Unlock check (faction early-unlock + tech)
+  const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
   if (!unlocked.has(unitType)) return false;
 
   if (getUnitAt(state, structure.pos)) return false;

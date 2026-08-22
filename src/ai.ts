@@ -19,6 +19,7 @@ import {
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
   calculateEncirclement, isForestUnitRevealed, endTurn,
   getUnitTypeMultiplier,
+  getUnitCost,
 } from './game';
 import { runRLHardTurn } from '../ml/botClient';
 
@@ -445,10 +446,12 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
   const count = (t: UnitType) => mine.filter(u => u.type === t).length;
   const army = mine.length;
   const combat = mine.filter(u => !isSupport(u.type)).length;
+  const faction = state.players[aiPlayerId]?.faction;
+  const cost = (t: UnitType) => getUnitCost(t, faction);
 
   if (hard) {
     // Keep exactly one damage booster as a force multiplier once a core exists.
-    if (unlocked.has('damageBooster') && count('damageBooster') === 0 && combat >= 3 && aura >= UNIT_COSTS.damageBooster) {
+    if (unlocked.has('damageBooster') && count('damageBooster') === 0 && combat >= 3 && aura >= cost('damageBooster')) {
       return 'damageBooster';
     }
     // Buy the best affordable unit, but cap the priciest types so the army stays
@@ -458,19 +461,19 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
       ['spearsman', 0.6], ['archer', 1], ['warrior', 1],
     ];
     for (const [t, maxShare] of prefs) {
-      if (!unlocked.has(t) || aura < UNIT_COSTS[t]) continue;
+      if (!unlocked.has(t) || aura < cost(t)) continue;
       if (count(t) > Math.ceil(army * maxShare)) continue;
       return t;
     }
-    if (unlocked.has('warrior') && aura >= UNIT_COSTS.warrior) return 'warrior';
+    if (unlocked.has('warrior') && aura >= cost('warrior')) return 'warrior';
     return null;
   }
 
   // Normal AI: cheap, simple mix.
-  if (unlocked.has('horserider') && aura >= UNIT_COSTS.horserider && Math.random() < 0.3) return 'horserider';
-  if (unlocked.has('archer') && aura >= UNIT_COSTS.archer && Math.random() < 0.5) return 'archer';
-  if (unlocked.has('warrior') && aura >= UNIT_COSTS.warrior) return 'warrior';
-  if (unlocked.has('archer') && aura >= UNIT_COSTS.archer) return 'archer';
+  if (unlocked.has('horserider') && aura >= cost('horserider') && Math.random() < 0.3) return 'horserider';
+  if (unlocked.has('archer') && aura >= cost('archer') && Math.random() < 0.5) return 'archer';
+  if (unlocked.has('warrior') && aura >= cost('warrior')) return 'warrior';
+  if (unlocked.has('archer') && aura >= cost('archer')) return 'archer';
   return null;
 }
 
@@ -479,7 +482,7 @@ function spawnPass(state: GameState, aiPlayerId: number, hard: boolean, actions:
   for (const structure of getOwnedStructures(state, aiPlayerId)) {
     if (getUnitAt(state, structure.pos)) continue; // occupied — can't spawn (throttles multi-spawn)
     if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
-    const unlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!);
+    const unlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!, state.players[aiPlayerId]?.faction);
     const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, hard);
     if (!type) continue;
     observe(state, 'recruit', { unitType: type, templeId: structure.id });
