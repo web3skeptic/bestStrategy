@@ -227,11 +227,13 @@ export const PLAYER_COLORS: readonly string[] = [
 ];
 
 // Map radius as a function of player count: 2-player games (incl. vs-AI) use a
-// tighter radius-5 board for faster, more contested matches; 3+ players keep the
-// classic radius 6 at 2p baseline, growing by 1 per extra player so every player
-// still gets a fair start.
+// radius-7 board (169 hexes); 3+ players keep the classic radius 6 at 2p
+// baseline, growing by 1 per extra player so every player still gets a fair start.
 export function mapRadiusForPlayers(numPlayers: number): number {
-  return numPlayers <= 2 ? 5 : 6 + Math.max(0, numPlayers - 2);
+  // 1v1 radius 7 (169 hexes) is the closest a hex ring can get to doubling
+  // the old radius-5 board (91 hexes) — hex-count only ever lands on
+  // 3R²+3R+1, so an exact 2x (182) isn't reachable at any integer radius.
+  return numPlayers <= 2 ? 7 : 6 + Math.max(0, numPlayers - 2);
 }
 
 // One neutral strategic site per player (2p → 1 Capital each + 2 neutral

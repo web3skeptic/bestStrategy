@@ -431,7 +431,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       startingUnits: 'Zero. Every unit, including the Builder/Acolyte, is recruited — see openingFlow above and the top-level `factions` block for per-faction costs/stats/unlock timing.',
       siteLayout: 'One permanent Capital per player + neutralSiteCountForPlayers(N) shared neutral strategic sites (2p → 2 Capitals + 2 neutral sites), placed randomly each game with a minimum separation and maximized spread.',
       mapScalesWithPlayers: true,
-      mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2); 1v1 (the only supported online match size) is a fixed radius 5',
+      mapRadiusFormula: 'mapRadiusForPlayers(N) = 6 + max(0, N-2) for N>2; 1v1 (the only supported online match size) is a fixed radius 7',
       mapRadiusExamples: { '2p': mapRadiusForPlayers(2), '3p': mapRadiusForPlayers(3), '4p': mapRadiusForPlayers(4) },
       neutralSiteCountFormula: 'neutralSiteCountForPlayers(N) = N',
       note: 'Online rooms are 1v1 only. N-player (3-6) game creation still works in this engine/headless API for tooling but is not an online-lobby-facing feature.',
