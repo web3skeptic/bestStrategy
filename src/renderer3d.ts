@@ -340,9 +340,11 @@ export class Renderer3D {
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
     // Steeper, more top-down default pitch (~33° from vertical vs the old ~48°):
     // a flatter, more bird's-eye view makes individual hexes easier to pick and
-    // keeps raised hills from hiding tiles behind them. Distance is kept ~equal
-    // to the old framing so the opening view of the home temple still reads well.
-    this.camera.position.set(0, 20, 13);
+    // keeps raised hills from hiding tiles behind them. Distance is scaled to
+    // 1/1.3 of the original (0,20,13) framing — same pitch, ~30% closer, so the
+    // whole board reads ~30% larger on screen (this is the base offset that
+    // both the initial view AND focusOnHex's default zoom dolly from).
+    this.camera.position.set(0, 15.4, 10);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
