@@ -792,9 +792,14 @@ interface SiteLayout {
 }
 
 // Randomly place N Capitals + M neutral strategic sites so that:
-//  • no two sites are closer than MIN_TEMPLE_SEPARATION (hex distance),
-//  • player Capitals are spread out (prefer a larger separation, backing off until
-//    a layout is found) and never adjacent to each other,
+//  • 1v1 specifically: the two Capitals are ALWAYS placed at the map's true
+//    maximum possible distance apart (antipodal boundary hexes — see the
+//    numPlayers===2 branch below) so the two tribes can never start close
+//    together — this is deterministic every game, only which side of the
+//    map each player lands on is randomized;
+//  • 3+ players: no two sites are closer than MIN_TEMPLE_SEPARATION (hex
+//    distance), Capitals are spread out as widely as the map allows
+//    (backing off until a layout is found) and never adjacent to each other,
 //  • each Capital has room for its starting units on free neighbour tiles,
 //  • sites MAY sit on the map border (edge hexes are eligible).
 // Never hangs / crashes: the separation is relaxed down to MIN_TEMPLE_SEPARATION,
@@ -868,6 +873,34 @@ function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): 
         m = Math.min(m, hexDistance(pts[i]!, pts[j]!));
     return m;
   };
+
+  // 1v1: Capitals always sit at TRUE maximum distance apart — antipodal
+  // points on the map's outer ring (hexDistance = 2*mapRadius, the largest
+  // distance any two hexes on a radius-`mapRadius` disk can ever be, since
+  // hexDistance(hex, -hex) = 2*hexDistance(origin, hex) — see the game
+  // design note "so the tribes don't meet too early, and it's predictable").
+  // A random boundary hex is still chosen each game (so the two starting
+  // corners of the map vary), but the SEPARATION itself is never anything
+  // less than the map's full diameter, unlike the general N-player spread
+  // below (which only maximizes, it doesn't guarantee the true max).
+  if (numPlayers === 2) {
+    const ring = all.filter(hex => hexDistance({ q: 0, r: 0 }, hex) === mapRadius);
+    const withRoom = shuffle(ring.filter(hex => freeNeighbors(hex, []).length >= STARTING_UNITS_PER_PLAYER));
+    const pool = withRoom.length > 0 ? withRoom : shuffle([...ring]);
+    for (const a of pool) {
+      const b: HexCoord = { q: -a.q, r: -a.r }; // antipodal — always on-map, always 2*mapRadius away
+      const starts = [a, b];
+      const neutrals = spread(numNeutral, starts, MIN_TEMPLE_SEPARATION, false);
+      if (!neutrals) continue;
+      const unitPositions = assignUnits(starts, neutrals);
+      if (!unitPositions) continue;
+      return { starts, neutrals, unitPositions };
+    }
+    // Falls through to the general spread/greedy logic below only if no
+    // boundary hex could also fit the neutral sites + starting-unit room
+    // (astronomically unlikely at the game's actual map sizes) — still
+    // guaranteed to never hang or crash.
+  }
 
   // Build several complete layouts and keep the most spread-out one (largest
   // minimum pairwise temple distance).
