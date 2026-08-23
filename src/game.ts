@@ -1401,38 +1401,72 @@ export function buyDevotion(state: GameState, templeSiteId: string): boolean {
   return true;
 }
 
-// ── Agrar Roads (§23-25) ──
+// ── Agrar Roads (§23-25; adjacency + network-connectivity correction) ──
 //
-// Agrar-only physical road tiles, built one hex at a time by the Builder
-// (the 'founder'-type unit, mechanically identical either faction but only
-// Agrar's flavor of it may build roads — Temple's Acolyte has no equivalent,
-// §25). Building consumes the Builder's whole activation, same as founding.
+// Agrar-only physical road tiles, built by the Builder ('founder'-type unit,
+// mechanically identical either faction but only Agrar's flavor may build
+// roads — Temple's Acolyte has no equivalent, §25). A new Road hex must be a
+// direct NEIGHBOUR of the Builder (same as Farm placement — the Builder
+// picks an adjacent tile, not just its own) AND itself be directly adjacent
+// to the Capital, an active Farm, or another existing Road of that same
+// player — the network only extends link by link out from something real,
+// it can never appear disconnected in the middle of nowhere. Building
+// consumes the Builder's whole activation, same as founding, and resolves
+// immediately (no multi-round construction, unlike Farms).
 
 export function getRoadAt(state: GameState, pos: HexCoord): Road | undefined {
   return state.roads.find(r => hexEqual(r.pos, pos));
 }
 
-export function canBuildRoad(state: GameState, unit: Unit): boolean {
+// Mirrors getValidFarmHexes: every hex a Builder could legally lay a Road on
+// right now — a direct neighbour of the Builder, empty/on-map/unoccupied,
+// not under a site/Capital/Farm, and itself adjacent to the Capital, an
+// active Farm, or an existing Road (all belonging to the Builder's own
+// player — the network only ever grows from its own infrastructure).
+export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return [];
+  const capital = state.capitals.find(c => c.playerId === player.id);
+  const anchors: HexCoord[] = [
+    ...(capital ? [capital.pos] : []),
+    ...activeFarmsOf(state, player.id).map(f => f.pos),
+    ...state.roads.filter(r => r.ownerId === player.id).map(r => r.pos),
+  ];
+  const result: HexCoord[] = [];
+  for (const hex of hexNeighbors(unit.pos)) {
+    if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue; // off-map
+    const key = hexKey(hex);
+    if (state.walls.has(key)) continue; // no roads over impassable mountains
+    if (getRoadAt(state, hex)) continue; // already a road here
+    if (getStrategicSiteAt(state, hex)) continue; // no roads under a site
+    if (state.capitals.some(c => hexEqual(c.pos, hex))) continue; // no roads under a Capital
+    if (state.farms.some(f => hexEqual(f.pos, hex))) continue; // no roads under a Farm (founding or active)
+    if (getUnitAt(state, hex)) continue;
+    if (!anchors.some(a => hexDistance(a, hex) === 1)) continue; // must be adjacent to the Capital, a Farm, or an existing Road
+    result.push(hex);
+  }
+  return result;
+}
+
+export function canBuildRoad(state: GameState, unit: Unit, pos: HexCoord): boolean {
   if (isMatchSetupRestricted(state)) return false;
   if (unit.type !== 'founder' || unit.hasMoved || unit.hasAttacked) return false;
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || player.faction !== 'agrar') return false;
-  if (getRoadAt(state, unit.pos)) return false; // already a road here
-  if (getStructureAt(state, unit.pos)) return false; // no roads under Capital/Temple/Farm
-  if (state.farms.some(f => hexEqual(f.pos, unit.pos))) return false; // nor under a still-founding Farm
-  const cost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
-  return player.aura >= cost;
+  const cost = state.pillagedRoadHexes.has(hexKey(pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+  if (player.aura < cost) return false;
+  return getValidRoadHexes(state, unit).some(h => hexEqual(h, pos));
 }
 
-export function buildRoad(state: GameState, unitId: string): boolean {
+export function buildRoad(state: GameState, unitId: string, pos: HexCoord): boolean {
   const unit = state.units.find(u => u.id === unitId && u.hp > 0);
-  if (!unit || !canBuildRoad(state, unit)) return false;
+  if (!unit || !canBuildRoad(state, unit, pos)) return false;
   const player = state.players.find(p => p.id === unit.playerId)!;
-  const key = hexKey(unit.pos);
+  const key = hexKey(pos);
   const cost = state.pillagedRoadHexes.has(key) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
   player.aura -= cost;
   state.pillagedRoadHexes.delete(key);
-  state.roads.push({ pos: { ...unit.pos }, ownerId: player.id });
+  state.roads.push({ pos: { ...pos }, ownerId: player.id });
   unit.hasMoved = true;
   unit.hasAttacked = true;
   return true;

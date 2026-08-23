@@ -33,7 +33,7 @@ import {
   chooseFaction, isAwaitingFactionReveal,
   getOwnedStructures,
   startFarm, canStartFarm, getValidFarmHexes, buyDevotion,
-  canBuildRoad, buildRoad,
+  canBuildRoad, buildRoad, getValidRoadHexes,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -80,7 +80,7 @@ export type LegalAction =
   | { type: 'attack'; targetId: string }
   | { type: 'attack-structure'; targetPos: HexCoord }
   | { type: 'found'; siteId: string; targetState: 'temple' }
-  | { type: 'build-road' }
+  | { type: 'build-road'; targetPos: HexCoord }
   | { type: 'build-farm'; targetPos: HexCoord };
 
 export type LegalMovesPerPlayer = Record<string /* unitId */, LegalAction[]>;
@@ -168,17 +168,16 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   const foundingCheck = canStartFounding(state, unit);
   if (foundingCheck) actions.push({ type: 'found', siteId: foundingCheck.site.id, targetState: foundingCheck.targetState });
 
-  // Build Road action (§23-25, Agrar-only).
-  if (canBuildRoad(state, unit)) actions.push({ type: 'build-road' });
-
-  // Build Farm action (§6-9, Agrar-only) — one representative legal hex per
-  // unit, mirroring the build-road entry; the client/UI presents the full
-  // set via getValidFarmHexes for actual placement.
+  // Build Road / Build Farm actions (§23-25 / §6-9, Agrar-only) — every
+  // legal target hex, same pattern for both (the client/UI presents the
+  // full set via getValidRoadHexes/getValidFarmHexes for actual placement).
   if (unit.type === 'founder') {
     const player = state.players.find(p => p.id === unit.playerId);
     if (player?.faction === 'agrar') {
-      const validHexes = getValidFarmHexes(state, unit);
-      for (const hex of validHexes) {
+      for (const hex of getValidRoadHexes(state, unit)) {
+        if (canBuildRoad(state, unit, hex)) actions.push({ type: 'build-road', targetPos: hex });
+      }
+      for (const hex of getValidFarmHexes(state, unit)) {
         if (canStartFarm(state, unit, hex)) actions.push({ type: 'build-farm', targetPos: hex });
       }
     }
@@ -340,7 +339,8 @@ export function buildRulesPayload(): Record<string, unknown> {
       },
     },
     roads: {
-      note: 'Agrar-only physical road tiles (phase 7, §23-25; movement bonus restricted to Agrar phase 11 §26). Only a Builder (a "founder"-type unit belonging to an Agrar player) can build one, on the hex it\'s currently standing on — consumes its whole activation, same as founding. Temple has no equivalent way to build one.',
+      note: 'Agrar-only physical road tiles (phase 7, §23-25; movement bonus restricted to Agrar phase 11 §26; adjacency + network-connectivity placement added afterward). Only a Builder (a "founder"-type unit belonging to an Agrar player) can build one — consumes its whole activation, same as founding, and resolves immediately (no multi-round construction, unlike Farms). Temple has no equivalent way to build one.',
+      placement: 'A new Road hex must be a direct NEIGHBOUR of the Builder (same as Farm placement — see economy.agrarFarms.placement) AND itself be directly adjacent to the Capital, an active Farm, or an existing Road belonging to that same player — the network only ever extends link by link out from something real, it can never appear disconnected in the middle of nowhere. See getValidRoadHexes.',
       costPerHex: ROAD_COST_PER_HEX,
       movementBonus: { amount: ROAD_MOVEMENT_BONUS, note: 'Applies to Agrar units ONLY (only Agrar can build a Road in the first place). A Temple unit moving over an Agrar Road receives no bonus — it treats the tile as normal terrain.' },
       pillage: {
@@ -408,7 +408,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         'found — { unitId } start founding at the neutral/ruined site the Acolyte is standing on (same restriction, Temple only) — see strategicSites above.',
         'build-farm — { unitId, pos } the Builder starts building a Farm at a valid adjacent hex (same restriction) — Agrar only, see economy.agrarFarms above. Completes next round like founding.',
         'buy-devotion — { templeId (owned Temple id) } purchase the next Devotion level on that Temple (same restriction) — Temple faction only, see economy above.',
-        'build-road — { unitId } the Builder builds a road on its current hex (same restriction) — Agrar faction only, see roads above.',
+        'build-road — { unitId, pos } the Builder builds a road at a valid adjacent hex (same restriction) — Agrar faction only, see roads above. Resolves immediately (unlike build-farm).',
         'research — research a tech (same restriction). A tech node with a `faction` set (see techTree) may only be researched by a player of that faction.',
         'end-turn — end the current player\'s turn (blocked only during the pre-game faction-reveal pause)',
         'resign — concede the game, opponent wins (always available)',
@@ -643,11 +643,11 @@ export function executeAction(
       }
 
       case 'build-road': {
-        const { unitId } = params as { unitId?: string };
-        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId for road build');
-        const ok = buildRoad(state, unitId);
-        if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a road here (not a Builder, not Agrar, tile occupied by a road/structure, already acted, or insufficient aura)`);
-        log.push(`Player ${playerSlot} built a road with unit ${unitId}`);
+        const { unitId, pos } = params as { unitId?: string; pos?: HexCoord };
+        if (!unitId || !pos) return fail(state, playerSlot, action, 'Missing unitId or pos for road build');
+        const ok = buildRoad(state, unitId, pos);
+        if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a road at (${pos.q},${pos.r}) (not a Builder, not Agrar, not adjacent to the Builder, not adjacent to the Capital/a Farm/an existing Road, tile occupied, already acted, or insufficient aura)`);
+        log.push(`Player ${playerSlot} built a road at (${pos.q},${pos.r}) with unit ${unitId}`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

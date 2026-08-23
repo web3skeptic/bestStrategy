@@ -1,16 +1,19 @@
-// Phase 7 verification: Agrar-only physical Roads (design brief §23-25).
-// Exercises the real engine mutators end-to-end (no forked logic) —
-// createGameState, chooseFaction, buildRoad, selectUnit, moveUnit.
+// Phase 7 verification, plus the post-phase-11 adjacency + network-
+// connectivity correction: Agrar-only physical Roads (design brief §23-25;
+// movement bonus restricted to Agrar §26; a new Road hex must now be
+// adjacent to the Builder AND itself adjacent to the Capital/a Farm/an
+// existing Road). Exercises the real engine mutators end-to-end (no forked
+// logic) — createGameState, chooseFaction, buildRoad, selectUnit, moveUnit.
 //
 // Run with: npx tsx scripts/verify-roads.ts
 import {
-  createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, getRoadAt,
+  createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, getRoadAt, getValidRoadHexes,
   getEffectiveSpeed, selectUnit, moveUnit, getPlayerCapital, getStructureAt,
-  createUnit,
+  createUnit, canStartFarm, startFarm,
 } from '../src/game';
-import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST } from '../src/factions';
-import { hexNeighbors, hexEqual, hexKey } from '../src/hex';
-import type { GameState } from '../src/types';
+import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, AGRAR_FARM_COST } from '../src/factions';
+import { hexNeighbors, hexEqual, hexKey, hexDistance } from '../src/hex';
+import type { GameState, Unit } from '../src/types';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: string): void {
@@ -38,102 +41,159 @@ function setup(): GameState {
   return state;
 }
 
-function founderOf(state: GameState, playerId: number) {
+function founderOf(state: GameState, playerId: number): Unit {
   return state.units.find(u => u.playerId === playerId && u.type === 'founder')!;
 }
 
-// Places playerId's founder on a hex far from any structure/other unit, with
-// a fresh activation, and makes it that player's turn. Off-map coordinates
-// are fine here — canBuildRoad doesn't bounds-check — but any test that later
-// needs a unit to WALK onto this hex (pillage tests) must use an in-bounds
-// pos and clearHex() instead.
-function primeBuilder(state: GameState, playerId: number, pos = { q: 20, r: 20 }) {
-  const founder = founderOf(state, playerId);
-  founder.pos = { ...pos };
-  founder.hasMoved = false; founder.hasAttacked = false;
-  state.currentPlayerIndex = playerId;
-  return founder;
-}
-
-// Force a specific in-bounds hex AND its neighbours to be empty, passable
-// plain terrain: relocate any capital/site/farm/unit occupying them far
-// off-map, and strip any wall/hill/forest. Used by the pillage tests, which
-// need getReachableHexes (bounded by mapRadius, blocked by walls) to
-// actually walk a unit onto (and through, from an adjacent hex) the road hex
-// — real gameplay could never place a unit ON a wall (movement always
-// avoids them), but this test does via a raw `.pos =` write, so it must
-// clear the terrain explicitly rather than relying on normal move validation.
-function clearHex(state: GameState, pos: { q: number; r: number }): void {
-  const far = state.mapRadius * 5;
-  for (const c of state.capitals) if (hexEqual(c.pos, pos)) c.pos = { q: far, r: far };
-  for (const s of state.strategicSites) if (hexEqual(s.pos, pos)) s.pos = { q: far, r: far };
-  for (const f of state.farms) if (hexEqual(f.pos, pos)) f.pos = { q: far, r: far };
-  for (const u of state.units) if (hexEqual(u.pos, pos)) u.pos = { q: far, r: far };
-  for (const hex of [pos, ...hexNeighbors(pos)]) {
-    const key = hexKey(hex);
-    state.hills.delete(key);
-    state.walls.delete(key);
-    state.forests.delete(key);
+// Recentres playerId's Capital to the map's exact center and clears a wide
+// area around it (terrain + every unit/site/other-Capital found there), same
+// rationale as the identical helper in verify-economy.ts — a Capital placed
+// near the edge (a normal, legitimate layout) can clip the empty space a
+// Road-adjacency/connectivity test needs. Places the Builder directly
+// adjacent to the Capital afterward — guarantees at least one valid Road
+// target exists (a hex that's a neighbour of BOTH the Builder and the
+// Capital — see getValidRoadHexes).
+function clearRoadArea(state: GameState, playerId: number, radius = 5): Unit {
+  const capital = state.capitals.find(c => c.playerId === playerId)!;
+  capital.pos = { q: 0, r: 0 };
+  const far = state.mapRadius * 6;
+  let offset = 0;
+  for (const c of state.capitals) if (c.playerId !== playerId && hexDistance(c.pos, capital.pos) <= radius) c.pos = { q: far, r: far + offset++ };
+  for (const s of state.strategicSites) if (hexDistance(s.pos, capital.pos) <= radius) s.pos = { q: far, r: far + offset++ };
+  for (const u of state.units) if (hexDistance(u.pos, capital.pos) <= radius) u.pos = { q: far, r: far + offset++ };
+  for (let dq = -radius; dq <= radius; dq++) {
+    for (let dr = Math.max(-radius, -dq - radius); dr <= Math.min(radius, -dq + radius); dr++) {
+      const key = hexKey({ q: capital.pos.q + dq, r: capital.pos.r + dr });
+      state.hills.delete(key); state.walls.delete(key); state.forests.delete(key);
+    }
   }
+  const builder = founderOf(state, playerId);
+  builder.pos = { ...hexNeighbors(capital.pos)[0]! };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  return builder;
 }
 
 // ── Faction exclusivity (§25) ──
 console.log('\n=== Faction exclusivity (§25) ===');
 {
   const state = setup();
-  const builder = primeBuilder(state, 0);
-  check('Agrar Builder CAN build a road', canBuildRoad(state, builder));
-  const built = buildRoad(state, builder.id);
+  const builder = clearRoadArea(state, 0);
+  const hex = getValidRoadHexes(state, builder)[0]!;
+  check('Agrar Builder CAN build a road adjacent to the Capital', canBuildRoad(state, builder, hex));
+  const built = buildRoad(state, builder.id, hex);
   check('buildRoad succeeds for Agrar', built);
-  check('road now exists at the hex', !!getRoadAt(state, builder.pos));
+  check('road now exists at the hex', !!getRoadAt(state, hex));
 }
 {
   const state = setup();
-  const acolyte = primeBuilder(state, 1);
-  check('Temple Acolyte CANNOT build a road (no equivalent, §25)', !canBuildRoad(state, acolyte));
-  const built = buildRoad(state, acolyte.id);
+  const acolyte = clearRoadArea(state, 1);
+  const anyHex = hexNeighbors(acolyte.pos)[0]!;
+  check('Temple Acolyte CANNOT build a road (no equivalent, §25)', !canBuildRoad(state, acolyte, anyHex));
+  const built = buildRoad(state, acolyte.id, anyHex);
   check('buildRoad fails for Temple', !built);
-  check('no road was created', !getRoadAt(state, acolyte.pos));
+  check('no road was created', !getRoadAt(state, anyHex));
 }
 {
   const state = setup();
+  clearRoadArea(state, 0);
   const warrior = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
-  warrior.pos = { q: 20, r: 20 };
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  warrior.pos = { ...hexNeighbors(capital.pos)[0]! };
   warrior.hasMoved = false; warrior.hasAttacked = false;
   state.currentPlayerIndex = 0;
-  check('a non-Builder Agrar unit cannot build a road', !canBuildRoad(state, warrior));
+  const anyHex = hexNeighbors(warrior.pos)[0]!;
+  check('a non-Builder Agrar unit cannot build a road', !canBuildRoad(state, warrior, anyHex));
+}
+
+// ── Placement: adjacency + network connectivity (correction) ──
+console.log('\n=== Placement: adjacent to Builder AND to Capital/Farm/Road ===');
+{
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  const hexes = getValidRoadHexes(state, builder);
+  check('valid road hexes exist adjacent to a Builder standing next to the Capital', hexes.length > 0);
+  check('every candidate is a direct neighbor of the Builder', hexes.every(h => hexDistance(h, builder.pos) === 1));
+  check('every candidate is a direct neighbor of the Capital (or a Farm/Road — none built yet)', hexes.every(h => hexDistance(h, capital.pos) === 1));
+  check('no candidate hex lands on the Capital itself', !hexes.some(h => hexEqual(h, capital.pos)));
+}
+{
+  // A Builder standing far from the Capital, with no Farms/Roads anywhere,
+  // has NO valid Road target — the network can't appear out of nowhere.
+  const state = setup();
+  clearRoadArea(state, 0, state.mapRadius);
+  const builder = founderOf(state, 0);
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  builder.pos = { q: state.mapRadius - 1, r: 0 };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  check('the Builder really is far from the Capital', hexDistance(builder.pos, capital.pos) > 2);
+  check('no valid Road hex exists that far from any Agrar infrastructure', getValidRoadHexes(state, builder).length === 0);
+}
+{
+  // The network extends link by link: a Road built adjacent to the Capital
+  // lets the NEXT Road be adjacent to IT instead, reaching further out.
+  const state = setup();
+  const builder = clearRoadArea(state, 0, state.mapRadius);
+  const first = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, first);
+  builder.pos = { ...first };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  const chained = getValidRoadHexes(state, builder);
+  check('a Road CAN extend from an existing Road, not just the Capital', chained.some(h => hexDistance(h, first) === 1 && !hexEqual(h, first)));
+}
+{
+  // A Farm also counts as network infrastructure for Road placement.
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  state.players[0]!.aura = 200;
+  const farmHex = { q: capital.pos.q + 2, r: capital.pos.r };
+  builder.pos = { ...hexNeighbors(farmHex)[0]! };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  check('setup: the Farm hex is legitimately buildable', canStartFarm(state, builder, farmHex));
+  startFarm(state, builder.id, farmHex);
+  endTurn(state); endTurn(state); // resolve the Farm's founding
+  builder.pos = { ...hexNeighbors(farmHex)[0]! };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  const nearFarm = getValidRoadHexes(state, builder);
+  check('a Road hex adjacent to the (now active) Farm is valid too', nearFarm.some(h => hexDistance(h, farmHex) === 1));
 }
 
 // ── Cost + activation (§23) ──
 console.log('\n=== Cost + activation (§23) ===');
 {
   const state = setup();
-  const builder = primeBuilder(state, 0);
+  const builder = clearRoadArea(state, 0);
+  const hex = getValidRoadHexes(state, builder)[0]!;
   const player = state.players[0]!;
   const before = player.aura;
-  buildRoad(state, builder.id);
+  buildRoad(state, builder.id, hex);
   check('buildRoad charges ROAD_COST_PER_HEX', player.aura === before - ROAD_COST_PER_HEX, `aura ${before}->${player.aura}`);
   check('building consumes the whole activation', builder.hasMoved && builder.hasAttacked);
 }
 {
   const state = setup();
-  const builder = primeBuilder(state, 0);
+  const builder = clearRoadArea(state, 0);
+  const hex = getValidRoadHexes(state, builder)[0]!;
   state.players[0]!.aura = ROAD_COST_PER_HEX - 1;
-  check('cannot build without enough aura', !canBuildRoad(state, builder));
+  check('cannot build without enough aura', !canBuildRoad(state, builder, hex));
 }
 {
   const state = setup();
-  const builder = primeBuilder(state, 0);
-  buildRoad(state, builder.id);
+  const builder = clearRoadArea(state, 0);
+  const hex = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, hex);
   // Same hex, fresh activation, still a road there -> cannot double-build.
   builder.hasMoved = false; builder.hasAttacked = false;
-  check('cannot build a road where one already exists', !canBuildRoad(state, builder));
+  check('cannot build a road where one already exists', !getValidRoadHexes(state, builder).some(h => hexEqual(h, hex)));
 }
 {
   const state = setup();
   const cap = getPlayerCapital(state, 0)!;
-  const builder = primeBuilder(state, 0, cap.pos);
-  check('cannot build a road under a structure (Capital)', !canBuildRoad(state, builder));
+  const builder = clearRoadArea(state, 0);
+  check('cannot build a road under a structure (Capital)', !canBuildRoad(state, builder, cap.pos));
   check('getStructureAt confirms the Capital occupies that hex', getStructureAt(state, cap.pos)?.kind === 'capital');
 }
 
@@ -141,9 +201,9 @@ console.log('\n=== Cost + activation (§23) ===');
 console.log('\n=== Movement bonus applies to Agrar units ONLY (§26) ===');
 {
   const state = setup();
-  const builder = primeBuilder(state, 0);
-  buildRoad(state, builder.id);
-  const roadPos = { ...builder.pos };
+  const builder = clearRoadArea(state, 0);
+  const roadPos = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, roadPos);
 
   const agrarWarrior = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
   const baseSpeed = agrarWarrior.stats.speed;
@@ -159,17 +219,12 @@ console.log('\n=== Movement bonus applies to Agrar units ONLY (§26) ===');
 }
 
 // ── Pillage (§25) ──
-// Uses an in-bounds hex (map center) so getReachableHexes (bounded by
-// mapRadius) can actually walk a unit onto the road, unlike the off-map
-// coordinates the earlier tests use as a cheap "definitely empty" trick.
 console.log('\n=== Pillage (§25) ===');
-const PILLAGE_TEST_POS = { q: 0, r: 0 };
 {
   const state = setup();
-  clearHex(state, PILLAGE_TEST_POS);
-  const builder = primeBuilder(state, 0, PILLAGE_TEST_POS);
-  buildRoad(state, builder.id);
-  const roadPos = { ...builder.pos };
+  const builder = clearRoadArea(state, 0);
+  const roadPos = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, roadPos);
   builder.pos = { q: state.mapRadius * 5, r: state.mapRadius * 5 }; // clear the hex
   check('setup: road exists, owned by P0', getRoadAt(state, roadPos)?.ownerId === 0);
 
@@ -187,10 +242,9 @@ const PILLAGE_TEST_POS = { q: 0, r: 0 };
 {
   // An owner's OWN unit walking across its own road never pillages it.
   const state = setup();
-  clearHex(state, PILLAGE_TEST_POS);
-  const builder = primeBuilder(state, 0, PILLAGE_TEST_POS);
-  buildRoad(state, builder.id);
-  const roadPos = { ...builder.pos };
+  const builder = clearRoadArea(state, 0);
+  const roadPos = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, roadPos);
   builder.pos = { q: state.mapRadius * 5, r: state.mapRadius * 5 }; // clear the hex
 
   const agrarWarrior = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
@@ -205,10 +259,9 @@ const PILLAGE_TEST_POS = { q: 0, r: 0 };
 {
   // Rebuilding a pillaged hex is cheaper than building fresh.
   const state = setup();
-  clearHex(state, PILLAGE_TEST_POS);
-  const builder = primeBuilder(state, 0, PILLAGE_TEST_POS);
-  buildRoad(state, builder.id);
-  const roadPos = { ...builder.pos };
+  const builder = clearRoadArea(state, 0);
+  const roadPos = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, roadPos);
   builder.pos = { q: state.mapRadius * 5, r: state.mapRadius * 5 }; // clear the hex
 
   const templeWarrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
@@ -219,12 +272,19 @@ const PILLAGE_TEST_POS = { q: 0, r: 0 };
   moveUnit(state, roadPos);
   check('setup: road is pillaged', !getRoadAt(state, roadPos));
 
-  // Move the Temple unit off, then rebuild with the Agrar Builder.
+  // Move the Temple unit off, then rebuild with the Agrar Builder standing
+  // on the Capital itself — always adjacent to any of the Capital's own
+  // neighbours, including the pillaged hex.
   templeWarrior.pos = { q: state.mapRadius * 5, r: state.mapRadius * 5 - 1 };
-  const rebuilder = primeBuilder(state, 0, roadPos);
+  const rebuilder = founderOf(state, 0);
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  rebuilder.pos = { ...capital.pos };
+  rebuilder.hasMoved = false; rebuilder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  check('setup: the Builder is adjacent to the pillaged hex', hexDistance(rebuilder.pos, roadPos) === 1);
   const player = state.players[0]!;
   const before = player.aura;
-  const rebuilt = buildRoad(state, rebuilder.id);
+  const rebuilt = buildRoad(state, rebuilder.id, roadPos);
   check('rebuilding a pillaged hex succeeds', rebuilt);
   check('rebuilding charges ROAD_PILLAGE_REBUILD_COST, not the fresh-build cost', player.aura === before - ROAD_PILLAGE_REBUILD_COST, `aura ${before}->${player.aura}`);
   check('the hex is no longer marked pillaged', !state.pillagedRoadHexes.has(`${roadPos.q},${roadPos.r}`));

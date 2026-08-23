@@ -14,7 +14,7 @@ import {
   researchTech, canResearch,
   getTeleportAt,
   canStartFarm, startFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
-  canBuildRoad, buildRoad,
+  canBuildRoad, buildRoad, getValidRoadHexes,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
   calculateEncirclement, isForestUnitRevealed, endTurn,
@@ -275,10 +275,11 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
         actions.push({ type: 'upgrade', pos: { ...farmHex }, description: `Hard AI begins building a Farm at (${farmHex.q},${farmHex.r})` });
         return; // building spends the whole activation
       }
-      if (canBuildRoad(state, unit)) {
-        observe(state, 'build-road', { unitId: unit.id });
-        buildRoad(state, unit.id);
-        actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `Hard AI builds a road at (${unit.pos.q},${unit.pos.r})` });
+      const roadHex = getValidRoadHexes(state, unit).find(h => canBuildRoad(state, unit, h));
+      if (roadHex) {
+        observe(state, 'build-road', { unitId: unit.id, pos: roadHex });
+        buildRoad(state, unit.id, roadHex);
+        actions.push({ type: 'upgrade', pos: { ...roadHex }, description: `Hard AI builds a road at (${roadHex.q},${roadHex.r})` });
         return; // building spends the whole activation
       }
     }

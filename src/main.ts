@@ -53,7 +53,7 @@ import {
   buyDevotion,
   canBuildRoad,
   buildRoad,
-  getRoadAt,
+  getValidRoadHexes,
   getAgrarTerritory,
   isAwaitingFactionReveal,
   chooseFaction,
@@ -441,6 +441,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       gameStarted = true;
       buildingTeleport = null;
       buildingFarm = null;
+      buildingRoad = null;
   handoffPending = false;
       hideMenu();
       closeTechTree();
@@ -514,6 +515,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       gameStarted = true;
       buildingTeleport = null;
       buildingFarm = null;
+      buildingRoad = null;
   handoffPending = false;
       hideMenu();
       closeTechTree();
@@ -724,6 +726,7 @@ function restoreGame(): void {
   controllers = controllersFromSave(save);
   buildingTeleport = null;
   buildingFarm = null;
+  buildingRoad = null;
   handoffPending = false;
   state = deserialize(save.state);
   snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
@@ -762,6 +765,7 @@ function startLocalGame(kinds: ControllerKind[]): void {
   controllers = [...kinds];
   buildingTeleport = null;
   buildingFarm = null;
+  buildingRoad = null;
   handoffPending = false;
   const players = kinds.map((kind, i) => ({
     name: seatName(kind, i),
@@ -958,12 +962,9 @@ function farmBlockReason(state: GameState, unit: Unit): string | null {
 function roadBlockReason(state: GameState, unit: Unit): string | null {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return 'not your unit';
-  const cost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
-  if (player.aura < cost) return `not enough Energy (need ⚡${cost})`;
+  if (player.aura < ROAD_COST_PER_HEX) return `not enough Energy (need ⚡${ROAD_COST_PER_HEX})`;
   if (unit.hasMoved || unit.hasAttacked) return 'Builder has already acted this round';
-  if (getRoadAt(state, unit.pos)) return 'already a Road here';
-  if (getStructureAt(state, unit.pos)) return 'cannot build under a structure';
-  if (state.farms.some(f => hexEqual(f.pos, unit.pos))) return 'cannot build under a Farm';
+  if (getValidRoadHexes(state, unit).length === 0) return 'no valid Road location next to this Builder and its network';
   return null;
 }
 
@@ -1140,15 +1141,16 @@ function updateUI(): void {
     ? state.units.find(u => u.id === state.selectedUnitId)
     : null;
   const foundCheck = selUnitForFound && myTurn ? canStartFounding(state, selUnitForFound) : null;
-  const roadCheck = !foundCheck && selUnitForFound && myTurn ? canBuildRoad(state, selUnitForFound) : false;
+  const roadCheck = !foundCheck && selUnitForFound && myTurn
+    ? getValidRoadHexes(state, selUnitForFound).some(h => canBuildRoad(state, selUnitForFound, h))
+    : false;
   if (foundCheck) {
     renderer.updateHudButton('found', true);
     renderer.setHudButtonPrice('found', `⚡${SITE_ESTABLISH_COST}`);
     renderer.setHudButtonVisible('found', true);
   } else if (roadCheck) {
-    const roadCost = state.pillagedRoadHexes.has(hexKey(selUnitForFound!.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
     renderer.updateHudButton('found', true);
-    renderer.setHudButtonPrice('found', `⚡${roadCost}`);
+    renderer.setHudButtonPrice('found', `⚡${ROAD_COST_PER_HEX}`);
     renderer.setHudButtonVisible('found', true);
   } else {
     renderer.setHudButtonVisible('found', false); // no founder selected (or nothing to do here)
@@ -1233,14 +1235,19 @@ function updateUI(): void {
         // §39-40 (phase 11 correction) — Build Road is ALWAYS shown for an
         // Agrar Builder, never hidden behind a hidden precondition; disabled
         // states carry a human-readable reason (title + on-button text).
-        const reason = roadBlockReason(state, unit);
-        const roadCost = state.pillagedRoadHexes.has(hexKey(unit.pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+        // Ring-pick hex mode, same pattern as Build Farm — see roadBlockReason.
+        const picking = buildingRoad?.unitId === unit.id;
+        const reason = picking ? null : roadBlockReason(state, unit);
         captureBtn.style.display = 'block';
         captureBtn.disabled = !!reason;
         captureBtn.title = reason ?? '';
-        captureBtn.textContent = reason ? `🛤 Build Road — ${reason}` : `🛤 Build Road (⚡${roadCost})`;
+        captureBtn.classList.toggle('active', picking);
+        captureBtn.textContent = picking
+          ? '🛤 Pick a hex for the Road…'
+          : reason ? `🛤 Build Road — ${reason}` : `🛤 Build Road (⚡${ROAD_COST_PER_HEX})`;
       } else {
         captureBtn.style.display = 'none';
+        if (buildingRoad?.unitId === unit.id) clearBuildRoad();
       }
 
       // Build Farm button (§6-9, phase 10; always-visible §39-40, phase 11) —
@@ -1323,11 +1330,13 @@ function updateUI(): void {
       }
     }
     captureBtn.style.display = 'none';
+    if (buildingRoad) clearBuildRoad();
     destroyArmedUnitId = null;
     hideDestroySlab();
   } else {
     unitInfoEl.textContent = '';
     captureBtn.style.display = 'none';
+    if (buildingRoad) clearBuildRoad();
     destroyArmedUnitId = null;
     hideDestroySlab();
     buildTeleportBtn.style.display = 'none';
@@ -1673,6 +1682,37 @@ economyBtn.addEventListener('click', () => {
   }
 });
 
+// ── Build Road (Builder-driven, adjacency + network-connectivity §23-25) ──
+//
+// Same ring-pick pattern as Build Farm — a Road hex must be adjacent to the
+// Builder AND itself adjacent to the Capital/a Farm/an existing Road (see
+// getValidRoadHexes), so like Farms this is no longer a single-click instant
+// build on the Builder's own tile.
+
+interface BuildRoadState {
+  unitId: string;
+}
+
+let buildingRoad: BuildRoadState | null = null;
+
+function enterBuildRoad(unitId: string): void {
+  const unit = state.units.find(u => u.id === unitId);
+  buildingRoad = { unitId };
+  state.buildHexes = unit ? getValidRoadHexes(state, unit) : [];
+  render();
+}
+
+// Clear road-build state WITHOUT triggering a render — safe from inside render().
+function clearBuildRoad(): void {
+  buildingRoad = null;
+  state.buildHexes = [];
+}
+
+function cancelBuildRoad(): void {
+  clearBuildRoad();
+  render();
+}
+
 // ── Settings UI ──
 
 const UNIT_DISPLAY: Record<UnitType, string> = {
@@ -1971,10 +2011,11 @@ techOverlay.addEventListener('click', (e) => {
 // Acolyte) is standing on. Replaces the old temple-upgrade slab — there's no
 // more leveling (§7-10).
 // The same slab does double duty for the Builder: found a site if it's
-// standing on a neutral/ruined one, otherwise build a road on its current
-// hex if that's available (Agrar only, §23-25) — mutually exclusive per-tile
-// states, so there's no ambiguity about which one fires.
+// standing on a neutral/ruined one, otherwise enter Build Road ring-pick
+// mode if that's available (Agrar only, §23-25) — mutually exclusive
+// per-selection states, so there's no ambiguity about which one fires.
 function doFound(): void {
+  if (buildingRoad) { cancelBuildRoad(); return; }
   if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit) return;
@@ -1987,12 +2028,8 @@ function doFound(): void {
     });
     return;
   }
-  if (canBuildRoad(state, unit)) {
-    sendOrCall({ type: 'action', action: 'build-road', params: { unitId: unit.id } }, () => {
-      if (buildRoad(state, unit.id)) {
-        logCombat(`Built a road at (${unit.pos.q},${unit.pos.r})`);
-      }
-    });
+  if (getValidRoadHexes(state, unit).some(h => canBuildRoad(state, unit, h))) {
+    enterBuildRoad(unit.id);
   }
 }
 
@@ -2097,6 +2134,24 @@ function handleHexClick(clientX: number, clientY: number): void {
     }
   }
 
+  // ── Build Road mode: place a Road hex (UI is always local, only final action is sent) ──
+  if (buildingRoad) {
+    const builderUnitId = buildingRoad.unitId;
+    if (state.buildHexes.some(h => hexEqual(h, hex))) {
+      clearBuildRoad();
+      const cost = state.pillagedRoadHexes.has(hexKey(hex)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+      sendOrCall({ type: 'action', action: 'build-road', params: { unitId: builderUnitId, pos: hex } }, () => {
+        const built = buildRoad(state, builderUnitId, hex);
+        if (built) logCombat(`Built a road at (${hex.q},${hex.r}) for ${cost}⚡`);
+      });
+      return;
+    } else {
+      cancelBuildRoad();
+      render();
+      return;
+    }
+  }
+
   // ── Unit mode: try move ──
   if (state.selectionMode === 'unit' && state.moveHexes.some(h => hexEqual(h, hex))) {
     sendOrCall({ type: 'action_move', dest: hex }, () => {
@@ -2153,6 +2208,7 @@ function handleHexClick(clientX: number, clientY: number): void {
   // Deselect
   if (buildingTeleport) cancelBuildTeleport();
   if (buildingFarm) cancelBuildFarm();
+  if (buildingRoad) cancelBuildRoad();
   sendOrCall({ type: 'action_deselect' }, () => deselectAll(state));
 }
 
@@ -2389,6 +2445,7 @@ function doEndTurn(): void {
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
   if (buildingTeleport) cancelBuildTeleport();
   if (buildingFarm) cancelBuildFarm();
+  if (buildingRoad) cancelBuildRoad();
   if (multiplayerMode && mpClient) {
     mpClient.endTurn();
     return;
