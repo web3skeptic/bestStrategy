@@ -16,7 +16,7 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_MIN_SPACING,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_CHAIN_DISTANCE, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -100,10 +100,11 @@ const RANGE_BOOSTER_STATS: UnitStats = {
   range: 0, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
 };
 
-// The Builder/Acolyte base stats (§5). Identical regardless of faction — it's
-// "Builder" (Agrar) or "Acolyte" (Temple) in display only (see
-// founderDisplayName in this file); an ordinary recruitable unit like any
-// other, not a special starting-only one.
+// The Builder/Acolyte base stats — generic pre-reveal fallback only. Once a
+// faction is known, applyFactionToStats overrides these from AGRAR_UNITS/
+// TEMPLE_UNITS like any other slot (Agrar's Builder is deliberately slower —
+// see the "way less movement, bunker down" correction). An ordinary
+// recruitable unit like any other, not a special starting-only one.
 const FOUNDER_STATS: UnitStats = {
   maxHp: 12, attack: 5, defense: 3, speed: 2,
   range: 1, splash: 0, splashFactor: 0, canBeRevenged: true, vision: 3, cantShootAfterMove: false,
@@ -184,7 +185,7 @@ function factionUnitDef(faction: FactionId, type: UnitType): FactionUnitDef | un
 // unitDisplayName) even though phase 11 makes both ordinarily recruitable.
 // No-op for any other type without a faction-specific entry.
 function applyFactionToStats(stats: UnitStats, type: UnitType, faction: FactionId | null | undefined): UnitStats {
-  if (!faction || type === 'founder') return stats;
+  if (!faction) return stats;
   const def = factionUnitDef(faction, type);
   if (!def) return stats;
   stats.maxHp = def.hp;
@@ -210,8 +211,7 @@ export function getUnitCost(type: UnitType, faction: FactionId | null | undefine
 // Faction-flavored display name for a recruitable unit slot (e.g. 'spearsman'
 // -> "Pikeman" for Agrar, "Spearsman" for Temple). Falls back to the generic
 // engine name pre-reveal. Founder has its own dedicated helper (see
-// founderDisplayName) since its display name is what actually differs
-// between factions, not its stats — used throughout the UI.
+// founderDisplayName) purely for the name lookup — used throughout the UI.
 export function unitDisplayName(type: UnitType, faction: FactionId | null | undefined): string {
   if (faction) {
     const def = factionUnitDef(faction, type);
@@ -563,7 +563,12 @@ export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageB
 
 export function getEffectiveDefense(state: GameState, unit: Unit): number {
   const onHill = state.hills.has(hexKey(unit.pos));
-  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0);
+  // Bunker bonus: an Agrar player's own units get FARM_DEFENSE_BONUS while
+  // standing inside their OWN cultivated territory (stacks with hill terrain,
+  // never applies to an enemy passing through it — see getCultivatedHexes).
+  const player = state.players.find(p => p.id === unit.playerId);
+  const onOwnFarmland = player?.faction === 'agrar' && getCultivatedHexes(state, unit.playerId).has(hexKey(unit.pos));
+  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0) + (onOwnFarmland ? FARM_DEFENSE_BONUS : 0);
 }
 
 export function getEffectiveAttack(state: GameState, unit: Unit): number {
@@ -1032,8 +1037,9 @@ export function chooseFaction(state: GameState, playerId: number, faction: Facti
 }
 
 // Display-only label for a Founder-type unit, reflecting its owner's
-// revealed faction. No engine/stat change — Builder and Acolyte are
-// mechanically identical (§6).
+// revealed faction (Agrar's Builder and Temple's Acolyte otherwise get their
+// stats independently from AGRAR_UNITS/TEMPLE_UNITS like any other slot —
+// see applyFactionToStats — this is purely the name lookup).
 export function founderDisplayName(faction: FactionId | null | undefined): string {
   if (faction === 'agrar') return 'Builder';
   if (faction === 'temple') return 'Acolyte';
@@ -1203,21 +1209,22 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
   return state.farms.filter(f => f.ownerId === playerId);
 }
 
-// §10-14 (phase 11 correction) — a new Farm must be a direct NEIGHBOR of the
-// Builder's own position — no distance-chain requirement to the Capital or
-// any other Farm exists anymore, the Builder's physical movement is what
-// limits expansion. It must also be: on the map, empty/passable terrain, not
-// a sacred site/Capital/structure, not occupied by a unit, not adjacent to
-// another existing Farm (founding or active — never `distance < FARM_MIN_
-// SPACING`, and never the other way either), and not adjacent to the
-// player's own Agrar Capital (so a starting economy can never be fully
-// walled in).
+// §10-14 (phase 11; chain rule reinstated afterward) — a new Farm must be a
+// direct NEIGHBOR of the Builder's own position (the Builder's physical
+// movement still matters) AND within FARM_CHAIN_DISTANCE of the Capital OR
+// of an existing active Farm — the network only grows as a connected
+// bunker, it can never leapfrog to some far corner of the map. It must also
+// be: on the map, empty/passable terrain, not a sacred site/Capital/
+// structure, not occupied by a unit, and never directly adjacent to another
+// existing Farm (founding or active — `distance >= FARM_MIN_SPACING`).
+// Adjacent to the Capital itself is fine (encourages tight bunkering).
 export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return [];
   const capital = state.capitals.find(c => c.playerId === player.id);
   if (!capital) return [];
   const allOwn = allFarmsOf(state, player.id);
+  const chainAnchors = [capital.pos, ...activeFarmsOf(state, player.id).map(f => f.pos)];
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
     if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue; // off-map
@@ -1227,7 +1234,7 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
     if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
     if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
     if (getUnitAt(state, hex)) continue;
-    if (hexDistance(capital.pos, hex) < FARM_MIN_SPACING) continue; // not adjacent to Capital
+    if (!chainAnchors.some(a => hexDistance(a, hex) <= FARM_CHAIN_DISTANCE)) continue; // close to the Capital or an existing Farm
     if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue; // not adjacent to another Farm
     result.push(hex);
   }

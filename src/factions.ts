@@ -46,18 +46,22 @@ export interface FactionUnitDef {
   placeholderAsset: boolean;
 }
 
-// §37 — Agrar roster. Slower, tankier, formation-oriented.
+// §37 — Agrar roster. Slower, tankier, formation-oriented. Every slot moves
+// at speed 1 (deliberately below Temple's board, not just its cavalry/elite)
+// — Agrar trades mobility for a defensible, bunkered-down economy (Roads are
+// its own faction-only way to move fast, and Farms grant a defense bonus in
+// their cultivated territory — see FARM_DEFENSE_BONUS/getEffectiveDefense).
 export const AGRAR_UNITS: FactionUnitDef[] = [
   { id: 'agrar_warrior',  faction: 'agrar', slot: 'warrior',  displayName: 'Warrior',     earlyUnlock: true,  unitClass: 'warrior', cost: 1, hp: 15, attack: 9,  defense: 5, speed: 1, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'voxelWarrior',     placeholderAsset: false },
   { id: 'agrar_archer',   faction: 'agrar', slot: 'archer',   displayName: 'Archer',      earlyUnlock: true,  unitClass: 'archer',  cost: 2, hp: 14, attack: 10, defense: 4, speed: 1, range: 2, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'archer_standing',  placeholderAsset: false },
   { id: 'agrar_pikeman',  faction: 'agrar', slot: 'spearsman', displayName: 'Pikeman',    earlyUnlock: true,  unitClass: 'pike',    cost: 2, hp: 16, attack: 9,  defense: 6, speed: 1, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'spearsman_standing', placeholderAsset: false },
-  { id: 'agrar_knight',   faction: 'agrar', slot: 'horserider', displayName: 'Knight',    earlyUnlock: true,  unitClass: 'cavalry', cost: 4, hp: 19, attack: 13, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
+  { id: 'agrar_knight',   faction: 'agrar', slot: 'horserider', displayName: 'Knight',    earlyUnlock: true,  unitClass: 'cavalry', cost: 4, hp: 19, attack: 13, defense: 6, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
   { id: 'agrar_catapult', faction: 'agrar', slot: 'catapult', displayName: 'Catapult',    earlyUnlock: false, unitClass: 'siege',   cost: 4, hp: 16, attack: 13, defense: 3, speed: 1, range: 3, vision: 4, commandCost: 2, isSupport: false, isSiege: true,  projectsZOC: false, assetReference: 'catapult_standing', placeholderAsset: false },
-  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Heavy Knight', earlyUnlock: false, unitClass: 'heavy', cost: 6, hp: 21, attack: 16, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
+  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Heavy Knight', earlyUnlock: false, unitClass: 'heavy', cost: 6, hp: 21, attack: 16, defense: 6, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
   { id: 'agrar_healer',   faction: 'agrar', slot: 'healer',   displayName: 'Healer',      earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 6,  defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true,  isSiege: false, projectsZOC: false, assetReference: 'healer_standing',  placeholderAsset: false },
   { id: 'agrar_dmg_support', faction: 'agrar', slot: 'damageBooster', displayName: 'Drummer', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'damagebooster_standing', placeholderAsset: false },
   { id: 'agrar_rng_support', faction: 'agrar', slot: 'rangeBooster', displayName: 'Scout', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'rangebooster_standing', placeholderAsset: false },
-  { id: 'agrar_builder',  faction: 'agrar', slot: 'founder',  displayName: 'Builder',     earlyUnlock: true,  unitClass: 'support', cost: 2, hp: 12, attack: 5,  defense: 3, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'warrior_standing', placeholderAsset: false },
+  { id: 'agrar_builder',  faction: 'agrar', slot: 'founder',  displayName: 'Builder',     earlyUnlock: true,  unitClass: 'support', cost: 2, hp: 12, attack: 5,  defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'warrior_standing', placeholderAsset: false },
 ];
 
 // §38 — Temple roster. Faster, lighter, mobility/pressure-oriented.
@@ -121,19 +125,25 @@ export const STARTING_ENERGY = 6;
 export const BASE_INCOME_PER_ROUND = 6;
 export const SITE_ESTABLISH_COST = 4;      // Temple founding only — Agrar never founds a site (§28)
 
-// §6-14 (phase 10, placement simplified phase 11) — Agrar's Farm network:
-// its ONLY economic expansion, built directly by the Builder on open land,
-// never tied to a captured site. Placement is adjacency-only now: a new
-// Farm must be a hex NEIGHBOUR of the Builder (distance 1), never adjacent
-// to another Farm or to the Capital (FARM_MIN_SPACING applies to both —
-// "never directly next to X" = distance >= FARM_MIN_SPACING from X). The
-// Builder's own movement — not a separate distance-chain rule — is what
-// limits how far the network can reach.
+// §6-14 (phase 10; placement simplified phase 11, chain rule + defense buff
+// added afterward) — Agrar's Farm network: its ONLY economic expansion,
+// built directly by the Builder on open land, never tied to a captured
+// site. A new Farm must be a hex NEIGHBOUR of the Builder (distance 1, so
+// the Builder's own movement still matters) AND within FARM_CHAIN_DISTANCE
+// of the Capital OR of an existing active Farm — the network only grows as
+// a connected bunker around the Capital, it can't leapfrog across the map.
+// It must never be directly adjacent to another Farm (FARM_MIN_SPACING) —
+// adjacent to the CAPITAL is fine now (encourages tight bunkering).
 export const AGRAR_FARM_COST = 5;
 export const AGRAR_FARM_INCOME = 1;
 export const MAX_ACTIVE_FARMS = 4;
-export const FARM_MIN_SPACING = 2;   // never directly adjacent to another Farm, or to the Capital
-export const CULTIVATION_RADIUS = 1; // §10 — an active Farm's own hex + its 6 neighbours
+export const FARM_CHAIN_DISTANCE = 2; // a new Farm must be this close to the Capital or an existing Farm
+export const FARM_MIN_SPACING = 2;    // never directly adjacent to another Farm
+export const CULTIVATION_RADIUS = 1;  // §10 — an active Farm's own hex + its 6 neighbours
+// A defensive "bunker" bonus (stacks with hill terrain) for an Agrar
+// player's own units standing inside their own cultivated territory — the
+// network doesn't just fund the economy, it hardens the ground it covers.
+export const FARM_DEFENSE_BONUS = 2;
 
 export const TEMPLE_DEVOTION_COST = 3;     // x2 devotion levels per Temple
 export const TEMPLE_DEVOTION_INCOME = 1;

@@ -131,19 +131,19 @@ console.log('\n=== Same slot, distinct faction flavor ===');
   check('Heavy Knight and Champion cost the same (symmetric slot)', agrarHK.cost === templeChamp.cost, `agrar=${agrarHK.cost} temple=${templeChamp.cost}`);
 }
 
-// ── Builder/Acolyte: same stats across factions, but now recruitable (§5) ──
-console.log('\n=== Builder/Acolyte: identical stats, both recruitable (§5) ===');
+// ── Builder/Acolyte: independently faction-flavored, both recruitable (§5) ──
+console.log('\n=== Builder/Acolyte: faction-flavored stats, both recruitable (§5) ===');
 {
   const state = setup();
   const agrarBuilder = recruitAndDeploy(state, 0, capitalId(state, 0), 'founder');
   const templeAcolyte = recruitAndDeploy(state, 1, capitalId(state, 1), 'founder');
   check('Agrar can recruit the Builder', !!agrarBuilder);
   check('Temple can recruit the Acolyte', !!templeAcolyte);
-  check('Builder and Acolyte have identical stats', !!agrarBuilder && !!templeAcolyte
+  check('Builder and Acolyte share HP/ATK/DEF (only speed is asymmetric, per the roster)', !!agrarBuilder && !!templeAcolyte
     && agrarBuilder.stats.maxHp === templeAcolyte.stats.maxHp
     && agrarBuilder.stats.attack === templeAcolyte.stats.attack
-    && agrarBuilder.stats.defense === templeAcolyte.stats.defense
-    && agrarBuilder.stats.speed === templeAcolyte.stats.speed);
+    && agrarBuilder.stats.defense === templeAcolyte.stats.defense);
+  check('the Builder is slower than the Acolyte (bunker correction — the whole Agrar tribe moves less)', !!agrarBuilder && !!templeAcolyte && agrarBuilder.stats.speed < templeAcolyte.stats.speed, `builder=${agrarBuilder?.stats.speed} acolyte=${templeAcolyte?.stats.speed}`);
   check('founder IS in the unlocked recruit set (phase 11 — ordinary recruitable unit)', getUnlockedUnits(state.playerTech[0]!, 'agrar').has('founder') && getUnlockedUnits(state.playerTech[1]!, 'temple').has('founder'));
 }
 

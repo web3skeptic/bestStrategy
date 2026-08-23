@@ -1,5 +1,5 @@
-import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
+import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, FARM_DEFENSE_BONUS } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -54,6 +54,7 @@ import {
   canBuildRoad,
   buildRoad,
   getRoadAt,
+  getCultivatedHexes,
   isAwaitingFactionReveal,
   chooseFaction,
   founderDisplayName,
@@ -1204,7 +1205,15 @@ function updateUI(): void {
       const effDef = getEffectiveDefense(state, unit);
       const effAtk = getEffectiveAttack(state, unit);
       const effRng = getEffectiveRange(state, unit);
-      const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+${effDef - unit.stats.defense})` : `${effDef}`;
+      // Break the defense bonus down by source — hill terrain and Agrar's
+      // own-farmland "bunker" bonus (§ Farm defense buff) can stack.
+      const unitPlayer = state.players.find(p => p.id === unit.playerId);
+      const onHillNow = state.hills.has(hexKey(unit.pos));
+      const onOwnFarmland = unitPlayer?.faction === 'agrar' && getCultivatedHexes(state, unit.playerId).has(hexKey(unit.pos));
+      const defBonusParts: string[] = [];
+      if (onHillNow) defBonusParts.push(`⛰+${HILL_DEFENSE_BONUS}`);
+      if (onOwnFarmland) defBonusParts.push(`🌾+${FARM_DEFENSE_BONUS}`);
+      const defStr = defBonusParts.length > 0 ? `${effDef}(${defBonusParts.join(' ')})` : `${effDef}`;
       const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
       let supportNote = '';

@@ -44,7 +44,7 @@ import {
 } from '../src/types';
 import {
   SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_MIN_SPACING, CULTIVATION_RADIUS,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_CHAIN_DISTANCE, FARM_MIN_SPACING, FARM_DEFENSE_BONUS, CULTIVATION_RADIUS,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -311,11 +311,12 @@ export function buildRulesPayload(): Record<string, unknown> {
         cost: AGRAR_FARM_COST,
         incomePerFarm: AGRAR_FARM_INCOME,
         maxActiveFarms: MAX_ACTIVE_FARMS,
-        placement: `A new Farm must be a direct hex NEIGHBOR of the Builder's current position — no distance-chain requirement to the Capital or any other Farm. It must be empty/passable terrain, not a sacred site/Capital/structure/unit, never within ${FARM_MIN_SPACING} hexes of another Farm (founding or active), and never within ${FARM_MIN_SPACING} hexes of the Agrar Capital. The Builder's own movement is what limits expansion — see the "build-farm" action.`,
+        placement: `A new Farm must be a direct hex NEIGHBOR of the Builder's current position (the Builder's own movement matters) AND within ${FARM_CHAIN_DISTANCE} hexes of the Capital OR of an existing active Farm — the network only grows as a connected bunker, it can never leapfrog across the map. It must be empty/passable terrain, not a sacred site/Capital/structure/unit, and never within ${FARM_MIN_SPACING} hexes of another Farm (founding or active). Directly adjacent to the Capital is fine — see the "build-farm" action.`,
         constructionInterruption: 'A Farm still under construction fails outright (removed, no refund) if by the time it resolves the Builder has been killed, is no longer adjacent to (or standing on) the construction hex, or an enemy now occupies the hex.',
         cultivation: {
-          note: 'Every ACTIVE Farm projects cultivated territory onto its own hex + its 6 neighbours (CULTIVATION_RADIUS). A neutral or ruined strategic site inside an ENEMY Agrar player\'s cultivated territory cannot be founded/rebuilt by Temple — this is Agrar\'s area-denial tool, NOT combat, vision, movement, or a buff (see strategicSites for the founding-block itself).',
+          note: 'Every ACTIVE Farm projects cultivated territory onto its own hex + its 6 neighbours (CULTIVATION_RADIUS). A neutral or ruined strategic site inside an ENEMY Agrar player\'s cultivated territory cannot be founded/rebuilt by Temple — this is Agrar\'s area-denial tool (see strategicSites for the founding-block itself). It ALSO grants FARM_DEFENSE_BONUS defense to that Agrar player\'s OWN units standing inside it (stacks with hill terrain, never applies to an enemy standing on the same ground) — see units[].defense and combat.',
           radius: CULTIVATION_RADIUS,
+          defenseBonus: FARM_DEFENSE_BONUS,
         },
       },
       templeDevotion: {
