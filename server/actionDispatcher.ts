@@ -43,7 +43,7 @@ import {
 } from '../src/types';
 import {
   SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -321,10 +321,14 @@ export function buildRulesPayload(): Record<string, unknown> {
       investmentPersistence: 'A Temple reduced to Ruins keeps its Devotion investment on record. Re-founding it as the SAME investing player restores that investment; a DIFFERENT player founding it resets Devotion to 0. Farms have no equivalent — a destroyed Farm is just gone (see structures.farm).',
     },
     territory: {
+      note: 'Economy/pacing balance pass — split into two distinct, smaller-purpose radii (was one unified concept). NEITHER grants a combat bonus of any kind — Agrar\'s edge is structural (higher HP/DEF baselines, Roads, ZOC, Farms, area denial), not an invisible defensive aura. Both are derived fresh from live Capital/Farm positions every time, never stored on GameState.',
       agrarTerritory: {
-        note: 'Agrar-only. The union of every hex within AGRAR_TERRITORY_RADIUS of the Capital, PLUS every hex within AGRAR_TERRITORY_RADIUS of each ACTIVE Farm — see getAgrarTerritory. One area concept drives THREE things: (1) Farm placement — a new Farm must land inside existing territory, so completing one immediately expands where the next can go (economy.agrarFarms.placement); (2) area denial — a neutral/ruined strategic site inside an ENEMY Agrar player\'s territory cannot be founded/rebuilt by Temple, though it never disables an already-ACTIVE Temple (see strategicSites); (3) a defense bonus — that Agrar player\'s OWN units standing inside their OWN territory get +defenseBonus (stacks with hill terrain, never applies to an enemy standing on the same ground — see units[].defense and combat). Not stored on GameState — always derived fresh from live Capital/Farm positions, so it updates immediately as Farms are built or destroyed.',
+        note: 'Infrastructure reach ONLY. The union of every hex within radius of the Capital, PLUS every hex within radius of each ACTIVE Farm — see getAgrarTerritory. Used ONLY to gate Farm/Road placement (economy.agrarFarms.placement, roads.placement) — a new one must land inside existing territory, so completing one immediately expands where the next can go. Grants no defense bonus and plays no part in area denial (see agrarCultivation for that).',
         radius: AGRAR_TERRITORY_RADIUS,
-        defenseBonus: FARM_DEFENSE_BONUS,
+      },
+      agrarCultivation: {
+        note: 'Shrine-denial reach ONLY, deliberately smaller and farm-only — the Capital projects none of this. Every ACTIVE Farm\'s own hex + its 6 neighbours — see getAgrarCultivation. A neutral/ruined strategic site inside an ENEMY Agrar player\'s cultivation cannot be founded/rebuilt by Temple, but it never disables an already-ACTIVE Temple (see strategicSites) — Agrar must destroy it militarily first, and even then the resulting Ruins are only blocked from reconstruction if they fall inside this radius.',
+        radius: CULTIVATION_RADIUS,
       },
     },
     command: {
@@ -332,7 +336,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       populationCap: { tiers: COMMAND_TIERS, note: 'Starts at COMMAND_TIERS.start; the "command_1"/"command_2" techs (linear, II requires I) raise it to commandI then commandII.' },
       populationCost: 'Each unit spends its faction def\'s commandCost against the cap (see the `factions` block above) — NOT a flat 1 per unit. Heavier units (cavalry/heavy) cost more of the cap than light ones.',
       productionSlots: {
-        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit pays its cost immediately and enters a training queue, occupying one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds. The unit does NOT exist on the battlefield yet — it deploys at the start of the recruiting player\'s NEXT round (at the structure that trained it), which also frees the slot. If that structure\'s tile is occupied at that moment, the completed unit stays queued (pending deployment) rather than being lost — nothing is destroyed or refunded. Both factions start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS, reached via different territory: Agrar centralizes all training at its Capital and scales slots with active Farm count (2 Farms -> +1, 4 Farms -> +1 more); Temple distributes production — each active owned Temple site itself grants +1 slot AND is a valid recruiting/deployment location (see recruit below), not just the Capital.',
+        note: 'Recruiting draws from a limited pool of production slots, not an unlimited allowance. A recruit pays its cost immediately and enters a training queue, occupying one of the recruiting player\'s slots for UNIT_TRAINING_ROUNDS rounds. The unit does NOT exist on the battlefield yet — it deploys at the start of the recruiting player\'s NEXT round (at the structure that trained it), which also frees the slot. If that structure\'s tile is occupied at that moment, the completed unit stays queued (pending deployment) rather than being lost — nothing is destroyed or refunded. Both factions start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS, reached via different territory: Agrar centralizes all training at its Capital and scales slots with active Farm count (2 Farms -> +1, 4 Farms -> +1 more); Temple distributes production — but only a FULLY-developed (Devotion II) owned Temple site grants +1 slot (a merely founded or partially-developed Temple grants none) AND is a valid recruiting/deployment location (see recruit below), not just the Capital — this matches Agrar needing 2 Farms (same total Energy as one fully-developed Temple) for its own +1 slot.',
         baseSlots: PRODUCTION_BASE_SLOTS,
         maxSlots: PRODUCTION_MAX_SLOTS,
         trainingRounds: UNIT_TRAINING_ROUNDS,

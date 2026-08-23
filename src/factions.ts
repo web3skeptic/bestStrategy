@@ -46,22 +46,25 @@ export interface FactionUnitDef {
   placeholderAsset: boolean;
 }
 
-// §37 — Agrar roster. Slower, tankier, formation-oriented. Every slot moves
-// at speed 1 (deliberately below Temple's board, not just its cavalry/elite)
-// — Agrar trades mobility for a defensible, bunkered-down economy (Roads are
-// its own faction-only way to move fast, and Farms grant a defense bonus in
-// their cultivated territory — see FARM_DEFENSE_BONUS/getEffectiveDefense).
+// §37 (economy/pacing balance pass §12 — reverted the too-extreme "every
+// Agrar unit is speed 1" call) — Agrar roster. Slower, tankier, formation-
+// oriented: infantry/ranged/siege/support sit at speed 1, but cavalry/heavy/
+// the Builder keep speed 2 — an entirely helpless early game wasn't the
+// goal, and the Builder needs to match the Acolyte's strategic mobility so
+// economic-expansion units aren't asymmetrical in basic travel speed. Roads
+// (Agrar-only +1 SPD) are how Agrar's ground forces reach Temple-equivalent
+// mobility on their own infrastructure — see ROAD_MOVEMENT_BONUS.
 export const AGRAR_UNITS: FactionUnitDef[] = [
   { id: 'agrar_warrior',  faction: 'agrar', slot: 'warrior',  displayName: 'Warrior',     earlyUnlock: true,  unitClass: 'warrior', cost: 1, hp: 15, attack: 9,  defense: 5, speed: 1, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'voxelWarrior',     placeholderAsset: false },
   { id: 'agrar_archer',   faction: 'agrar', slot: 'archer',   displayName: 'Archer',      earlyUnlock: true,  unitClass: 'archer',  cost: 2, hp: 14, attack: 10, defense: 4, speed: 1, range: 2, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'archer_standing',  placeholderAsset: false },
   { id: 'agrar_pikeman',  faction: 'agrar', slot: 'spearsman', displayName: 'Pikeman',    earlyUnlock: true,  unitClass: 'pike',    cost: 2, hp: 16, attack: 9,  defense: 6, speed: 1, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'spearsman_standing', placeholderAsset: false },
-  { id: 'agrar_knight',   faction: 'agrar', slot: 'horserider', displayName: 'Knight',    earlyUnlock: true,  unitClass: 'cavalry', cost: 4, hp: 19, attack: 13, defense: 6, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
+  { id: 'agrar_knight',   faction: 'agrar', slot: 'horserider', displayName: 'Knight',    earlyUnlock: true,  unitClass: 'cavalry', cost: 4, hp: 19, attack: 13, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
   { id: 'agrar_catapult', faction: 'agrar', slot: 'catapult', displayName: 'Catapult',    earlyUnlock: false, unitClass: 'siege',   cost: 4, hp: 16, attack: 13, defense: 3, speed: 1, range: 3, vision: 4, commandCost: 2, isSupport: false, isSiege: true,  projectsZOC: false, assetReference: 'catapult_standing', placeholderAsset: false },
-  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Heavy Knight', earlyUnlock: false, unitClass: 'heavy', cost: 6, hp: 21, attack: 16, defense: 6, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
+  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Heavy Knight', earlyUnlock: false, unitClass: 'heavy', cost: 6, hp: 21, attack: 16, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
   { id: 'agrar_healer',   faction: 'agrar', slot: 'healer',   displayName: 'Healer',      earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 6,  defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true,  isSiege: false, projectsZOC: false, assetReference: 'healer_standing',  placeholderAsset: false },
   { id: 'agrar_dmg_support', faction: 'agrar', slot: 'damageBooster', displayName: 'Drummer', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'damagebooster_standing', placeholderAsset: false },
   { id: 'agrar_rng_support', faction: 'agrar', slot: 'rangeBooster', displayName: 'Scout', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'rangebooster_standing', placeholderAsset: false },
-  { id: 'agrar_builder',  faction: 'agrar', slot: 'founder',  displayName: 'Builder',     earlyUnlock: true,  unitClass: 'support', cost: 2, hp: 12, attack: 5,  defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'warrior_standing', placeholderAsset: false },
+  { id: 'agrar_builder',  faction: 'agrar', slot: 'founder',  displayName: 'Builder',     earlyUnlock: true,  unitClass: 'support', cost: 2, hp: 12, attack: 5,  defense: 3, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'warrior_standing', placeholderAsset: false },
 ];
 
 // §38 — Temple roster. Faster, lighter, mobility/pressure-oriented.
@@ -109,60 +112,78 @@ export const STRUCTURES: Record<'farm' | 'temple' | 'capital', StructureDef> = {
   capital: { hp: 40, defense: 6 },
 };
 
-// §21 — Command cap tiers. Only Command I/II raise the cap; territory never does.
-export const COMMAND_TIERS = { start: 8, commandI: 10, commandII: 12 } as const;
+// §6 (economy/pacing balance pass) — Command cap tiers, slowed down to
+// visibly separate opening/mid/late army sizes. Only Command I/II raise the
+// cap; territory never does.
+export const COMMAND_TIERS = { start: 6, commandI: 9, commandII: 12 } as const;
 
 // §16-19 (phase 10) — production is centralized for Agrar (scales with
-// active Farm count) and distributed for Temple (scales with active
-// neutral-Temple count) — see getProductionSlots in game.ts for the actual
-// per-faction curve. Both start from the same base and cap at the same max.
+// active Farm count) and distributed for Temple (scales with FULLY-developed
+// — Devotion II — neutral-Temple count) — see getProductionSlots in game.ts
+// for the actual per-faction curve. Both start from the same base and cap
+// at the same max.
 export const PRODUCTION_BASE_SLOTS = 2;
 export const PRODUCTION_MAX_SLOTS = 4;
 export const UNIT_TRAINING_ROUNDS = 1;
 
-// §4, §12-19 — shared economy constants (identical for both factions).
-export const STARTING_ENERGY = 6;
-export const BASE_INCOME_PER_ROUND = 6;
+// §1 (economy/pacing balance pass) — shared economy constants (identical
+// for both factions). The whole Energy scale was too liquid relative to
+// unit/tech/economy costs — one round of base income used to buy most of an
+// opening. Halved so army, economy and tech genuinely compete for the same
+// Energy instead of all being affordable at once. New normal maximum
+// income is 7⚡/round (was 10) — see AGRAR_FARM_INCOME/TEMPLE_DEVOTION_INCOME.
+export const STARTING_ENERGY = 3;
+export const BASE_INCOME_PER_ROUND = 3;
 export const SITE_ESTABLISH_COST = 4;      // Temple founding only — Agrar never founds a site (§28)
 
-// §6-14 (phase 10; placement simplified phase 11; unified into a single
-// "Agrar Territory" concept afterward) — Agrar's Farm network: its ONLY
+// §6-14 (phase 10; placement simplified phase 11; split back into two
+// distinct radii in the economy/pacing balance pass — see AGRAR_TERRITORY_
+// RADIUS/CULTIVATION_RADIUS below) — Agrar's Farm network: its ONLY
 // economic expansion, built directly by the Builder on open land, never
-// tied to a captured site. Territory is the union of every hex within
-// AGRAR_TERRITORY_RADIUS of the Capital, PLUS every hex within
-// AGRAR_TERRITORY_RADIUS of each ACTIVE Farm — see getAgrarTerritory. A new
-// Farm must be a hex NEIGHBOUR of the Builder (distance 1, so the Builder's
-// own movement still matters) AND land INSIDE existing territory — the
+// tied to a captured site. A new Farm must be a hex NEIGHBOUR of the
+// Builder (distance 1, so the Builder's own movement still matters) AND
+// land INSIDE existing AGRAR_TERRITORY_RADIUS infrastructure reach — the
 // network only grows as a connected bunker, it can't leapfrog across the
-// map, and completing a new Farm itself immediately EXPANDS the territory
-// for the next one. It must never be directly adjacent to another Farm
+// map, and completing a new Farm itself immediately EXPANDS that reach for
+// the next one. It must never be directly adjacent to another Farm
 // (FARM_MIN_SPACING) — adjacent to the CAPITAL is fine (tight bunkering).
-// Territory ALSO blocks enemy Temple founding/rebuilding inside it, and
-// grants FARM_DEFENSE_BONUS defense to the owner's own units standing in it
-// (see isSiteCultivationBlocked / getEffectiveDefense) — one area concept
-// drives placement, area-denial, and the defensive bonus together.
-export const AGRAR_FARM_COST = 5;
+// A Farm costing 6⚡ against +1⚡/round income is a deliberate 6-round
+// payback — a meaningful long-term investment, not something bought
+// casually alongside a full army.
+export const AGRAR_FARM_COST = 6;
 export const AGRAR_FARM_INCOME = 1;
 export const MAX_ACTIVE_FARMS = 4;
+// Infrastructure reach ONLY (Farm/Road placement) — see getAgrarTerritory.
+// Grants NO combat bonus (removed in the economy/pacing balance pass §9 —
+// Agrar's edge is structural: higher HP/DEF, Roads, ZOC, Farms, area denial;
+// a flat +DEF aura on top of all that was a huge, invisible swing since DEF
+// is subtractive).
 export const AGRAR_TERRITORY_RADIUS = 2; // around the Capital, and around each active Farm
-export const FARM_MIN_SPACING = 2;       // never directly adjacent to another Farm
-// A defensive "bunker" bonus (stacks with hill terrain) for an Agrar
-// player's own units standing inside their own territory — the network
-// doesn't just fund the economy and gate expansion, it hardens the ground
-// it covers.
-export const FARM_DEFENSE_BONUS = 2;
+// Shrine-denial reach ONLY (blocks Temple founding/rebuilding) — deliberately
+// SMALLER and farm-only (no Capital projection) so a Farm can't block
+// founding from two hexes away — see getAgrarCultivation.
+export const CULTIVATION_RADIUS = 1; // an active Farm's own hex + its 6 neighbours — Capital projects none of this
+export const FARM_MIN_SPACING = 2;   // never directly adjacent to another Farm
 
-export const TEMPLE_DEVOTION_COST = 3;     // x2 devotion levels per Temple
+// §4 (economy/pacing balance pass) — Devotion I/II both cost 4⚡ now (were
+// 3), so a fully developed neutral Temple totals Founding(4) + DevotionI(4)
+// + DevotionII(4) = 12⚡ for +2⚡/round — a 6-round payback, matching Agrar's
+// 2-Farms-for-12⚡-and-+2-income rate exactly (§28 macro-investment-equality
+// invariant).
+export const TEMPLE_DEVOTION_COST = 4;     // x2 devotion levels per Temple
 export const TEMPLE_DEVOTION_INCOME = 1;
 export const TEMPLE_DEVOTION_MAX_LEVEL = 2;
 
-// §23-25 — Agrar-only physical Roads. Temple gets no equivalent bonus.
+// §14-15 — Agrar-only physical Roads. Temple gets no equivalent bonus. Kept
+// cheap deliberately: at 3⚡ base income (down from 6), 1⚡ is already
+// substantially more expensive relative to the economy, and Builder
+// activation is itself part of the cost.
 export const ROAD_COST_PER_HEX = 1;
 export const ROAD_MOVEMENT_BONUS = 1;
 export const ROAD_PILLAGE_REBUILD_COST = 1;
 
-// §32-36 — combat/tech shared constants relevant to the data model.
-export const TECH_COST = 5;
+// §32-36 — combat constants relevant to the data model (TECH_COST lives in
+// types.ts, next to TECH_NODES — the single source of truth for tech cost).
 export const SPLASH_FACTOR = 0.4;
 export const EFFECTIVE_RANGE_CAP = 4;       // §46 — absolute, after all modifiers
 export const ENCIRCLEMENT_MAX_MULTIPLIER = 1.5;

@@ -16,7 +16,7 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -166,8 +166,10 @@ function cloneStats(base: UnitStats): UnitStats {
 
 function applyTechToStats(stats: UnitStats, type: UnitType, tech: PlayerTech): UnitStats {
   const r = tech.researched;
-  if (r.has('infantry_move') && (type === 'warrior' || type === 'spearsman')) stats.speed += 1;
-  if (r.has('longrange_hp') && (type === 'archer' || type === 'catapult')) stats.maxHp += 5;
+  // §17 (balance pass) — Infantry March removed: it undermined the Roads/
+  // native-speed faction identity too directly. Fortified Ranged reduced
+  // from +5 to +3 max HP — +5 was too large relative to 12-16 base HP values.
+  if (r.has('longrange_hp') && (type === 'archer' || type === 'catapult')) stats.maxHp += 3;
   if ((r.has('agrar_siegecraft_splash') || r.has('temple_mobile_siege_splash')) && type === 'catapult') { stats.splash = 1; stats.splashFactor = 0.4; }
   if (r.has('horse_sight') && (type === 'horserider' || type === 'heavyknight')) stats.vision += 1;
   return stats;
@@ -561,14 +563,14 @@ export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageB
 
 // ── Effective stats (with hill + support bonuses) ──
 
+// §9 (balance pass) — Agrar Territory is deliberately NOT a combat bonus.
+// Agrar's edge is structural (higher HP/DEF baselines, Roads, ZOC formations,
+// Farms, area denial) — a flat +DEF aura on top of that would be a huge,
+// invisible swing (DEF is subtractive: ATK10 vs DEF5 = 5 dmg, vs DEF7 = 3 dmg,
+// a ~40% cut) stacked on units that are already tankier by design.
 export function getEffectiveDefense(state: GameState, unit: Unit): number {
   const onHill = state.hills.has(hexKey(unit.pos));
-  // Bunker bonus: an Agrar player's own units get FARM_DEFENSE_BONUS while
-  // standing inside their OWN territory (stacks with hill terrain, never
-  // applies to an enemy passing through it — see getAgrarTerritory).
-  const player = state.players.find(p => p.id === unit.playerId);
-  const onOwnTerritory = player?.faction === 'agrar' && getAgrarTerritory(state, unit.playerId).has(hexKey(unit.pos));
-  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0) + (onOwnTerritory ? FARM_DEFENSE_BONUS : 0);
+  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0);
 }
 
 export function getEffectiveAttack(state: GameState, unit: Unit): number {
@@ -670,15 +672,19 @@ export function getPopulationCount(state: GameState, playerId: number): number {
   return count;
 }
 
-// §16-20 (phase 10 correction) — production is centralized for Agrar
+// §16-20 (phase 10 correction; devotion-gated Temple threshold added in the
+// economy/pacing balance pass) — production is centralized for Agrar
 // (scales with active Farm count, all training still happens at the
 // Capital — Roads move the result) and distributed for Temple (scales with
-// active neutral-Temple count). Both start at PRODUCTION_BASE_SLOTS and cap
-// at PRODUCTION_MAX_SLOTS — the two curves reach the same ceiling by
-// different map structures, matching the area-vs-points asymmetry. A
-// recruit occupies one of the recruiting player's slots for the full
-// training duration (§5) — the unit itself does NOT exist on the battlefield
-// until it deploys at the start of the player's next round.
+// FULLY-developed — i.e. Devotion II — neutral-Temple count; a merely
+// founded or partially-developed Temple grants no extra slot, matching the
+// macro-investment-equality invariant with Agrar's 2-Farms-for-+1 curve).
+// Both start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS — the
+// two curves reach the same ceiling by different map structures, matching
+// the area-vs-points asymmetry. A recruit occupies one of the recruiting
+// player's slots for the full training duration (§5) — the unit itself does
+// NOT exist on the battlefield until it deploys at the start of the
+// player's next round.
 export function getProductionSlots(state: GameState, playerId: number): number {
   const player = state.players.find(p => p.id === playerId);
   if (player?.faction === 'agrar') {
@@ -689,8 +695,9 @@ export function getProductionSlots(state: GameState, playerId: number): number {
     return Math.min(slots, PRODUCTION_MAX_SLOTS);
   }
   if (player?.faction === 'temple') {
-    const temples = state.strategicSites.filter(s => s.ownerId === playerId && s.state === 'temple').length;
-    return Math.min(PRODUCTION_BASE_SLOTS + temples, PRODUCTION_MAX_SLOTS);
+    const developedTemples = state.strategicSites.filter(s =>
+      s.ownerId === playerId && s.state === 'temple' && s.devotionLevel >= TEMPLE_DEVOTION_MAX_LEVEL).length;
+    return Math.min(PRODUCTION_BASE_SLOTS + developedTemples, PRODUCTION_MAX_SLOTS);
   }
   return PRODUCTION_BASE_SLOTS;
 }
@@ -1348,16 +1355,17 @@ function hexesWithinRadius(center: HexCoord, radius: number, mapRadius: number):
   return result;
 }
 
-// §10-11 (unified "Agrar Territory") — the union of every hex within
-// AGRAR_TERRITORY_RADIUS of the Capital, PLUS every hex within
-// AGRAR_TERRITORY_RADIUS of each ACTIVE Farm. One area concept drives THREE
-// things: Farm placement (getValidFarmHexes — a new Farm must land inside
-// existing territory, so completing one immediately expands where the next
-// can go), area denial (a neutral/ruined site inside an ENEMY Agrar
-// player's territory cannot be founded/rebuilt by Temple — see
-// canStartFounding), and the defense buff (getEffectiveDefense). Deliberately
-// NOT stored on GameState; always derived fresh from live Capital/Farm
-// positions (§45 — avoid duplicated, driftable state).
+// §10-11 (economy/pacing balance pass — split back into two distinct radii,
+// each with exactly one job) — "Agrar Territory" is INFRASTRUCTURE reach
+// only: the union of every hex within AGRAR_TERRITORY_RADIUS of the
+// Capital, PLUS every hex within AGRAR_TERRITORY_RADIUS of each ACTIVE
+// Farm. Used ONLY to gate where a new Farm/Road may be built (getValidFarm
+// Hexes / getValidRoadHexes — a new one must land inside existing
+// territory, so completing one immediately expands where the next can go).
+// It grants NO combat bonus (see getEffectiveDefense) and does NOT drive
+// area denial — that's the separate, tighter getAgrarCultivation below.
+// Deliberately NOT stored on GameState; always derived fresh from live
+// Capital/Farm positions (§45 — avoid duplicated, driftable state).
 export function getAgrarTerritory(state: GameState, agrarPlayerId: number): Set<string> {
   const hexes = new Set<string>();
   const capital = state.capitals.find(c => c.playerId === agrarPlayerId);
@@ -1368,11 +1376,25 @@ export function getAgrarTerritory(state: GameState, agrarPlayerId: number): Set<
   return hexes;
 }
 
+// "Cultivated Influence" — a TIGHTER, farm-only radius (CULTIVATION_RADIUS,
+// deliberately smaller than AGRAR_TERRITORY_RADIUS): every ACTIVE Farm's own
+// hex + its 6 neighbours. The CAPITAL projects none of this — only Farms do.
+// Its only job is area denial: a neutral/ruined site inside it cannot be
+// founded/rebuilt by Temple (see isSiteCultivationBlocked/canStartFounding).
+// An already-ACTIVE Temple is never affected — only new founding/rebuilding.
+export function getAgrarCultivation(state: GameState, agrarPlayerId: number): Set<string> {
+  const hexes = new Set<string>();
+  for (const farm of activeFarmsOf(state, agrarPlayerId)) {
+    for (const h of hexesWithinRadius(farm.pos, CULTIVATION_RADIUS, state.mapRadius)) hexes.add(hexKey(h));
+  }
+  return hexes;
+}
+
 function isSiteCultivationBlocked(state: GameState, pos: HexCoord, templePlayerId: number): boolean {
   const key = hexKey(pos);
   for (const p of state.players) {
     if (p.id === templePlayerId || p.faction !== 'agrar') continue;
-    if (getAgrarTerritory(state, p.id).has(key)) return true;
+    if (getAgrarCultivation(state, p.id).has(key)) return true;
   }
   return false;
 }
@@ -1520,8 +1542,7 @@ export function researchTech(state: GameState, techId: TechId): boolean {
   // happened to be missing from a unit's stats) to every living unit owned
   // by the researcher. Without this, `applyTechToStats` only fires at
   // `createUnit` time, so existing units never benefit from techs like
-  // `roads`, `infantry_move`, `longrange_hp`, or `horse_sight` — bug
-  // discovered in REPORT.md §6.
+  // `longrange_hp` or `horse_sight` — bug discovered in REPORT.md §6.
   const tech = state.playerTech[player.id]!;
   for (const unit of state.units) {
     if (unit.playerId !== player.id || unit.hp <= 0) continue;

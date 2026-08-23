@@ -114,7 +114,7 @@ async function main(): Promise<void> {
   check('player A starts with ZERO units', gsA.state.units.filter((u: any) => u.playerId === gsA.playerSlot).length === 0);
   check('player B starts with ZERO units', gsB.state.units.filter((u: any) => u.playerId === gsB.playerSlot).length === 0);
   check('each player has exactly one Capital', gsA.state.capitals.length === 2);
-  check('starting aura matches STARTING_ENERGY', gsA.state.players.every((p: any) => p.aura === 6), JSON.stringify(gsA.state.players.map((p: any) => p.aura)));
+  check('starting aura matches STARTING_ENERGY (3, economy/pacing balance pass)', gsA.state.players.every((p: any) => p.aura === 3), JSON.stringify(gsA.state.players.map((p: any) => p.aura)));
 
   const slotA = gsA.playerSlot as number;
   const slotB = gsB.playerSlot as number;
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
   nowActing.send({ type: 'action', action: 'recruit', params: { unitType: 'founder', templeId: actingCapital.id } });
   const [postRecruitA, postRecruitB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
   check('the recruited unit does NOT exist on the battlefield immediately', postRecruitA.state.units.filter((u: any) => u.playerId === nowActingSlot).length === 0);
-  check('the recruiting player was charged the Builder/Acolyte cost (2⚡)', postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 4, `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
+  check('the recruiting player was charged the Builder/Acolyte cost (2⚡, from 3⚡ starting)', postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 1, `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
 
   // ── End this player's turn, then the opponent's — the order should deploy
   // at the start of the RECRUITING player's next round (their turn comes

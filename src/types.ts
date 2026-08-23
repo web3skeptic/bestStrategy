@@ -34,7 +34,21 @@ export type FactionId = 'agrar' | 'temple';
 // Roads' speed bonus is Agrar-only; the tech tree drops the old
 // Roads/Teleports movement techs and the flat Catapult/Heavy Knight
 // unlocks in favor of faction-specific, prerequisite-gated ones.
-export const RULES_VERSION = 8;
+// v9 (economy/pacing balance pass): STARTING_ENERGY/BASE_INCOME_PER_ROUND
+// halved (6->3), new max income 7 (was 10); AGRAR_FARM_COST 5->6;
+// TEMPLE_DEVOTION_COST 3->4 per level; Temple production slots now require
+// Devotion II (a merely founded/partially-developed Temple grants none,
+// was any owned Temple); COMMAND_TIERS 8/10/12 -> 6/9/12; TECH_COST 5->6
+// (and the redundant duplicate TECH_COST export in factions.ts removed —
+// types.ts, next to TECH_NODES, is the only source of truth now);
+// FARM_DEFENSE_BONUS removed entirely (Agrar Territory grants no combat
+// bonus); the old unified "Agrar Territory" split back into two distinct
+// radii — AGRAR_TERRITORY_RADIUS (2, infrastructure/placement only, no area
+// denial) and CULTIVATION_RADIUS (1, farm-only, shrine-denial only);
+// 'infantry_move' tech removed from TechId/TECH_NODES; 'longrange_hp' now
+// +3 HP (was +5); Agrar Knight/Heavy Knight/Builder speed restored to 2
+// (was 1 for every Agrar unit).
+export const RULES_VERSION = 9;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -255,10 +269,13 @@ export type SelectionMode = 'unit' | 'site' | null;
 // 'unlock_spearsman' tech was dead weight (it added a slot the player
 // already had). Catapult/Heavy Knight unlocks are now faction-specific,
 // prerequisite-gated techs (different names/flavor per faction, same
-// underlying unitUnlock slot) rather than one flat 5⚡ unlock. The old
+// underlying unitUnlock slot) rather than one flat unlock. The old
 // Roads/Teleports "movement" branch is gone — Agrar's physical Roads (see
 // factions.ts) are the only speed mechanic now, and Teleports directly
 // conflicted with the Temple-mobility/Agrar-infrastructure asymmetry.
+// Economy/pacing balance pass: 'infantry_move' (Infantry March, +1 SPD
+// warrior/pike) removed entirely — it undermined the Roads/native-speed
+// faction identity too directly; may return after further balance testing.
 export type TechId =
   | 'agrar_siegecraft'
   | 'agrar_siegecraft_splash'
@@ -268,7 +285,6 @@ export type TechId =
   | 'temple_mobile_siege_splash'
   | 'temple_warrior_rite'
   | 'temple_champion_rite'
-  | 'infantry_move'
   | 'longrange_hp'
   | 'horse_sight'
   | 'unlock_healer'
@@ -278,7 +294,9 @@ export type TechId =
   | 'command_2'
   ;
 
-export const TECH_COST = 5;
+// §7 (economy/pacing balance pass) — one basic tech should cost roughly 2
+// rounds of undeveloped base income, not less than one.
+export const TECH_COST = 6;
 
 export interface TechNode {
   id: TechId;
@@ -298,14 +316,15 @@ export const TECH_NODES: TechNode[] = [
   { id: 'temple_mobile_siege_tech',   name: 'Mobile Siege',    description: 'Unlock Mobile Siege — long-range siege weapon with area splash damage.', cost: TECH_COST, prereqs: [], unitUnlock: 'catapult', faction: 'temple' },
   { id: 'temple_mobile_siege_splash', name: 'Splash Range +1', description: 'Mobile Siege gains splash radius 1.',                                    cost: TECH_COST, prereqs: ['temple_mobile_siege_tech'], faction: 'temple' },
   // Heavy-unit line — faction-specific, genuinely gated (needs the tier-1
-  // tech AND Command I, not a single flat 5⚡ unlock — §30).
+  // tech AND Command I, not a single flat unlock — §30).
   { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for Heavy Knight.',                                                cost: TECH_COST, prereqs: [], faction: 'agrar' },
   { id: 'agrar_heavy_knight_tech', name: 'Heavy Knight',    description: 'Unlock the Heavy Knight — heavily armoured mounted unit with high HP and attack. Requires Heavy Armor and Command I.', cost: TECH_COST, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
   { id: 'temple_warrior_rite',    name: 'Warrior Rite',     description: 'Prerequisite for Champion.',                                                    cost: TECH_COST, prereqs: [], faction: 'temple' },
   { id: 'temple_champion_rite',   name: 'Champion',         description: 'Unlock the Champion — heavily armoured mounted unit with high HP and attack. Requires Warrior Rite and Command I.', cost: TECH_COST, prereqs: ['temple_warrior_rite', 'command_1'], unitUnlock: 'heavyknight', faction: 'temple' },
-  // Branch: Stat Bonus (pick ONE) — shared by both factions.
-  { id: 'infantry_move',       name: 'Infantry March',    description: 'Warriors and Spearsmen gain +1 movement speed.',                                            cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
-  { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +5 max HP.',                                                    cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
+  // Branch: Stat Bonus (pick ONE) — shared by both factions. Infantry March
+  // (Warrior/Pike +1 SPD) removed (balance pass §17) — undermined the
+  // Roads/native-speed faction identity too directly.
+  { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +3 max HP.',                                                    cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
   { id: 'horse_sight',         name: 'Scout Cavalry',     description: 'Horseriders and Heavy Knights gain +1 vision range.',                                       cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
   // Branch: Support Unit (pick ONE) — shared by both factions.
   { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'healer' },

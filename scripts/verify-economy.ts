@@ -1,23 +1,25 @@
-// Phase 10/11 verification, plus the post-phase-11 "Agrar Territory"
-// correction: the macro-economy correction — "Agrar controls area (Farms),
-// Temple controls points (Temples)" — the phase 11 Builder-adjacency Farm
-// placement, and the unified territory concept (placement gate + area
-// denial + Farm defense buff, all driven by one area). Exercises the real
-// engine mutators end-to-end (no forked logic) — createGameState,
-// startFounding, startFarm, endTurn, buyDevotion, attackStructure.
+// Phase 10/11 verification, plus the economy/pacing balance pass: the
+// macro-economy correction — "Agrar controls area (Farms), Temple controls
+// points (Temples)" — the phase 11 Builder-adjacency Farm placement, the
+// slowed-down Energy scale (3 base income / 3 starting, 7 max instead of
+// 6/6/10), and Agrar Territory split back into two distinct, single-purpose
+// radii (infrastructure reach vs shrine-denial cultivation), with the
+// territory defense bonus removed entirely. Exercises the real engine
+// mutators end-to-end (no forked logic) — createGameState, startFounding,
+// startFarm, endTurn, buyDevotion, attackStructure.
 //
 // Run with: npx tsx scripts/verify-economy.ts
 import {
   createGameState, endTurn, chooseFaction, startFounding, canStartFounding,
   getPlayerIncome, getProductionSlots,
-  canStartFarm, startFarm, getValidFarmHexes, getAgrarTerritory,
+  canStartFarm, startFarm, getValidFarmHexes, getAgrarTerritory, getAgrarCultivation,
   canBuyDevotion, buyDevotion,
   selectUnit, attackStructure, getStructureAt, getEffectiveDefense,
   createUnit,
 } from '../src/game';
 import {
   BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS,
-  AGRAR_TERRITORY_RADIUS, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
+  AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING, SITE_ESTABLISH_COST,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
 } from '../src/factions';
 import { hexDistance, hexNeighbors, hexEqual, hexKey } from '../src/hex';
@@ -118,8 +120,18 @@ function foundTemple(state: GameState, playerId: number, siteIndex = 0) {
   return site;
 }
 
-// ── Base income ──
-console.log('\n=== Base income (§4) ===');
+// Founds AND fully develops (Devotion I + II) a Temple for playerId.
+function foundFullTemple(state: GameState, playerId: number, siteIndex = 0) {
+  const site = foundTemple(state, playerId, siteIndex);
+  state.currentPlayerIndex = playerId;
+  buyDevotion(state, site.id);
+  state.currentPlayerIndex = playerId;
+  buyDevotion(state, site.id);
+  return site;
+}
+
+// ── Base income (§1) ──
+console.log('\n=== Base income (§1) ===');
 {
   const state = createGameState();
   chooseFaction(state, 0, 'agrar');
@@ -129,6 +141,7 @@ console.log('\n=== Base income (§4) ===');
   endTurn(state); // p0's turn ends; p1 starts (no income change for p0 yet)
   endTurn(state); // p1's turn ends; p0 starts -> gains income
   check('base income granted every round regardless of structures', p0.aura === before + BASE_INCOME_PER_ROUND, `aura ${before}->${p0.aura}`);
+  check('BASE_INCOME_PER_ROUND is 3 (was 6)', BASE_INCOME_PER_ROUND === 3, `got ${BASE_INCOME_PER_ROUND}`);
 }
 
 // ── Agrar never founds a site (§28) ──
@@ -145,11 +158,12 @@ console.log('\n=== Agrar never founds a strategic site (§28) ===');
   check('the site remains neutral', site.state === 'neutral');
 }
 
-// ── Agrar Farms: construction (§6-9) ──
-console.log('\n=== Agrar Farms: construction (§6-9) ===');
+// ── Agrar Farms: construction (§3) ──
+console.log('\n=== Agrar Farms: construction (§3) ===');
 {
   const state = setup();
   clearFarmArea(state, 0);
+  check('AGRAR_FARM_COST is 6 (was 5)', AGRAR_FARM_COST === 6, `got ${AGRAR_FARM_COST}`);
   check('flat income with no Farms yet', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND, `income=${getPlayerIncome(state, 0)}`);
 
   const builder = founderOf(state, 0);
@@ -169,7 +183,7 @@ console.log('\n=== Agrar Farms: construction (§6-9) ===');
 
   const founding = state.farms.find(f => hexEqual(f.pos, targetHex))!;
   check('the Farm exists in a founding state', founding.state === 'foundingFarm');
-  check('income is still flat while founding (§10)', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND);
+  check('income is still flat while founding', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND);
   check('a founding Farm is not yet attackable', getStructureAt(state, targetHex) === null);
 
   advanceOneRound(state);
@@ -200,7 +214,7 @@ console.log('\n=== Agrar Farms: construction (§6-9) ===');
   check('Temple\'s Acolyte cannot build a Farm', !canStartFarm(state, acolyte, anyHex));
 }
 
-// ── Agrar Farms: placement rules — Builder-adjacency AND chain-distance ──
+// ── Agrar Farms: placement rules — Builder-adjacency AND infrastructure territory ──
 console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
 {
   // A Farm CAN now be directly adjacent to the Capital (encourages tight
@@ -217,7 +231,7 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   check('a Farm CAN be built directly adjacent to the Capital now', hexesFromCapitalEdge.some(h => hexDistance(h, capital.pos) === 1), `got ${JSON.stringify(hexesFromCapitalEdge)}`);
 
   // Build one Farm, then verify a hex adjacent to it is excluded but one at
-  // exactly FARM_MIN_SPACING is still fine (and still within chain distance).
+  // exactly FARM_MIN_SPACING is still fine (and still within reach).
   builder.pos = { q: 2, r: 0 };
   builder.hasMoved = false; builder.hasAttacked = false;
   const first = getValidFarmHexes(state, builder)[0]!;
@@ -231,9 +245,9 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   check(`every remaining candidate is at least FARM_MIN_SPACING (${FARM_MIN_SPACING}) from the Farm`, hexesAfter.every(h => hexDistance(h, first) >= FARM_MIN_SPACING));
 }
 {
-  // §chain rule — a Farm can NOT be started far from the Capital or any
-  // existing Farm, even if the Builder physically travels there: the
-  // network only grows as a connected bunker.
+  // A Farm can NOT be started far from the Capital or any existing Farm,
+  // even if the Builder physically travels there: the network only grows
+  // as a connected bunker (AGRAR_TERRITORY_RADIUS reach).
   const state = setup();
   clearFarmArea(state, 0, state.mapRadius); // clear the whole small test map
   const builder = founderOf(state, 0);
@@ -255,7 +269,7 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   const builder = founderOf(state, 0);
   builder.pos = { q: 4, r: 0 }; // adjacent to the first Farm, AGRAR_TERRITORY_RADIUS(2) beyond it
   builder.hasMoved = false; builder.hasAttacked = false;
-  check('the next spot is beyond chain distance of the Capital alone', hexDistance(builder.pos, capital.pos) > AGRAR_TERRITORY_RADIUS);
+  check('the next spot is beyond the Capital\'s own reach', hexDistance(builder.pos, capital.pos) > AGRAR_TERRITORY_RADIUS);
   const chained = getValidFarmHexes(state, builder);
   check('a Farm CAN chain outward from an existing Farm, beyond the Capital\'s own reach', chained.length > 0, `got ${chained.length}`);
 }
@@ -303,11 +317,12 @@ console.log('\n=== Agrar Farms: destruction (§15) ===');
   check('the freed slot can be rebuilt elsewhere', getValidFarmHexes(state, rebuildBuilder).length > 0);
 }
 
-// ── Farm defense buff — own Agrar Territory (bunker correction) ──
-console.log('\n=== Farm defense buff — own Agrar Territory (bunker correction) ===');
+// ── Territory grants NO combat bonus (§9) ──
+console.log('\n=== Agrar Territory grants NO defense bonus (§9) ===');
 {
   const state = setup();
   clearFarmArea(state, 0);
+  const capital = state.capitals.find(c => c.playerId === 0)!;
   const builder = founderOf(state, 0);
   const hex = getValidFarmHexes(state, builder)[0]!;
   foundFarm(state, 0, hex);
@@ -315,27 +330,24 @@ console.log('\n=== Farm defense buff — own Agrar Territory (bunker correction)
 
   const defender = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
   const baseDef = defender.stats.defense;
-  defender.pos = { q: 500, r: 500 }; // off any territory
+  defender.pos = { q: 500, r: 500 }; // far off any territory
   check('off-territory defense is the base stat', getEffectiveDefense(state, defender) === baseDef);
-  defender.pos = { ...farm.pos }; // standing on the Farm's own hex — inside its territory
-  check('an Agrar unit on its OWN Farm hex gets +FARM_DEFENSE_BONUS', getEffectiveDefense(state, defender) === baseDef + FARM_DEFENSE_BONUS, `got ${getEffectiveDefense(state, defender)}`);
-  defender.pos = { ...hexNeighbors(farm.pos)[0]! }; // a neighbour is inside the Farm's AGRAR_TERRITORY_RADIUS too
-  check('a neighbour of the Farm (still within AGRAR_TERRITORY_RADIUS) also gets the bonus', getEffectiveDefense(state, defender) === baseDef + FARM_DEFENSE_BONUS);
-
-  const enemy = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
-  const enemyBaseDef = enemy.stats.defense;
-  enemy.pos = { ...farm.pos };
-  check('an ENEMY (Temple) unit standing on the same territory gets NO bonus', getEffectiveDefense(state, enemy) === enemyBaseDef, `got ${getEffectiveDefense(state, enemy)}`);
+  defender.pos = { ...farm.pos }; // standing on its own Farm's hex
+  check('an Agrar unit on its OWN Farm hex gets NO defense bonus', getEffectiveDefense(state, defender) === baseDef, `got ${getEffectiveDefense(state, defender)}, base=${baseDef}`);
+  defender.pos = { ...capital.pos }; // standing on its own Capital
+  check('an Agrar unit on its OWN Capital hex gets NO defense bonus', getEffectiveDefense(state, defender) === baseDef);
+  check('effective DEF equals base DEF + terrain/support only (no territory term)', getEffectiveDefense(state, defender) === defender.stats.defense);
 }
 
-// ── Temple Devotion (§15-16, mostly unchanged) ──
-console.log('\n=== Temple Devotion (§15-16) ===');
+// ── Temple Devotion (§4) ──
+console.log('\n=== Temple Devotion (§4) ===');
 {
   const state = setup();
   const temple = foundTemple(state, 1, 0);
   check('founding produces a Temple for the Temple faction', temple.state === 'temple', `got ${temple.state}`);
   const player = state.players[1]!;
   check('flat income with Devotion 0', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND, `income=${getPlayerIncome(state, 1)}`);
+  check('TEMPLE_DEVOTION_COST is 4 (was 3)', TEMPLE_DEVOTION_COST === 4, `got ${TEMPLE_DEVOTION_COST}`);
 
   state.currentPlayerIndex = 1;
   const auraBefore = player.aura;
@@ -344,17 +356,100 @@ console.log('\n=== Temple Devotion (§15-16) ===');
   check('buyDevotion charges TEMPLE_DEVOTION_COST', player.aura === auraBefore - TEMPLE_DEVOTION_COST, `aura=${player.aura}`);
   check('devotionLevel increments', temple.devotionLevel === 1);
   check('income increases by TEMPLE_DEVOTION_INCOME per level', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_DEVOTION_INCOME, `income=${getPlayerIncome(state, 1)}`);
+  check('a partially-developed (Devotion I) Temple grants no production slot', getProductionSlots(state, 1) === 2, `got ${getProductionSlots(state, 1)}`);
 
   for (let i = temple.devotionLevel; i < TEMPLE_DEVOTION_MAX_LEVEL; i++) buyDevotion(state, temple.id);
   check(`Devotion caps at TEMPLE_DEVOTION_MAX_LEVEL (${TEMPLE_DEVOTION_MAX_LEVEL})`, temple.devotionLevel === TEMPLE_DEVOTION_MAX_LEVEL);
   check('cannot buy Devotion past the level cap', !canBuyDevotion(state, temple.id));
   check('income at full Devotion development', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_DEVOTION_MAX_LEVEL * TEMPLE_DEVOTION_INCOME, `income=${getPlayerIncome(state, 1)}`);
+  check('a fully-developed (Devotion II) Temple grants +1 production slot', getProductionSlots(state, 1) === 3, `got ${getProductionSlots(state, 1)}`);
 }
 
-// ── Equal development invariant (§51) — both cap at the SAME maximum,
-// reached via different territory: Agrar via MAX_ACTIVE_FARMS Farms,
-// Temple via BOTH neutral sites fully devoted.
-console.log('\n=== Equal development invariant (§51) ===');
+// ── §27-28 Economic symmetry curve + macro-investment-equality invariants ──
+console.log('\n=== Agrar economic curve (§27) ===');
+{
+  const state = setup();
+  clearFarmArea(state, 0);
+  const expectedIncome = [3, 4, 5, 6, 7];
+  const expectedSlots = [2, 2, 3, 3, 4];
+  check(`0 Farms = ${expectedIncome[0]} income`, getPlayerIncome(state, 0) === expectedIncome[0], `got ${getPlayerIncome(state, 0)}`);
+  check(`0 Farms = ${expectedSlots[0]} production`, getProductionSlots(state, 0) === expectedSlots[0], `got ${getProductionSlots(state, 0)}`);
+  for (let i = 0; i < MAX_ACTIVE_FARMS; i++) {
+    foundFarm(state, 0, FARM_RING[i]!);
+    const n = i + 1;
+    check(`${n} Farm(s) = ${expectedIncome[n]} income`, getPlayerIncome(state, 0) === expectedIncome[n], `got ${getPlayerIncome(state, 0)}`);
+    check(`${n} Farm(s) = ${expectedSlots[n]} production`, getProductionSlots(state, 0) === expectedSlots[n], `got ${getProductionSlots(state, 0)}`);
+  }
+}
+console.log('\n=== Temple economic curve (§27) ===');
+{
+  const state = setup();
+  check('0 full neutral Temples = 3 income', getPlayerIncome(state, 1) === 3, `got ${getPlayerIncome(state, 1)}`);
+  const t0 = foundTemple(state, 1, 0);
+  check('Temple + no Devotion = +0 income', getPlayerIncome(state, 1) === 3, `got ${getPlayerIncome(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  buyDevotion(state, t0.id);
+  check('Devotion I = +1 income (total 4)', getPlayerIncome(state, 1) === 4, `got ${getPlayerIncome(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  buyDevotion(state, t0.id);
+  check('Devotion II = +2 income (total 5)', getPlayerIncome(state, 1) === 5, `got ${getPlayerIncome(state, 1)}`);
+  check('1 Devotion-II Temple = 5 income', getPlayerIncome(state, 1) === 5);
+  check('1 Devotion-II Temple = 3 production', getProductionSlots(state, 1) === 3, `got ${getProductionSlots(state, 1)}`);
+  if (state.strategicSites.length > 1) {
+    foundFullTemple(state, 1, 1);
+    check('2 Devotion-II Temples = 7 income', getPlayerIncome(state, 1) === 7, `got ${getPlayerIncome(state, 1)}`);
+    check('2 Devotion-II Temples = 4 production', getProductionSlots(state, 1) === 4, `got ${getProductionSlots(state, 1)}`);
+  }
+}
+console.log('\n=== Macro investment equality (§28) ===');
+{
+  // Raw sticker prices, computed from the constants directly (NOT by
+  // measuring aura drift across foundFarm/foundTemple — those helpers
+  // advance real rounds, so base/Devotion income would accrue in between
+  // and confound a "spent" measurement).
+  const cost2Farms = AGRAR_FARM_COST * 2;
+  const cost4Farms = AGRAR_FARM_COST * 4;
+  const cost1Temple = SITE_ESTABLISH_COST + TEMPLE_DEVOTION_COST * TEMPLE_DEVOTION_MAX_LEVEL;
+  const cost2Temples = cost1Temple * 2;
+  check('2 Agrar Farms cost exactly 12⚡', cost2Farms === 12, `got ${cost2Farms}`);
+  check('4 Agrar Farms cost exactly 24⚡', cost4Farms === 24, `got ${cost4Farms}`);
+  check('1 fully-developed Temple costs exactly 12⚡ (4 found + 4 + 4 Devotion)', cost1Temple === 12, `got ${cost1Temple}`);
+  check('2 fully-developed Temples cost exactly 24⚡', cost2Temples === 24, `got ${cost2Temples}`);
+  check('2 Farms and 1 fully-developed Temple represent EQUAL macro investment (cost)', cost2Farms === cost1Temple);
+  check('4 Farms and 2 fully-developed Temples represent EQUAL macro investment (cost)', cost4Farms === cost2Temples);
+
+  const stateA = setup();
+  clearFarmArea(stateA, 0);
+  stateA.players[0]!.aura = 200;
+  const before = getPlayerIncome(stateA, 0);
+  const beforeSlots = getProductionSlots(stateA, 0);
+  foundFarm(stateA, 0, FARM_RING[0]!);
+  foundFarm(stateA, 0, FARM_RING[1]!);
+  check('2 Agrar Farms: income gain = +2', getPlayerIncome(stateA, 0) - before === 2, `got ${getPlayerIncome(stateA, 0) - before}`);
+  check('2 Agrar Farms: production gain = +1', getProductionSlots(stateA, 0) - beforeSlots === 1, `got ${getProductionSlots(stateA, 0) - beforeSlots}`);
+  foundFarm(stateA, 0, FARM_RING[2]!);
+  foundFarm(stateA, 0, FARM_RING[3]!);
+  check('4 Agrar Farms: income gain = +4', getPlayerIncome(stateA, 0) - before === 4, `got ${getPlayerIncome(stateA, 0) - before}`);
+  check('4 Agrar Farms: production gain = +2', getProductionSlots(stateA, 0) - beforeSlots === 2, `got ${getProductionSlots(stateA, 0) - beforeSlots}`);
+
+  const stateT = setup();
+  stateT.players[1]!.aura = 200;
+  const beforeT = getPlayerIncome(stateT, 1);
+  const beforeSlotsT = getProductionSlots(stateT, 1);
+  foundFullTemple(stateT, 1, 0);
+  check('1 fully-developed Temple: income gain = +2', getPlayerIncome(stateT, 1) - beforeT === 2, `got ${getPlayerIncome(stateT, 1) - beforeT}`);
+  check('1 fully-developed Temple: production gain = +1', getProductionSlots(stateT, 1) - beforeSlotsT === 1, `got ${getProductionSlots(stateT, 1) - beforeSlotsT}`);
+  if (stateT.strategicSites.length > 1) {
+    foundFullTemple(stateT, 1, 1);
+    check('2 fully-developed Temples: income gain = +4', getPlayerIncome(stateT, 1) - beforeT === 4, `got ${getPlayerIncome(stateT, 1) - beforeT}`);
+    check('2 fully-developed Temples: production gain = +2', getProductionSlots(stateT, 1) - beforeSlotsT === 2, `got ${getProductionSlots(stateT, 1) - beforeSlotsT}`);
+  }
+
+  check('2 Farms and 1 fully-developed Temple represent EQUAL macro investment (income)', (getPlayerIncome(stateA, 0) - before) === (getPlayerIncome(stateT, 1) - beforeT));
+}
+
+// ── Equal MAXIMUM development invariant — both cap at 7⚡ income ──
+console.log('\n=== Equal maximum development invariant ===');
 {
   const stateA = setup();
   clearFarmArea(stateA, 0);
@@ -368,41 +463,17 @@ console.log('\n=== Equal development invariant (§51) ===');
   const stateT = setup();
   stateT.players[1]!.aura = 200;
   for (let i = 0; i < stateT.strategicSites.length; i++) {
-    const temple = foundTemple(stateT, 1, i);
-    stateT.currentPlayerIndex = 1;
-    for (let d = 0; d < TEMPLE_DEVOTION_MAX_LEVEL; d++) buyDevotion(stateT, temple.id);
+    foundFullTemple(stateT, 1, i);
   }
   const templeIncome = getPlayerIncome(stateT, 1);
 
   check(`Agrar reached MAX_ACTIVE_FARMS (${MAX_ACTIVE_FARMS}) active Farms`, agrarFarms === MAX_ACTIVE_FARMS, `got ${agrarFarms}`);
   check('a fully-developed Agrar network and a fully-developed Temple network yield equal MAXIMUM income', agrarIncome === templeIncome, `agrar=${agrarIncome} temple=${templeIncome}`);
+  check('the maximum income is exactly 7 (not 10)', agrarIncome === 7 && templeIncome === 7, `agrar=${agrarIncome} temple=${templeIncome}`);
 }
 
-// ── Production symmetry (§16-20) ──
-console.log('\n=== Production symmetry (§16-20) ===');
-{
-  const state = setup();
-  clearFarmArea(state, 0);
-  const before = getProductionSlots(state, 0);
-  foundFarm(state, 0, FARM_RING[0]!);
-  check('1 active Farm does not raise Agrar production yet', getProductionSlots(state, 0) === before, `before=${before} after=${getProductionSlots(state, 0)}`);
-  foundFarm(state, 0, FARM_RING[1]!);
-  check('2 active Farms raise Agrar production by 1', getProductionSlots(state, 0) === before + 1, `got ${getProductionSlots(state, 0)}`);
-  foundFarm(state, 0, FARM_RING[2]!);
-  foundFarm(state, 0, FARM_RING[3]!);
-  check('4 active Farms raise Agrar production by 1 more (total +2)', getProductionSlots(state, 0) === before + 2, `got ${getProductionSlots(state, 0)}`);
-}
-{
-  const state = setup();
-  const before = getProductionSlots(state, 1);
-  const temple0 = foundTemple(state, 1, 0);
-  check('1 active Temple raises Temple production by 1', getProductionSlots(state, 1) === before + 1, `got ${getProductionSlots(state, 1)}`);
-  check('site really is a Temple', temple0.state === 'temple');
-  if (state.strategicSites.length > 1) {
-    foundTemple(state, 1, 1);
-    check('2 active Temples raise Temple production by 2 total', getProductionSlots(state, 1) === before + 2, `got ${getProductionSlots(state, 1)}`);
-  }
-}
+// ── Production symmetry ──
+console.log('\n=== Production symmetry ===');
 {
   const state = setup();
   const agrarSlots = getProductionSlots(state, 0);
@@ -410,63 +481,104 @@ console.log('\n=== Production symmetry (§16-20) ===');
   check('both factions start at the same production base', agrarSlots === templeSlots, `agrar=${agrarSlots} temple=${templeSlots}`);
 }
 
-// ── Agrar Territory (§10-11, unified) ──
-console.log('\n=== Agrar Territory blocks Temple founding (§10-11) ===');
+// ── Infrastructure Territory (§10) — placement reach only, NOT area denial ──
+console.log('\n=== Agrar Territory: infrastructure reach only, no area-denial (§10) ===');
 {
-  // The Capital itself ALWAYS projects territory (AGRAR_TERRITORY_RADIUS),
-  // with zero Farms built — no economy investment required to defend home turf.
+  // The Capital itself ALWAYS projects infrastructure territory, with zero
+  // Farms built — no economy investment required to expand from home.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const territory = getAgrarTerritory(state, 0);
-  check('the Capital hex itself is territory', territory.has(hexKey(capital.pos)));
+  check('the Capital hex itself is (infrastructure) territory', territory.has(hexKey(capital.pos)));
   check(`a hex exactly AGRAR_TERRITORY_RADIUS (${AGRAR_TERRITORY_RADIUS}) from the Capital is territory`, territory.has(hexKey({ q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r })));
   check('a hex beyond AGRAR_TERRITORY_RADIUS of the Capital, with no Farms, is NOT territory', !territory.has(hexKey({ q: capital.pos.q + AGRAR_TERRITORY_RADIUS + 1, r: capital.pos.r })));
 }
 {
+  // Crucially: being inside the Capital's infrastructure territory (radius 2)
+  // does NOT block Temple founding — only the tighter, farm-only cultivation
+  // radius does (§10-11). A hex just outside cultivation range (radius 1 of
+  // any Farm) but still inside the Capital's radius-2 territory is foundable.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const site = state.strategicSites[0]!;
-  // Build the Farm at a genuinely valid hex, then move the neutral site onto
-  // a hex that's ONLY covered by the Farm's own radius — beyond the
-  // Capital's own reach — so this test isolates the Farm's contribution.
-  const farmHex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
-  foundFarm(state, 0, farmHex);
-  const beyondCapital = { q: farmHex.q + AGRAR_TERRITORY_RADIUS, r: farmHex.r };
-  check('the site\'s target hex really is beyond the Capital\'s own territory', hexDistance(beyondCapital, capital.pos) > AGRAR_TERRITORY_RADIUS);
-  site.pos = { ...beyondCapital };
-
-  const territory = getAgrarTerritory(state, 0);
-  check('the active Farm\'s own hex is territory', territory.has(hexKey(farmHex)));
-  check('a hex beyond the Capital\'s reach, but within the Farm\'s own radius, is ALSO territory', territory.has(hexKey(site.pos)));
+  // Note the r-axis here, not q — clearFarmArea parks the Agrar Builder at
+  // {q:2,r:0}, so a site along the q-axis would collide with it (which would
+  // itself block founding as "enemy on site", confounding this test).
+  site.pos = { q: capital.pos.q, r: capital.pos.r + AGRAR_TERRITORY_RADIUS }; // inside territory, no Farm anywhere
+  check('setup: the site is inside the Capital\'s infrastructure territory', getAgrarTerritory(state, 0).has(hexKey(site.pos)));
+  check('the site is NOT inside any cultivation (no Farms exist)', !getAgrarCultivation(state, 0).has(hexKey(site.pos)));
 
   const acolyte = founderOf(state, 1);
   acolyte.pos = { ...site.pos };
   acolyte.hasMoved = false; acolyte.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  check('Temple cannot start founding on a site inside enemy Agrar Territory', canStartFounding(state, acolyte) === null);
+  check('Temple CAN found on a site merely inside Agrar\'s infrastructure territory (Capital alone never blocks founding)', canStartFounding(state, acolyte) !== null);
+}
+
+// ── Cultivated Influence (§11, §30) — shrine denial only, farm-radius-1 ──
+console.log('\n=== Cultivated Influence: shrine denial, radius 1, farms only (§11/§30) ===');
+{
+  check('CULTIVATION_RADIUS is 1 (tighter than AGRAR_TERRITORY_RADIUS 2)', CULTIVATION_RADIUS === 1 && CULTIVATION_RADIUS < AGRAR_TERRITORY_RADIUS);
+  const state = setup();
+  clearFarmArea(state, 0);
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  // The Capital projects NO cultivation at all, even with zero Farms.
+  const cultivationNoFarms = getAgrarCultivation(state, 0);
+  check('the Capital itself projects NO cultivation', cultivationNoFarms.size === 0, `got ${cultivationNoFarms.size}`);
+
+  const site = state.strategicSites[0]!;
+  const farmHex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
+  foundFarm(state, 0, farmHex);
+  site.pos = { ...farmHex };
+
+  const cultivated = getAgrarCultivation(state, 0);
+  check('the active Farm cultivates its own hex + 6 neighbours (radius 1)', cultivated.size === 7, `got ${cultivated.size}`);
+  check('the site hex (the Farm\'s own hex) is inside the cultivated set', cultivated.has(hexKey(site.pos)));
+
+  const acolyte = founderOf(state, 1);
+  acolyte.pos = { ...site.pos };
+  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  check('Temple cannot start founding on a site inside enemy Farm cultivation', canStartFounding(state, acolyte) === null);
 }
 {
-  // A FOUNDING (not yet active) Farm does not expand territory beyond what
-  // the Capital already covers.
+  // Do not let a Farm block Temple founding from two hexes away.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const site = state.strategicSites[0]!;
-  const far = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
-  site.pos = far;
   const farmHex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
-  const beyondCapital = { q: farmHex.q + AGRAR_TERRITORY_RADIUS, r: farmHex.r };
-  const builder = founderOf(state, 0);
-  builder.pos = { ...hexNeighbors(farmHex)[0]! };
-  builder.hasMoved = false; builder.hasAttacked = false;
-  state.currentPlayerIndex = 0;
-  startFarm(state, builder.id, farmHex); // NOT advanced — still founding
-  check('a still-founding Farm does not yet expand territory beyond the Capital', !getAgrarTerritory(state, 0).has(hexKey(beyondCapital)));
+  foundFarm(state, 0, farmHex);
+  const twoAway = { q: farmHex.q + CULTIVATION_RADIUS + 1, r: farmHex.r }; // distance 2 from the Farm
+  check('setup: the site really is 2 hexes from the Farm', hexDistance(twoAway, farmHex) === CULTIVATION_RADIUS + 1);
+  site.pos = { ...twoAway };
+  check('a shrine 2 hexes from the Farm is NOT cultivated', !getAgrarCultivation(state, 0).has(hexKey(site.pos)));
+
+  const acolyte = founderOf(state, 1);
+  acolyte.pos = { ...site.pos };
+  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  check('Temple CAN found a shrine 2 hexes from the Farm — cultivation does not reach that far', canStartFounding(state, acolyte) !== null);
 }
 {
-  // Destroying the blocking Farm removes its territory and unblocks founding.
+  // A FOUNDING (not yet active) Farm does not cultivate anything.
+  const state = setup();
+  clearFarmArea(state, 0);
+  const site = state.strategicSites[0]!;
+  const far = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
+  site.pos = far;
+  const builder = founderOf(state, 0);
+  const hex = getValidFarmHexes(state, builder)[0]!;
+  builder.hasMoved = false; builder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  startFarm(state, builder.id, hex); // NOT advanced — still founding
+  site.pos = hex;
+  check('a still-founding Farm projects no cultivation', getAgrarCultivation(state, 0).size === 0);
+}
+{
+  // Destroying the blocking Farm removes the cultivation and unblocks founding.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
@@ -475,8 +587,7 @@ console.log('\n=== Agrar Territory blocks Temple founding (§10-11) ===');
   site.pos = far;
   const hex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
   foundFarm(state, 0, hex);
-  const beyondCapital = { q: hex.q + AGRAR_TERRITORY_RADIUS, r: hex.r };
-  site.pos = { ...beyondCapital };
+  site.pos = hex;
   const farm = state.farms.find(f => hexEqual(f.pos, hex))!;
 
   const acolyte = founderOf(state, 1);
@@ -501,7 +612,7 @@ console.log('\n=== Agrar Territory blocks Temple founding (§10-11) ===');
 }
 {
   // An ACTIVE (already-founded) Temple is never disabled by nearby enemy
-  // Agrar Territory — it only blocks founding/rebuilding, not an active Temple.
+  // cultivation — it only blocks founding/rebuilding, not an active Temple.
   const state = setup();
   const temple = foundTemple(state, 1, 0);
   state.currentPlayerIndex = 1;
@@ -511,7 +622,7 @@ console.log('\n=== Agrar Territory blocks Temple founding (§10-11) ===');
   // (No Agrar Farm can legally land ON the Temple hex itself — getValidFarmHexes
   // already excludes any hex with a strategic site — so proximity alone can
   // never flip an active Temple off; nothing further to build here.)
-  check('an active Temple is structurally immune to Agrar Territory (no state field ties it to Farms)', temple.ownerId === 1 && temple.state === 'temple');
+  check('an active Temple is structurally immune to cultivation (no state field ties it to Farms)', temple.ownerId === 1 && temple.state === 'temple');
 }
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);

@@ -8,7 +8,7 @@
 import {
   createGameState, endTurn, chooseFaction, spawnUnit, canAfford, canResearch,
   researchTech, getPopulationCap, getPopulationCount, getProductionSlots,
-  getBusyProductionSlotCount, getPlayerCapital, startFounding,
+  getBusyProductionSlotCount, getPlayerCapital, startFounding, buyDevotion,
 } from '../src/game';
 import { COMMAND_TIERS, PRODUCTION_BASE_SLOTS } from '../src/factions';
 import type { GameState } from '../src/types';
@@ -70,9 +70,11 @@ function fillPopulationTo(state: GameState, playerId: number, target: number): v
   }
 }
 
-// ── Population cap tiers (§21) ──
-console.log('\n=== Population cap tiers (§21) ===');
+// ── Population cap tiers (§6, economy/pacing balance pass) ──
+console.log('\n=== Population cap tiers (§6) ===');
 {
+  check('COMMAND_TIERS is 6 -> 9 -> 12 (was 8 -> 10 -> 12)', COMMAND_TIERS.start === 6 && COMMAND_TIERS.commandI === 9 && COMMAND_TIERS.commandII === 12,
+    `got ${COMMAND_TIERS.start}/${COMMAND_TIERS.commandI}/${COMMAND_TIERS.commandII}`);
   const state = setup();
   check('starts at COMMAND_TIERS.start', getPopulationCap(state, 0) === COMMAND_TIERS.start, `got ${getPopulationCap(state, 0)}`);
   state.currentPlayerIndex = 0;
@@ -151,9 +153,10 @@ console.log('\n=== Production slots (§19-20) ===');
   check('both queued recruits eventually deployed', state.units.filter(u => u.playerId === 0 && u.type === 'warrior' && u.hp > 0).length === 2);
 }
 {
-  // Temple founding a site grants +1 production slot (phase 10: Temple's
-  // production scales with owned Temple count — see verify-economy.ts for
-  // the full per-faction production curve, including Agrar's Farm-based one).
+  // Only a FULLY-developed (Devotion II) owned Temple grants +1 production
+  // slot (economy/pacing balance pass §5) — a merely founded or partially
+  // developed Temple grants none (see verify-economy.ts for the full
+  // per-faction production curve, including Agrar's Farm-based one).
   const state = setup();
   const site = state.strategicSites[0]!;
   state.currentPlayerIndex = 1;
@@ -171,7 +174,13 @@ console.log('\n=== Production slots (§19-20) ===');
   endTurn(state); // back to this player -> founding resolves (uncontested)
   const site0 = state.strategicSites.find(s => s.id === site.id)!;
   check('site founded into a Temple', site0.state === 'temple', `got ${site0.state}`);
-  check('owning a Temple grants +1 production slot', getProductionSlots(state, 1) === before + 1, `before=${before} after=${getProductionSlots(state, 1)}`);
+  check('a merely-founded Temple (Devotion 0) grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  buyDevotion(state, site0.id);
+  check('a Devotion-I (partially developed) Temple still grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  buyDevotion(state, site0.id);
+  check('a fully-developed (Devotion II) Temple grants +1 production slot', getProductionSlots(state, 1) === before + 1, `before=${before} after=${getProductionSlots(state, 1)}`);
 }
 
 // ── Players are independent ──

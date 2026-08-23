@@ -11,6 +11,7 @@ import {
   getUnlockedUnits, getUnitCost, unitDisplayName, researchTech, getPlayerCapital,
 } from '../src/game';
 import { AGRAR_UNITS, TEMPLE_UNITS, FACTION_UNITS } from '../src/factions';
+import { TECH_COST } from '../src/types';
 import type { GameState, FactionId, UnitType } from '../src/types';
 
 let failures = 0;
@@ -131,19 +132,22 @@ console.log('\n=== Same slot, distinct faction flavor ===');
   check('Heavy Knight and Champion cost the same (symmetric slot)', agrarHK.cost === templeChamp.cost, `agrar=${agrarHK.cost} temple=${templeChamp.cost}`);
 }
 
-// ── Builder/Acolyte: independently faction-flavored, both recruitable (§5) ──
-console.log('\n=== Builder/Acolyte: faction-flavored stats, both recruitable (§5) ===');
+// ── Builder/Acolyte: matched stats, both recruitable (§5, §12 balance pass) ──
+console.log('\n=== Builder/Acolyte: matched stats, both recruitable (§5/§12) ===');
 {
   const state = setup();
   const agrarBuilder = recruitAndDeploy(state, 0, capitalId(state, 0), 'founder');
   const templeAcolyte = recruitAndDeploy(state, 1, capitalId(state, 1), 'founder');
   check('Agrar can recruit the Builder', !!agrarBuilder);
   check('Temple can recruit the Acolyte', !!templeAcolyte);
-  check('Builder and Acolyte share HP/ATK/DEF (only speed is asymmetric, per the roster)', !!agrarBuilder && !!templeAcolyte
+  check('Builder and Acolyte share HP/ATK/DEF', !!agrarBuilder && !!templeAcolyte
     && agrarBuilder.stats.maxHp === templeAcolyte.stats.maxHp
     && agrarBuilder.stats.attack === templeAcolyte.stats.attack
     && agrarBuilder.stats.defense === templeAcolyte.stats.defense);
-  check('the Builder is slower than the Acolyte (bunker correction — the whole Agrar tribe moves less)', !!agrarBuilder && !!templeAcolyte && agrarBuilder.stats.speed < templeAcolyte.stats.speed, `builder=${agrarBuilder?.stats.speed} acolyte=${templeAcolyte?.stats.speed}`);
+  // §12 balance pass — economic-expansion units should not be asymmetrical
+  // in basic travel speed: the Builder matches the Acolyte's speed 2 (the
+  // earlier "every Agrar unit is speed 1" call was too extreme and reverted).
+  check('Builder SPD == Acolyte SPD == 2 (economic-expansion units aren\'t asymmetrical)', !!agrarBuilder && !!templeAcolyte && agrarBuilder.stats.speed === 2 && templeAcolyte.stats.speed === 2, `builder=${agrarBuilder?.stats.speed} acolyte=${templeAcolyte?.stats.speed}`);
   check('founder IS in the unlocked recruit set (phase 11 — ordinary recruitable unit)', getUnlockedUnits(state.playerTech[0]!, 'agrar').has('founder') && getUnlockedUnits(state.playerTech[1]!, 'temple').has('founder'));
 }
 
@@ -151,6 +155,7 @@ console.log('\n=== Builder/Acolyte: faction-flavored stats, both recruitable (§
 // with a real 2-step prerequisite chain (phase 11 §33-34), not a flat unlock ──
 console.log('\n=== Tech gates faction recruiting (phase 11 Heavy-unit line) ===');
 {
+  check('TECH_COST is 6 (was 5, economy/pacing balance pass §7)', TECH_COST === 6, `got ${TECH_COST}`);
   const state = setup();
   state.currentPlayerIndex = 0;
   check('Agrar cannot recruit Heavy Knight before tech', !canAfford(state, 'heavyknight'));
