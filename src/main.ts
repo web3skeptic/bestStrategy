@@ -54,7 +54,7 @@ import {
   canBuildRoad,
   buildRoad,
   getRoadAt,
-  getCultivatedHexes,
+  getAgrarTerritory,
   isAwaitingFactionReveal,
   chooseFaction,
   founderDisplayName,
@@ -1206,13 +1206,13 @@ function updateUI(): void {
       const effAtk = getEffectiveAttack(state, unit);
       const effRng = getEffectiveRange(state, unit);
       // Break the defense bonus down by source — hill terrain and Agrar's
-      // own-farmland "bunker" bonus (§ Farm defense buff) can stack.
+      // own-territory "bunker" bonus (§ Farm defense buff) can stack.
       const unitPlayer = state.players.find(p => p.id === unit.playerId);
       const onHillNow = state.hills.has(hexKey(unit.pos));
-      const onOwnFarmland = unitPlayer?.faction === 'agrar' && getCultivatedHexes(state, unit.playerId).has(hexKey(unit.pos));
+      const onOwnTerritory = unitPlayer?.faction === 'agrar' && getAgrarTerritory(state, unit.playerId).has(hexKey(unit.pos));
       const defBonusParts: string[] = [];
       if (onHillNow) defBonusParts.push(`⛰+${HILL_DEFENSE_BONUS}`);
-      if (onOwnFarmland) defBonusParts.push(`🌾+${FARM_DEFENSE_BONUS}`);
+      if (onOwnTerritory) defBonusParts.push(`🌾+${FARM_DEFENSE_BONUS}`);
       const defStr = defBonusParts.length > 0 ? `${effDef}(${defBonusParts.join(' ')})` : `${effDef}`;
       const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;

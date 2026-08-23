@@ -16,7 +16,7 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_CHAIN_DISTANCE, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -564,11 +564,11 @@ export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageB
 export function getEffectiveDefense(state: GameState, unit: Unit): number {
   const onHill = state.hills.has(hexKey(unit.pos));
   // Bunker bonus: an Agrar player's own units get FARM_DEFENSE_BONUS while
-  // standing inside their OWN cultivated territory (stacks with hill terrain,
-  // never applies to an enemy passing through it — see getCultivatedHexes).
+  // standing inside their OWN territory (stacks with hill terrain, never
+  // applies to an enemy passing through it — see getAgrarTerritory).
   const player = state.players.find(p => p.id === unit.playerId);
-  const onOwnFarmland = player?.faction === 'agrar' && getCultivatedHexes(state, unit.playerId).has(hexKey(unit.pos));
-  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0) + (onOwnFarmland ? FARM_DEFENSE_BONUS : 0);
+  const onOwnTerritory = player?.faction === 'agrar' && getAgrarTerritory(state, unit.playerId).has(hexKey(unit.pos));
+  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0) + (onOwnTerritory ? FARM_DEFENSE_BONUS : 0);
 }
 
 export function getEffectiveAttack(state: GameState, unit: Unit): number {
@@ -1230,7 +1230,7 @@ function resolveFoundingForPlayer(state: GameState, playerId: number): void {
 // Builder spends its whole activation + AGRAR_FARM_COST to start one, it
 // completes at the start of Agrar's next round if uncontested (see
 // resolveFarmFoundingForPlayer), and only then becomes a real attackable
-// structure that projects cultivated territory (§10-11, getCultivatedHexes).
+// structure that expands Agrar Territory (§10-11, getAgrarTerritory).
 
 function activeFarmsOf(state: GameState, playerId: number): Farm[] {
   return state.farms.filter(f => f.ownerId === playerId && f.state === 'farm');
@@ -1242,12 +1242,14 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
   return state.farms.filter(f => f.ownerId === playerId);
 }
 
-// §10-14 (phase 11; chain rule reinstated afterward) — a new Farm must be a
-// direct NEIGHBOR of the Builder's own position (the Builder's physical
-// movement still matters) AND within FARM_CHAIN_DISTANCE of the Capital OR
-// of an existing active Farm — the network only grows as a connected
-// bunker, it can never leapfrog to some far corner of the map. It must also
-// be: on the map, empty/passable terrain, not a sacred site/Capital/
+// §10-14 (phase 11; unified into Agrar Territory afterward) — a new Farm
+// must be a direct NEIGHBOR of the Builder's own position (the Builder's
+// physical movement still matters) AND land INSIDE existing Agrar Territory
+// (see getAgrarTerritory — within AGRAR_TERRITORY_RADIUS of the Capital or
+// of an existing active Farm) — the network only grows as a connected
+// bunker, it can never leapfrog to some far corner of the map, and building
+// a new Farm immediately expands the territory for the next one. It must
+// also be: on the map, empty/passable terrain, not a sacred site/Capital/
 // structure, not occupied by a unit, and never directly adjacent to another
 // existing Farm (founding or active — `distance >= FARM_MIN_SPACING`).
 // Adjacent to the Capital itself is fine (encourages tight bunkering).
@@ -1257,7 +1259,7 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   const capital = state.capitals.find(c => c.playerId === player.id);
   if (!capital) return [];
   const allOwn = allFarmsOf(state, player.id);
-  const chainAnchors = [capital.pos, ...activeFarmsOf(state, player.id).map(f => f.pos)];
+  const territory = getAgrarTerritory(state, player.id);
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
     if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue; // off-map
@@ -1267,7 +1269,7 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
     if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
     if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
     if (getUnitAt(state, hex)) continue;
-    if (!chainAnchors.some(a => hexDistance(a, hex) <= FARM_CHAIN_DISTANCE)) continue; // close to the Capital or an existing Farm
+    if (!territory.has(key)) continue; // must land inside existing Agrar Territory
     if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue; // not adjacent to another Farm
     result.push(hex);
   }
@@ -1331,17 +1333,37 @@ function resolveFarmFoundingForPlayer(state: GameState, playerId: number): void 
   if (stillFounding.length) state.farms = state.farms.filter(f => !stillFounding.includes(f));
 }
 
-// §10-11 — every ACTIVE Farm projects cultivated territory onto its own hex
-// + its 6 neighbours (CULTIVATION_RADIUS). A neutral/ruined site inside an
-// ENEMY Agrar player's cultivated territory cannot be founded/rebuilt by
-// Temple — see canStartFounding. Deliberately NOT stored on GameState;
-// always derived fresh from live Farm positions (§45 — avoid duplicated,
-// driftable state).
-export function getCultivatedHexes(state: GameState, agrarPlayerId: number): Set<string> {
+// Every hex within `radius` of `center`, bounded to the actual map — a
+// generic "disk around an arbitrary hex" helper (generateHexMap only does
+// disks around the origin).
+function hexesWithinRadius(center: HexCoord, radius: number, mapRadius: number): HexCoord[] {
+  const result: HexCoord[] = [];
+  for (let dq = -radius; dq <= radius; dq++) {
+    for (let dr = Math.max(-radius, -dq - radius); dr <= Math.min(radius, -dq + radius); dr++) {
+      const hex = { q: center.q + dq, r: center.r + dr };
+      if (hexDistance({ q: 0, r: 0 }, hex) > mapRadius) continue; // off-map
+      result.push(hex);
+    }
+  }
+  return result;
+}
+
+// §10-11 (unified "Agrar Territory") — the union of every hex within
+// AGRAR_TERRITORY_RADIUS of the Capital, PLUS every hex within
+// AGRAR_TERRITORY_RADIUS of each ACTIVE Farm. One area concept drives THREE
+// things: Farm placement (getValidFarmHexes — a new Farm must land inside
+// existing territory, so completing one immediately expands where the next
+// can go), area denial (a neutral/ruined site inside an ENEMY Agrar
+// player's territory cannot be founded/rebuilt by Temple — see
+// canStartFounding), and the defense buff (getEffectiveDefense). Deliberately
+// NOT stored on GameState; always derived fresh from live Capital/Farm
+// positions (§45 — avoid duplicated, driftable state).
+export function getAgrarTerritory(state: GameState, agrarPlayerId: number): Set<string> {
   const hexes = new Set<string>();
+  const capital = state.capitals.find(c => c.playerId === agrarPlayerId);
+  if (capital) for (const h of hexesWithinRadius(capital.pos, AGRAR_TERRITORY_RADIUS, state.mapRadius)) hexes.add(hexKey(h));
   for (const farm of activeFarmsOf(state, agrarPlayerId)) {
-    hexes.add(hexKey(farm.pos));
-    for (const n of hexNeighbors(farm.pos)) hexes.add(hexKey(n));
+    for (const h of hexesWithinRadius(farm.pos, AGRAR_TERRITORY_RADIUS, state.mapRadius)) hexes.add(hexKey(h));
   }
   return hexes;
 }
@@ -1350,7 +1372,7 @@ function isSiteCultivationBlocked(state: GameState, pos: HexCoord, templePlayerI
   const key = hexKey(pos);
   for (const p of state.players) {
     if (p.id === templePlayerId || p.faction !== 'agrar') continue;
-    if (getCultivatedHexes(state, p.id).has(key)) return true;
+    if (getAgrarTerritory(state, p.id).has(key)) return true;
   }
   return false;
 }

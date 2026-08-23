@@ -125,24 +125,31 @@ export const STARTING_ENERGY = 6;
 export const BASE_INCOME_PER_ROUND = 6;
 export const SITE_ESTABLISH_COST = 4;      // Temple founding only — Agrar never founds a site (§28)
 
-// §6-14 (phase 10; placement simplified phase 11, chain rule + defense buff
-// added afterward) — Agrar's Farm network: its ONLY economic expansion,
-// built directly by the Builder on open land, never tied to a captured
-// site. A new Farm must be a hex NEIGHBOUR of the Builder (distance 1, so
-// the Builder's own movement still matters) AND within FARM_CHAIN_DISTANCE
-// of the Capital OR of an existing active Farm — the network only grows as
-// a connected bunker around the Capital, it can't leapfrog across the map.
-// It must never be directly adjacent to another Farm (FARM_MIN_SPACING) —
-// adjacent to the CAPITAL is fine now (encourages tight bunkering).
+// §6-14 (phase 10; placement simplified phase 11; unified into a single
+// "Agrar Territory" concept afterward) — Agrar's Farm network: its ONLY
+// economic expansion, built directly by the Builder on open land, never
+// tied to a captured site. Territory is the union of every hex within
+// AGRAR_TERRITORY_RADIUS of the Capital, PLUS every hex within
+// AGRAR_TERRITORY_RADIUS of each ACTIVE Farm — see getAgrarTerritory. A new
+// Farm must be a hex NEIGHBOUR of the Builder (distance 1, so the Builder's
+// own movement still matters) AND land INSIDE existing territory — the
+// network only grows as a connected bunker, it can't leapfrog across the
+// map, and completing a new Farm itself immediately EXPANDS the territory
+// for the next one. It must never be directly adjacent to another Farm
+// (FARM_MIN_SPACING) — adjacent to the CAPITAL is fine (tight bunkering).
+// Territory ALSO blocks enemy Temple founding/rebuilding inside it, and
+// grants FARM_DEFENSE_BONUS defense to the owner's own units standing in it
+// (see isSiteCultivationBlocked / getEffectiveDefense) — one area concept
+// drives placement, area-denial, and the defensive bonus together.
 export const AGRAR_FARM_COST = 5;
 export const AGRAR_FARM_INCOME = 1;
 export const MAX_ACTIVE_FARMS = 4;
-export const FARM_CHAIN_DISTANCE = 2; // a new Farm must be this close to the Capital or an existing Farm
-export const FARM_MIN_SPACING = 2;    // never directly adjacent to another Farm
-export const CULTIVATION_RADIUS = 1;  // §10 — an active Farm's own hex + its 6 neighbours
+export const AGRAR_TERRITORY_RADIUS = 2; // around the Capital, and around each active Farm
+export const FARM_MIN_SPACING = 2;       // never directly adjacent to another Farm
 // A defensive "bunker" bonus (stacks with hill terrain) for an Agrar
-// player's own units standing inside their own cultivated territory — the
-// network doesn't just fund the economy, it hardens the ground it covers.
+// player's own units standing inside their own territory — the network
+// doesn't just fund the economy and gate expansion, it hardens the ground
+// it covers.
 export const FARM_DEFENSE_BONUS = 2;
 
 export const TEMPLE_DEVOTION_COST = 3;     // x2 devotion levels per Temple

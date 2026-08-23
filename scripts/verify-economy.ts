@@ -1,7 +1,8 @@
-// Phase 10/11 verification, plus the post-phase-11 "bunker" correction: the
-// macro-economy correction — "Agrar controls area (Farms), Temple controls
-// points (Temples)" — the phase 11 Builder-adjacency Farm placement, and the
-// reinstated chain-distance rule + Farm defense buff. Exercises the real
+// Phase 10/11 verification, plus the post-phase-11 "Agrar Territory"
+// correction: the macro-economy correction — "Agrar controls area (Farms),
+// Temple controls points (Temples)" — the phase 11 Builder-adjacency Farm
+// placement, and the unified territory concept (placement gate + area
+// denial + Farm defense buff, all driven by one area). Exercises the real
 // engine mutators end-to-end (no forked logic) — createGameState,
 // startFounding, startFarm, endTurn, buyDevotion, attackStructure.
 //
@@ -9,14 +10,14 @@
 import {
   createGameState, endTurn, chooseFaction, startFounding, canStartFounding,
   getPlayerIncome, getProductionSlots,
-  canStartFarm, startFarm, getValidFarmHexes, getCultivatedHexes,
+  canStartFarm, startFarm, getValidFarmHexes, getAgrarTerritory,
   canBuyDevotion, buyDevotion,
   selectUnit, attackStructure, getStructureAt, getEffectiveDefense,
   createUnit,
 } from '../src/game';
 import {
   BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS,
-  FARM_CHAIN_DISTANCE, FARM_MIN_SPACING, FARM_DEFENSE_BONUS, CULTIVATION_RADIUS,
+  AGRAR_TERRITORY_RADIUS, FARM_MIN_SPACING, FARM_DEFENSE_BONUS,
   TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
 } from '../src/factions';
 import { hexDistance, hexNeighbors, hexEqual, hexKey } from '../src/hex';
@@ -99,7 +100,7 @@ function foundFarm(state: GameState, playerId: number, pos: HexCoord): void {
   advanceOneRound(state);
 }
 
-// A small ring of hexes, each EXACTLY FARM_CHAIN_DISTANCE (2) from the
+// A small ring of hexes, each EXACTLY AGRAR_TERRITORY_RADIUS (2) from the
 // origin/Capital AND at least FARM_MIN_SPACING (2) from every other hex in
 // the ring — every entry is independently valid as Capital-anchored (no
 // chaining through a prior Farm needed), and none collide with each other.
@@ -239,22 +240,22 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   const capital = state.capitals.find(c => c.playerId === 0)!;
   builder.pos = { q: state.mapRadius - 1, r: 0 }; // near the far edge of the map, no Farms anywhere yet
   builder.hasMoved = false; builder.hasAttacked = false;
-  check('the Builder really is far from the Capital', hexDistance(builder.pos, capital.pos) > FARM_CHAIN_DISTANCE);
+  check('the Builder really is far from the Capital', hexDistance(builder.pos, capital.pos) > AGRAR_TERRITORY_RADIUS);
   const farHexes = getValidFarmHexes(state, builder);
   check('a Farm CANNOT be started far from the Capital/any Farm — no valid hexes', farHexes.length === 0, `got ${farHexes.length}`);
 }
 {
-  // Chaining — a Farm CAN be built beyond FARM_CHAIN_DISTANCE of the
-  // Capital as long as it's within FARM_CHAIN_DISTANCE of an EXISTING
+  // Chaining — a Farm CAN be built beyond AGRAR_TERRITORY_RADIUS of the
+  // Capital as long as it's within AGRAR_TERRITORY_RADIUS of an EXISTING
   // active Farm (the network extends link by link, not just from the Capital).
   const state = setup();
   clearFarmArea(state, 0, state.mapRadius);
   const capital = state.capitals.find(c => c.playerId === 0)!;
   foundFarm(state, 0, { q: 2, r: 0 }); // first link, anchored on the Capital
   const builder = founderOf(state, 0);
-  builder.pos = { q: 4, r: 0 }; // adjacent to the first Farm, FARM_CHAIN_DISTANCE(2) beyond it
+  builder.pos = { q: 4, r: 0 }; // adjacent to the first Farm, AGRAR_TERRITORY_RADIUS(2) beyond it
   builder.hasMoved = false; builder.hasAttacked = false;
-  check('the next spot is beyond chain distance of the Capital alone', hexDistance(builder.pos, capital.pos) > FARM_CHAIN_DISTANCE);
+  check('the next spot is beyond chain distance of the Capital alone', hexDistance(builder.pos, capital.pos) > AGRAR_TERRITORY_RADIUS);
   const chained = getValidFarmHexes(state, builder);
   check('a Farm CAN chain outward from an existing Farm, beyond the Capital\'s own reach', chained.length > 0, `got ${chained.length}`);
 }
@@ -302,8 +303,8 @@ console.log('\n=== Agrar Farms: destruction (§15) ===');
   check('the freed slot can be rebuilt elsewhere', getValidFarmHexes(state, rebuildBuilder).length > 0);
 }
 
-// ── Farm defense buff (bunker correction) ──
-console.log('\n=== Farm defense buff — own cultivated territory (bunker correction) ===');
+// ── Farm defense buff — own Agrar Territory (bunker correction) ──
+console.log('\n=== Farm defense buff — own Agrar Territory (bunker correction) ===');
 {
   const state = setup();
   clearFarmArea(state, 0);
@@ -314,17 +315,17 @@ console.log('\n=== Farm defense buff — own cultivated territory (bunker correc
 
   const defender = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
   const baseDef = defender.stats.defense;
-  defender.pos = { q: 500, r: 500 }; // off any cultivated hex
-  check('off-farmland defense is the base stat', getEffectiveDefense(state, defender) === baseDef);
-  defender.pos = { ...farm.pos }; // standing on the Farm's own hex — inside its cultivated territory
-  check('an Agrar unit on its OWN cultivated Farm hex gets +FARM_DEFENSE_BONUS', getEffectiveDefense(state, defender) === baseDef + FARM_DEFENSE_BONUS, `got ${getEffectiveDefense(state, defender)}`);
-  defender.pos = { ...hexNeighbors(farm.pos)[0]! }; // a neighbour is inside the cultivated hex+6 radius too
-  check('a neighbour of the Farm (still within CULTIVATION_RADIUS) also gets the bonus', getEffectiveDefense(state, defender) === baseDef + FARM_DEFENSE_BONUS);
+  defender.pos = { q: 500, r: 500 }; // off any territory
+  check('off-territory defense is the base stat', getEffectiveDefense(state, defender) === baseDef);
+  defender.pos = { ...farm.pos }; // standing on the Farm's own hex — inside its territory
+  check('an Agrar unit on its OWN Farm hex gets +FARM_DEFENSE_BONUS', getEffectiveDefense(state, defender) === baseDef + FARM_DEFENSE_BONUS, `got ${getEffectiveDefense(state, defender)}`);
+  defender.pos = { ...hexNeighbors(farm.pos)[0]! }; // a neighbour is inside the Farm's AGRAR_TERRITORY_RADIUS too
+  check('a neighbour of the Farm (still within AGRAR_TERRITORY_RADIUS) also gets the bonus', getEffectiveDefense(state, defender) === baseDef + FARM_DEFENSE_BONUS);
 
   const enemy = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
   const enemyBaseDef = enemy.stats.defense;
   enemy.pos = { ...farm.pos };
-  check('an ENEMY (Temple) unit standing on the same farmland gets NO bonus', getEffectiveDefense(state, enemy) === enemyBaseDef, `got ${getEffectiveDefense(state, enemy)}`);
+  check('an ENEMY (Temple) unit standing on the same territory gets NO bonus', getEffectiveDefense(state, enemy) === enemyBaseDef, `got ${getEffectiveDefense(state, enemy)}`);
 }
 
 // ── Temple Devotion (§15-16, mostly unchanged) ──
@@ -409,56 +410,73 @@ console.log('\n=== Production symmetry (§16-20) ===');
   check('both factions start at the same production base', agrarSlots === templeSlots, `agrar=${agrarSlots} temple=${templeSlots}`);
 }
 
-// ── Cultivation (§10-11) ──
-console.log('\n=== Cultivated territory blocks Temple founding (§10-11) ===');
+// ── Agrar Territory (§10-11, unified) ──
+console.log('\n=== Agrar Territory blocks Temple founding (§10-11) ===');
+{
+  // The Capital itself ALWAYS projects territory (AGRAR_TERRITORY_RADIUS),
+  // with zero Farms built — no economy investment required to defend home turf.
+  const state = setup();
+  clearFarmArea(state, 0);
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const territory = getAgrarTerritory(state, 0);
+  check('the Capital hex itself is territory', territory.has(hexKey(capital.pos)));
+  check(`a hex exactly AGRAR_TERRITORY_RADIUS (${AGRAR_TERRITORY_RADIUS}) from the Capital is territory`, territory.has(hexKey({ q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r })));
+  check('a hex beyond AGRAR_TERRITORY_RADIUS of the Capital, with no Farms, is NOT territory', !territory.has(hexKey({ q: capital.pos.q + AGRAR_TERRITORY_RADIUS + 1, r: capital.pos.r })));
+}
 {
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const site = state.strategicSites[0]!;
   // Build the Farm at a genuinely valid hex, then move the neutral site onto
-  // it — we only need the site's HEX to end up inside the Farm's cultivated
-  // territory, not to reuse the site's own (likely out-of-range) position.
-  const farmHex = { q: capital.pos.q + 2, r: capital.pos.r };
+  // a hex that's ONLY covered by the Farm's own radius — beyond the
+  // Capital's own reach — so this test isolates the Farm's contribution.
+  const farmHex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
   foundFarm(state, 0, farmHex);
-  site.pos = { ...farmHex };
+  const beyondCapital = { q: farmHex.q + AGRAR_TERRITORY_RADIUS, r: farmHex.r };
+  check('the site\'s target hex really is beyond the Capital\'s own territory', hexDistance(beyondCapital, capital.pos) > AGRAR_TERRITORY_RADIUS);
+  site.pos = { ...beyondCapital };
 
-  const cultivated = getCultivatedHexes(state, 0);
-  check('the active Farm cultivates its own hex + 6 neighbours', cultivated.size === 7, `got ${cultivated.size} (radius=${CULTIVATION_RADIUS})`);
-  check('the site hex is inside the cultivated set', cultivated.has(hexKey(site.pos)));
+  const territory = getAgrarTerritory(state, 0);
+  check('the active Farm\'s own hex is territory', territory.has(hexKey(farmHex)));
+  check('a hex beyond the Capital\'s reach, but within the Farm\'s own radius, is ALSO territory', territory.has(hexKey(site.pos)));
 
   const acolyte = founderOf(state, 1);
   acolyte.pos = { ...site.pos };
   acolyte.hasMoved = false; acolyte.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  check('Temple cannot start founding on a site inside enemy cultivated territory', canStartFounding(state, acolyte) === null);
+  check('Temple cannot start founding on a site inside enemy Agrar Territory', canStartFounding(state, acolyte) === null);
 }
 {
-  // A FOUNDING (not yet active) Farm does not cultivate anything.
-  const state = setup();
-  clearFarmArea(state, 0);
-  const site = state.strategicSites[0]!;
-  const far = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
-  site.pos = far;
-  const builder = founderOf(state, 0);
-  const hex = getValidFarmHexes(state, builder)[0]!;
-  builder.hasMoved = false; builder.hasAttacked = false;
-  state.currentPlayerIndex = 0;
-  startFarm(state, builder.id, hex); // NOT advanced — still founding
-  site.pos = hex;
-  check('a still-founding Farm projects no cultivation', getCultivatedHexes(state, 0).size === 0);
-}
-{
-  // Destroying the blocking Farm removes the cultivation and unblocks founding.
+  // A FOUNDING (not yet active) Farm does not expand territory beyond what
+  // the Capital already covers.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const site = state.strategicSites[0]!;
   const far = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
   site.pos = far;
-  const hex = { q: capital.pos.q + 2, r: capital.pos.r };
+  const farmHex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
+  const beyondCapital = { q: farmHex.q + AGRAR_TERRITORY_RADIUS, r: farmHex.r };
+  const builder = founderOf(state, 0);
+  builder.pos = { ...hexNeighbors(farmHex)[0]! };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  startFarm(state, builder.id, farmHex); // NOT advanced — still founding
+  check('a still-founding Farm does not yet expand territory beyond the Capital', !getAgrarTerritory(state, 0).has(hexKey(beyondCapital)));
+}
+{
+  // Destroying the blocking Farm removes its territory and unblocks founding.
+  const state = setup();
+  clearFarmArea(state, 0);
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const site = state.strategicSites[0]!;
+  const far = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
+  site.pos = far;
+  const hex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
   foundFarm(state, 0, hex);
-  site.pos = hex;
+  const beyondCapital = { q: hex.q + AGRAR_TERRITORY_RADIUS, r: hex.r };
+  site.pos = { ...beyondCapital };
   const farm = state.farms.find(f => hexEqual(f.pos, hex))!;
 
   const acolyte = founderOf(state, 1);
@@ -482,8 +500,8 @@ console.log('\n=== Cultivated territory blocks Temple founding (§10-11) ===');
   check('founding is unblocked once the blocking Farm is gone', canStartFounding(state, acolyte) !== null);
 }
 {
-  // An ACTIVE (already-founded) Temple is never disabled by a nearby enemy
-  // Farm — cultivation only blocks founding/rebuilding, not an active Temple.
+  // An ACTIVE (already-founded) Temple is never disabled by nearby enemy
+  // Agrar Territory — it only blocks founding/rebuilding, not an active Temple.
   const state = setup();
   const temple = foundTemple(state, 1, 0);
   state.currentPlayerIndex = 1;
@@ -493,7 +511,7 @@ console.log('\n=== Cultivated territory blocks Temple founding (§10-11) ===');
   // (No Agrar Farm can legally land ON the Temple hex itself — getValidFarmHexes
   // already excludes any hex with a strategic site — so proximity alone can
   // never flip an active Temple off; nothing further to build here.)
-  check('an active Temple is structurally immune to cultivation (no state field ties it to Farms)', temple.ownerId === 1 && temple.state === 'temple');
+  check('an active Temple is structurally immune to Agrar Territory (no state field ties it to Farms)', temple.ownerId === 1 && temple.state === 'temple');
 }
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);

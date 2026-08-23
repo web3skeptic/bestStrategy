@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
-import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes } from './game';
+import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
@@ -1084,6 +1084,16 @@ export class Renderer3D {
     const zocSet = state.selectionMode === 'unit' && state.selectedUnitId
       ? getZocHexes(state, playerId)
       : new Set<string>();
+    // Agrar Territory — persistent, always-on (not selection-gated, unlike
+    // ZOC) so both players can always see it: within AGRAR_TERRITORY_RADIUS
+    // of an Agrar Capital or an active Farm. Drives where new Farms can be
+    // built, blocks enemy Temple founding, and grants a defense bonus — a
+    // clearly-visible red/rust wash marks it directly on the ground.
+    const territorySet = new Set<string>();
+    for (const p of state.players) {
+      if (p.faction !== 'agrar') continue;
+      for (const key of getAgrarTerritory(state, p.id)) territorySet.add(key);
+    }
 
     let i = 0;
     const place = (hex: HexCoord, color: number, opacity: number) => {
@@ -1119,6 +1129,7 @@ export class Renderer3D {
       else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
       else if (roadSet.has(key)) place(hex, 0xb98c50, 0.3);
       else if (zocSet.has(key)) place(hex, 0xff9a2a, 0.22);
+      else if (territorySet.has(key)) place(hex, 0xe8401f, 0.32);
     }
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }
