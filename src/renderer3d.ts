@@ -1169,7 +1169,7 @@ export class Renderer3D {
     for (const site of state.strategicSites as StrategicSite[]) {
       const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
       const foundingOwner = site.founding ? state.players.find(p => p.id === site.founding!.playerId) : null;
-      const isCompleted = site.state === 'temple';
+      const isCompleted = site.state === 'temple' || site.state === 'upgradingTemple';
       const isFounding = site.state === 'foundingTemple';
       structures.push({
         id: site.id, pos: site.pos,

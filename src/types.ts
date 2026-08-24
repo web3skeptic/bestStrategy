@@ -60,7 +60,21 @@ export type FactionId = 'agrar' | 'temple';
 // unlock renamed to 'temple_champion_rite' ("Champion Rite"), and the splash
 // upgrades renamed to 'agrar_siegecraft_splash' ("Explosive Shot") /
 // 'temple_mobile_siege_splash' ("Blast Rite").
-export const RULES_VERSION = 10;
+// v11 (Temple conquest + upgrade system): the old Devotion I/II (4+4⚡,
+// +1 income each) purchase ladder is GONE — StrategicSite drops
+// `devotionLevel`/`investmentOwnerId` entirely, gains `templeLevel: 1 | 2 |
+// null` and `upgrade: TempleUpgradeProgress | null`. Two flat 6⚡/1-round
+// steps now: founding a neutral/ruined site (SITE_ESTABLISH_COST 4->6)
+// produces Temple I (+1 income, +0 production); a second 6⚡/1-round
+// TEMPLE_UPGRADE_COST step turns it into Temple II (+2 income total, +1
+// production — matching 2 Farms exactly). A destroyed Temple (either level,
+// mid-upgrade or not) always becomes Ruins with template level cleared —
+// investment is NEVER preserved across a Ruins state any more, not even for
+// the same player re-founding their own former site (no more "reclaim"
+// exception) — every reconstruction restarts at Temple I. See
+// canStartTempleUpgrade/startTempleUpgrade/resolveTempleUpgradeForPlayer in
+// game.ts.
+export const RULES_VERSION = 11;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -135,8 +149,9 @@ export function unitYetToMove(unit: Unit): boolean {
 export type StrategicSiteState =
   | 'neutral'         // unclaimed — foundable only by Temple
   | 'foundingTemple'  // Temple Acolyte founding; 0 income/production until complete
-  | 'temple'          // completed Temple-faction structure
-  | 'ruins';          // a destroyed temple — refoundable (Temple only)
+  | 'temple'          // completed Temple-faction structure (see templeLevel for I vs II)
+  | 'upgradingTemple' // Temple I -> II upgrade in progress; still grants Temple I-level economy
+  | 'ruins';          // a destroyed temple — refoundable (Temple only), always restarts at Temple I
 
 // In-progress founding, tracked with explicit round numbers rather than a
 // loose "turn count" (§6 of the brief): founding completes at the START of
@@ -151,31 +166,45 @@ export interface FoundingProgress {
   completesRound: number;       // startedRound + 1 — see resolveFoundingForPlayer in game.ts
 }
 
+// Temple I -> Temple II upgrade (v11 Temple conquest/upgrade system) — same
+// "commit the round" shape as FoundingProgress, but there's no fromState:
+// an interrupted upgrade never reverts, it just never completes (the Temple
+// simply stays at Temple I unless destroyed first, which goes to Ruins
+// regardless — see resolveTempleUpgradeForPlayer in game.ts).
+export interface TempleUpgradeProgress {
+  playerId: number;
+  startedRound: number;
+  completesRound: number;       // startedRound + 1
+}
+
 export interface StrategicSite {
   id: string;
   pos: HexCoord;
   state: StrategicSiteState;
-  // Only meaningful (non-null) once state is 'temple'. A ruined or founding
-  // site has no owner — do not read this as "who's founding it", use
-  // `founding.playerId` for that.
+  // Only meaningful (non-null) once state is 'temple' or 'upgradingTemple'.
+  // A ruined or founding site has no owner — do not read this as "who's
+  // founding it", use `founding.playerId` for that.
   ownerId: number | null;
   founding: FoundingProgress | null;
+  upgrade: TempleUpgradeProgress | null;
   // Combat stats — 0 while neutral/founding/ruins (not a valid attack
   // target in those states; see getStructureAt/isAttackableStructure).
   hp: number;
   maxHp: number;
   defense: number;
   /**
-   * §17-18 (phase 4): who the Devotion investment on this site belongs to.
-   * Distinct from `ownerId` — it PERSISTS through Ruins (unlike ownerId,
-   * which goes null), so a player who rebuilds their OWN former site gets
-   * their Devotion back. It is only reset (to the new founder) when a
-   * DIFFERENT player completes founding here — see completeFounding in
-   * game.ts. Null only for a virgin site that has never been founded.
+   * v11 — Temple's economic level once founded: 1 (Temple I, +1 income) or
+   * 2 (Temple II, +2 income/+1 production). Null while neutral/ruins/
+   * founding. Set to 1 the instant founding completes, and to 1 again
+   * (while `state` is 'upgradingTemple') during an in-progress upgrade —
+   * the Temple II bonus only applies once the upgrade actually resolves.
+   * Cleared to null whenever the site becomes Ruins — investment is NEVER
+   * preserved through a Ruins state, not even for the original owner
+   * re-founding their own former site (deliberate — see RULES_VERSION v11
+   * note: "Temple owns points... destroying economic infrastructure
+   * destroys its accumulated investment instead of transferring it").
    */
-  investmentOwnerId: number | null;
-  /** §15 (phase 4): 0-2, Temple's economic investment on its own site. */
-  devotionLevel: number;
+  templeLevel: 1 | 2 | null;
 }
 
 // Phase 10 correction — a Farm is Agrar's economy engine, built directly by

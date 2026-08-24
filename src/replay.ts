@@ -4,7 +4,7 @@
 
 import { Renderer } from './renderer';
 import {
-  GameState, Unit, UnitType, UnitStats, StrategicSite, StrategicSiteState, FoundingProgress,
+  GameState, Unit, UnitType, UnitStats, StrategicSite, StrategicSiteState, FoundingProgress, TempleUpgradeProgress,
   Capital, Farm, Player, PlayerTech,
   TeleportBuilding, HexCoord, TechId, FactionId, RULES_VERSION,
 } from './types';
@@ -30,8 +30,8 @@ interface SnapshotUnit {
 interface SnapshotCapital { id: string; pos: HexCoord; playerId: number; hp: number; maxHp: number; defense: number; }
 interface SnapshotSite {
   id: string; pos: HexCoord; state: StrategicSiteState; ownerId: number | null;
-  founding: FoundingProgress | null; hp: number; maxHp: number; defense: number;
-  investmentOwnerId: number | null; devotionLevel: number;
+  founding: FoundingProgress | null; upgrade: TempleUpgradeProgress | null;
+  hp: number; maxHp: number; defense: number; templeLevel: 1 | 2 | null;
 }
 interface SnapshotFarm {
   id: string; pos: HexCoord; ownerId: number; state: 'foundingFarm' | 'farm';
@@ -124,8 +124,8 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
 
   const strategicSites: StrategicSite[] = s.map.strategicSites.map(site => ({
     id: site.id, pos: site.pos, state: site.state, ownerId: site.ownerId,
-    founding: site.founding, hp: site.hp, maxHp: site.maxHp, defense: site.defense,
-    investmentOwnerId: site.investmentOwnerId ?? null, devotionLevel: site.devotionLevel ?? 0,
+    founding: site.founding, upgrade: site.upgrade ?? null, hp: site.hp, maxHp: site.maxHp, defense: site.defense,
+    templeLevel: site.templeLevel ?? null,
   }));
 
   const farms: Farm[] = (s.map.farms ?? []).map(f => ({

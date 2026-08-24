@@ -13,6 +13,7 @@ import {
   createUnit,
 } from '../src/game';
 import { hexNeighbors, hexEqual } from '../src/hex';
+import { SITE_ESTABLISH_COST } from '../src/factions';
 import type { GameState, StrategicSiteState } from '../src/types';
 
 let failures = 0;
@@ -82,7 +83,7 @@ for (const fromState of ['neutral', 'ruins'] as const) {
   const stateAfterStart = site.state as StrategicSiteState;
   check(`temple ${fromState}->founding: startFounding succeeds`, startOk);
   check(`temple ${fromState}->founding: site enters foundingTemple`, stateAfterStart === 'foundingTemple', `got ${stateAfterStart}`);
-  check(`temple ${fromState}->founding: 4⚡ charged immediately`, player.aura === 16, `aura=${player.aura}`);
+  check(`temple ${fromState}->founding: SITE_ESTABLISH_COST charged immediately`, player.aura === 20 - SITE_ESTABLISH_COST, `aura=${player.aura}`);
 
   advanceOneRound(state); // uncontested — should complete
   const stateAfterComplete = site.state as StrategicSiteState;
@@ -140,10 +141,10 @@ console.log('\n=== Founding interruption (§8) ===');
   const player = state.players[1]!;
   const { site, founder } = primeFounding(state, 0);
   startFounding(state, founder.id);
-  const auraAfterCharge = player.aura; // 16 — the 4⚡ establish cost, already spent
+  const auraAfterCharge = player.aura; // 20 - SITE_ESTABLISH_COST — already spent
   founder.hp = 0;
   advanceOneRound(state); // also grants one normal turn-start income tick (Capital only) — not a refund
-  check('failed founding does NOT refund the 4⚡', player.aura > auraAfterCharge, `aura=${player.aura} chargedTo=${auraAfterCharge}`);
+  check('failed founding does NOT refund the establish cost', player.aura > auraAfterCharge, `aura=${player.aura} chargedTo=${auraAfterCharge}`);
 }
 {
   const state = setup();

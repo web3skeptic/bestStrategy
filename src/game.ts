@@ -17,7 +17,7 @@ import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
-  TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
+  TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
 } from './factions';
@@ -297,9 +297,9 @@ function createStrategicSite(pos: HexCoord): StrategicSite {
     state: 'neutral',
     ownerId: null,
     founding: null,
+    upgrade: null,
     hp: 0, maxHp: 0, defense: 0,
-    investmentOwnerId: null,
-    devotionLevel: 0,
+    templeLevel: null,
   };
 }
 
@@ -375,16 +375,18 @@ function revealForPlayer(state: GameState, playerId: number, pos: HexCoord, visi
   }
 }
 
-// Capital + owned completed (city/temple) strategic sites — the "owned
-// structures" a player gets vision/recruiting/income from. Neutral, ruined
-// or still-founding sites are NOT included (§10 — a founding site provides
-// nothing until it completes).
+// Capital + owned active (Temple I or II, including mid-upgrade) strategic
+// sites — the "owned structures" a player gets vision/recruiting/income
+// from. Neutral, ruined or still-founding sites are NOT included (§10 — a
+// founding site provides nothing until it completes). An upgrading Temple
+// stays a valid recruiting location — v11 §10, it's physically present and
+// operating at its Temple I level throughout the upgrade.
 export function getOwnedStructures(state: GameState, playerId: number): { id: string; pos: HexCoord }[] {
   const out: { id: string; pos: HexCoord }[] = [];
   const capital = state.capitals.find(c => c.playerId === playerId);
   if (capital) out.push(capital);
   for (const site of state.strategicSites) {
-    if (site.state === 'temple' && site.ownerId === playerId) out.push(site);
+    if ((site.state === 'temple' || site.state === 'upgradingTemple') && site.ownerId === playerId) out.push(site);
   }
   return out;
 }
@@ -672,19 +674,18 @@ export function getPopulationCount(state: GameState, playerId: number): number {
   return count;
 }
 
-// §16-20 (phase 10 correction; devotion-gated Temple threshold added in the
-// economy/pacing balance pass) — production is centralized for Agrar
-// (scales with active Farm count, all training still happens at the
-// Capital — Roads move the result) and distributed for Temple (scales with
-// FULLY-developed — i.e. Devotion II — neutral-Temple count; a merely
-// founded or partially-developed Temple grants no extra slot, matching the
-// macro-investment-equality invariant with Agrar's 2-Farms-for-+1 curve).
-// Both start at PRODUCTION_BASE_SLOTS and cap at PRODUCTION_MAX_SLOTS — the
-// two curves reach the same ceiling by different map structures, matching
-// the area-vs-points asymmetry. A recruit occupies one of the recruiting
-// player's slots for the full training duration (§5) — the unit itself does
-// NOT exist on the battlefield until it deploys at the start of the
-// player's next round.
+// §16-20 (phase 10 correction; v11 Temple conquest/upgrade system) —
+// production is centralized for Agrar (scales with active Farm count, all
+// training still happens at the Capital — Roads move the result) and
+// distributed for Temple (scales with FULLY-developed — i.e. Temple II —
+// owned-Temple count; a merely founded Temple I grants no extra slot,
+// matching the macro-investment-equality invariant with Agrar's
+// 2-Farms-for-+1 curve). Both start at PRODUCTION_BASE_SLOTS and cap at
+// PRODUCTION_MAX_SLOTS — the two curves reach the same ceiling by different
+// map structures, matching the area-vs-points asymmetry. A recruit occupies
+// one of the recruiting player's slots for the full training duration (§5)
+// — the unit itself does NOT exist on the battlefield until it deploys at
+// the start of the player's next round.
 export function getProductionSlots(state: GameState, playerId: number): number {
   const player = state.players.find(p => p.id === playerId);
   if (player?.faction === 'agrar') {
@@ -696,8 +697,8 @@ export function getProductionSlots(state: GameState, playerId: number): number {
   }
   if (player?.faction === 'temple') {
     const developedTemples = state.strategicSites.filter(s =>
-      s.ownerId === playerId && s.state === 'temple' && s.devotionLevel >= TEMPLE_DEVOTION_MAX_LEVEL).length;
-    return Math.min(PRODUCTION_BASE_SLOTS + developedTemples, PRODUCTION_MAX_SLOTS);
+      s.ownerId === playerId && s.state === 'temple' && s.templeLevel === 2).length;
+    return Math.min(PRODUCTION_BASE_SLOTS + developedTemples * TEMPLE_II_PRODUCTION_BONUS, PRODUCTION_MAX_SLOTS);
   }
   return PRODUCTION_BASE_SLOTS;
 }
@@ -737,20 +738,23 @@ function resolveTrainingForPlayer(state: GameState, playerId: number): void {
   ];
 }
 
-// ── Economy (§4-19, phase 10 correction) ──
+// ── Economy (§4-19, phase 10 correction; v11 Temple conquest/upgrade) ──
 //
-// Base income is flat and unconditional (always 6⚡/round per player,
-// regardless of structures owned — it's the baseline). On top of that:
-// Agrar's active Farms each contribute AGRAR_FARM_INCOME (§6-9); Temple's
-// owned Temple sites contribute their Devotion level x TEMPLE_DEVOTION_INCOME
-// (§15). A founding/neutral/ruined site or a still-founding Farm contributes
-// nothing.
+// Base income is flat and unconditional (always BASE_INCOME_PER_ROUND per
+// player, regardless of structures owned). On top of that: Agrar's active
+// Farms each contribute AGRAR_FARM_INCOME (§6-9); Temple's owned sites
+// contribute TEMPLE_LEVEL_INCOME[templeLevel] — +1 for Temple I, +2 TOTAL
+// (not +1 on top) for Temple II. A site mid-upgrade ('upgradingTemple')
+// still counts at its current templeLevel (1) — the Temple II bonus only
+// applies once the upgrade actually resolves. A founding/neutral/ruined
+// site or a still-founding Farm contributes nothing.
 export function getPlayerIncome(state: GameState, playerId: number): number {
   let income = BASE_INCOME_PER_ROUND;
   income += activeFarmsOf(state, playerId).length * AGRAR_FARM_INCOME;
   for (const site of state.strategicSites) {
-    if (site.ownerId !== playerId || site.state !== 'temple') continue;
-    income += site.devotionLevel * TEMPLE_DEVOTION_INCOME;
+    if (site.ownerId !== playerId) continue;
+    if (site.state !== 'temple' && site.state !== 'upgradingTemple') continue;
+    if (site.templeLevel) income += TEMPLE_LEVEL_INCOME[site.templeLevel];
   }
   return income;
 }
@@ -1169,21 +1173,16 @@ export function startFounding(state: GameState, unitId: string): boolean {
   return true;
 }
 
-// §17-18 — conquest does not transfer economic investment. If the SAME
-// player who previously invested here reclaims their own former site
-// (recapture, after it was Ruins), their Devotion comes back — nothing was
-// ever deleted. If a DIFFERENT player completes founding (first-time
-// founding of a virgin site, or reclaiming a former site), Devotion resets
-// to 0: "the old development is permanently erased."
+// v11 — conquest NEVER transfers or restores economic investment, even for
+// the site's original owner recapturing their own former Ruins: every
+// completed founding produces a fresh Temple I, full stop. "Destroying
+// economic infrastructure destroys its accumulated investment instead of
+// transferring that investment to the attacker" (RULES_VERSION v11 note).
 function completeFounding(state: GameState, site: StrategicSite): void {
   const founding = site.founding!;
-  const isReclaim = site.investmentOwnerId === founding.playerId;
-  if (!isReclaim) {
-    site.devotionLevel = 0;
-    site.investmentOwnerId = founding.playerId;
-  }
   site.ownerId = founding.playerId;
   site.state = 'temple';
+  site.templeLevel = 1;
   site.hp = STRUCTURES.temple.hp;
   site.maxHp = STRUCTURES.temple.hp;
   site.defense = STRUCTURES.temple.defense;
@@ -1399,28 +1398,58 @@ function isSiteCultivationBlocked(state: GameState, pos: HexCoord, templePlayerI
   return false;
 }
 
-// ── Temple Devotion (§15) ──
+// ── Temple upgrade (v11 Temple conquest + upgrade system) ──
 //
-// Concentrated (not physical/spatial like Farms) — two purchasable levels on
-// the Temple site itself, same total cost as a fully-farmed City (§15-16).
+// Temple I -> Temple II, a single timed step mirroring founding itself: pay
+// TEMPLE_UPGRADE_COST up front, occupy the site for one full round, and only
+// then does the Temple II bonus (+2 income total, +1 production) apply —
+// see resolveTempleUpgradeForPlayer below and TEMPLE_LEVEL_INCOME in
+// getPlayerIncome. Unlike founding there's no board presence to contest (no
+// unit needs to stay nearby) — the only way to stop an upgrade is to
+// destroy the Temple outright before it completes (see attackStructure).
 
-export function canBuyDevotion(state: GameState, templeSiteId: string): boolean {
+export function canStartTempleUpgrade(state: GameState, templeSiteId: string): boolean {
   if (isMatchSetupRestricted(state)) return false;
   const player = getCurrentPlayer(state);
   const site = state.strategicSites.find(s => s.id === templeSiteId);
   if (!site || site.state !== 'temple' || site.ownerId !== player.id) return false;
-  if (site.devotionLevel >= TEMPLE_DEVOTION_MAX_LEVEL) return false;
-  return player.aura >= TEMPLE_DEVOTION_COST;
+  if (site.templeLevel !== 1) return false; // already Temple II, or not founded
+  if (site.upgrade) return false; // already upgrading
+  return player.aura >= TEMPLE_UPGRADE_COST;
 }
 
-export function buyDevotion(state: GameState, templeSiteId: string): boolean {
-  if (!canBuyDevotion(state, templeSiteId)) return false;
+// Begin upgrade: charges TEMPLE_UPGRADE_COST immediately (same "commit up
+// front" rule as founding/research) and moves the site into
+// 'upgradingTemple' — it keeps its Temple I economic effect throughout (see
+// getPlayerIncome/getProductionSlots) until resolveTempleUpgradeForPlayer
+// applies the Temple II bonus at the start of the owning player's next round.
+export function startTempleUpgrade(state: GameState, templeSiteId: string): boolean {
+  if (!canStartTempleUpgrade(state, templeSiteId)) return false;
   const player = getCurrentPlayer(state);
-  player.aura -= TEMPLE_DEVOTION_COST;
+  player.aura -= TEMPLE_UPGRADE_COST;
   const site = state.strategicSites.find(s => s.id === templeSiteId)!;
-  site.devotionLevel++;
-  site.investmentOwnerId = player.id;
+  site.state = 'upgradingTemple';
+  site.upgrade = { playerId: player.id, startedRound: state.turnNumber, completesRound: state.turnNumber + 1 };
   return true;
+}
+
+// §9 — called once per player, right when it becomes their turn (mirrors
+// resolveFoundingForPlayer/resolveFarmFoundingForPlayer). An upgrade never
+// fails once started (no board presence to contest, same as research) —
+// it either completes on schedule, still owned by that player, or it was
+// already destroyed into Ruins by attackStructure (which also clears
+// `upgrade`, so there's nothing left here to resolve).
+function resolveTempleUpgradeForPlayer(state: GameState, playerId: number): void {
+  for (const site of state.strategicSites) {
+    if (site.state !== 'upgradingTemple') continue;
+    const upgrade = site.upgrade;
+    if (!upgrade || upgrade.playerId !== playerId) continue;
+    if (state.turnNumber < upgrade.completesRound) continue;
+    if (site.ownerId !== playerId) { site.upgrade = null; continue; } // shouldn't happen, but stay safe
+    site.state = 'temple';
+    site.templeLevel = 2;
+    site.upgrade = null;
+  }
 }
 
 // ── Agrar Roads (§23-25; adjacency + network-connectivity correction) ──
@@ -1804,7 +1833,7 @@ function updateHighlights(state: GameState): void {
       if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) enemyStructures.push(capital.pos);
     }
     for (const site of state.strategicSites) {
-      if (site.state === 'temple' && site.ownerId !== unit.playerId
+      if ((site.state === 'temple' || site.state === 'upgradingTemple') && site.ownerId !== unit.playerId
         && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
     }
     for (const farm of state.farms) {
@@ -2034,7 +2063,7 @@ export type StructureRef =
 export function getStructureAt(state: GameState, pos: HexCoord): StructureRef | null {
   const capital = state.capitals.find(c => hexEqual(c.pos, pos));
   if (capital) return { kind: 'capital', capital };
-  const site = state.strategicSites.find(s => hexEqual(s.pos, pos) && s.state === 'temple');
+  const site = state.strategicSites.find(s => hexEqual(s.pos, pos) && (s.state === 'temple' || s.state === 'upgradingTemple'));
   if (site) return { kind: 'site', site };
   const farm = state.farms.find(f => hexEqual(f.pos, pos) && f.state === 'farm');
   if (farm) return { kind: 'farm', farm };
@@ -2094,14 +2123,15 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
     destroyed = ref.site.hp <= 0;
     if (destroyed) {
       ref.site.hp = 0;
-      // §11 — City/Temple destruction goes to Ruins, not a game-over: clear
-      // active ownership/production/founding state, keep the site itself.
-      // Farms/Devotion investment is NOT cleared here — it goes dormant
-      // (getPlayerIncome already only counts a 'city'/'temple' site) and
-      // comes back if the SAME player re-founds it (see completeFounding).
+      // v11 §11 — Temple destruction (whether Temple I, Temple II, or
+      // mid-upgrade) goes to Ruins, not a game-over: clear ownership,
+      // founding/upgrade progress AND templeLevel — nothing is preserved or
+      // transferred to the attacker (see completeFounding/RULES_VERSION v11).
       ref.site.state = 'ruins';
       ref.site.ownerId = null;
       ref.site.founding = null;
+      ref.site.upgrade = null;
+      ref.site.templeLevel = null;
       ref.site.maxHp = 0;
       ref.site.defense = 0;
     }
@@ -2216,6 +2246,7 @@ export function endTurn(state: GameState): void {
   // contributes this turn.
   resolveFoundingForPlayer(state, newPlayer.id);
   resolveFarmFoundingForPlayer(state, newPlayer.id);
+  resolveTempleUpgradeForPlayer(state, newPlayer.id);
 
   // §5 — deploy any due TrainingOrders (units queued by recruiting), which
   // also frees their production slots on success.
@@ -2226,7 +2257,7 @@ export function endTurn(state: GameState): void {
   resolveResearchForPlayer(state, newPlayer.id);
 
   // §4-19 — real economy: flat base + Agrar's active Farms / Temple's
-  // Devotion. See getPlayerIncome.
+  // level (I/II). See getPlayerIncome.
   newPlayer.aura += getPlayerIncome(state, newPlayer.id);
 
   // Healer: restore HP to allies at start of their turn, with distance falloff —

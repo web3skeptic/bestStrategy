@@ -1,5 +1,5 @@
 import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -49,8 +49,8 @@ import {
   canStartFarm,
   startFarm,
   getValidFarmHexes,
-  canBuyDevotion,
-  buyDevotion,
+  canStartTempleUpgrade,
+  startTempleUpgrade,
   canBuildRoad,
   buildRoad,
   getValidRoadHexes,
@@ -258,10 +258,13 @@ function checkTempleCaptureToasts(): void {
   for (const s of state.strategicSites) {
     const prev = prevSiteStates.get(s.id)!;
     if (prev === s.state) continue;
-    if (s.state === 'temple') {
+    if (s.state === 'temple' && prev === 'foundingTemple') {
       const isMine = viewer !== null && s.ownerId === viewer;
-      showToast(isMine ? `You founded a Temple` : `${nameOf(s.ownerId)} founded a Temple`, isMine ? 'good' : undefined);
-    } else if (s.state === 'ruins' && prev === 'temple') {
+      showToast(isMine ? `You founded a Temple I` : `${nameOf(s.ownerId)} founded a Temple I`, isMine ? 'good' : undefined);
+    } else if (s.state === 'temple' && prev === 'upgradingTemple') {
+      const isMine = viewer !== null && s.ownerId === viewer;
+      showToast(isMine ? `Your Temple reached Temple II` : `${nameOf(s.ownerId)}'s Temple reached Temple II`, isMine ? 'good' : undefined);
+    } else if (s.state === 'ruins' && (prev === 'temple' || prev === 'upgradingTemple')) {
       showToast('A Temple was reduced to Ruins');
     } else if ((s.state === 'neutral' || s.state === 'ruins') && prev === 'foundingTemple') {
       showToast('A founding attempt failed', 'bad');
@@ -1221,10 +1224,13 @@ function updateUI(): void {
       const foundable = canStartFounding(state, unit);
       const isAgrarBuilder = unit.type === 'founder' && player.faction === 'agrar';
       if (foundable) {
+        // v11 §20/§24 — "Consecrate" for a virgin neutral site, "Re-consecrate"
+        // for Ruins; both always produce Temple I, never restore a prior level.
+        const verb = foundable.site.state === 'ruins' ? 'Re-consecrate' : 'Consecrate';
         captureBtn.style.display = 'block';
         captureBtn.disabled = false;
         captureBtn.title = '';
-        captureBtn.textContent = `⚒ Found Temple (⚡${SITE_ESTABLISH_COST})`;
+        captureBtn.textContent = `⚒ ${verb} Temple I (⚡${SITE_ESTABLISH_COST}) — 1 round`;
       } else if (isAgrarBuilder) {
         // §39-40 (phase 11 correction) — Build Road is ALWAYS shown for an
         // Agrar Builder, never hidden behind a hidden precondition; disabled
@@ -1285,9 +1291,15 @@ function updateUI(): void {
       // §5 (phase 11) — recruiting always queues regardless of tile
       // occupancy; occupancy only matters later, at deployment.
       const unitOnStructure = getUnitAt(state, structurePos);
-      const economyNote = site
-        ? ` | 🕯 Devotion: ${site.devotionLevel}/${TEMPLE_DEVOTION_MAX_LEVEL}`
-        : '';
+      // v11 — Temple I/II/upgrading economy readout (§21-23).
+      let economyNote = '';
+      if (site && site.state === 'temple' && site.templeLevel === 1) {
+        economyNote = ' | Temple I — Income +1⚡ | Production +0';
+      } else if (site && site.state === 'temple' && site.templeLevel === 2) {
+        economyNote = ' | Temple II — Income +2⚡ | Production +1 (fully upgraded)';
+      } else if (site && site.state === 'upgradingTemple') {
+        economyNote = ' | Upgrading to Temple II — Income +1⚡ | Production +0 | completes next round';
+      }
       const label = capital
         ? `Capital HP ${capital.hp}/${capital.maxHp}`
         : `Temple HP ${site!.hp}/${site!.maxHp}${economyNote}`;
@@ -1309,15 +1321,15 @@ function updateUI(): void {
         if (buildingTeleport?.templeId === siteId) clearBuildTeleport();
       }
 
-      // Buy Devotion button — Temple only (Agrar's Farm-building lives on
-      // the Builder unit selection instead, see above).
-      if (myTurn && site) {
+      // Upgrade to Temple II button — Temple only (Agrar's Farm-building
+      // lives on the Builder unit selection instead, see above). Only
+      // shown for a Temple I site (§21-22 — Temple II shows no upgrade,
+      // an in-progress upgrade shows no button either, see economyNote).
+      if (myTurn && site && site.state === 'temple' && site.templeLevel === 1) {
         economyBtn.style.display = 'block';
         economyBtn.classList.remove('active');
-        economyBtn.disabled = !canBuyDevotion(state, siteId);
-        economyBtn.textContent = site.devotionLevel >= TEMPLE_DEVOTION_MAX_LEVEL
-          ? '🕯 Devotion (max)'
-          : `🕯 Buy Devotion (${TEMPLE_DEVOTION_COST}⚡)`;
+        economyBtn.disabled = !canStartTempleUpgrade(state, siteId);
+        economyBtn.textContent = `⛩ Upgrade to Temple II (${TEMPLE_UPGRADE_COST}⚡) — 1 round`;
       } else {
         economyBtn.style.display = 'none';
         if (buildingFarm) clearBuildFarm();
@@ -1665,13 +1677,13 @@ economyBtn.addEventListener('click', () => {
     }
     return;
   }
-  // Temple: Buy Devotion — triggered from the Temple site selection.
+  // Temple: Upgrade to Temple II — triggered from the Temple site selection.
   if (state.selectionMode === 'site' && state.selectedSiteId) {
     const siteId = state.selectedSiteId;
     const site = state.strategicSites.find(s => s.id === siteId);
     if (!site || site.state !== 'temple') return;
-    sendOrCall({ type: 'action', action: 'buy-devotion', params: { templeId: siteId } }, () => {
-      if (buyDevotion(state, siteId)) logCombat(`Purchased a Devotion level (${TEMPLE_DEVOTION_COST}⚡)`);
+    sendOrCall({ type: 'action', action: 'upgrade-temple', params: { templeId: siteId } }, () => {
+      if (startTempleUpgrade(state, siteId)) logCombat(`Started upgrading Temple to Temple II (${TEMPLE_UPGRADE_COST}⚡)`);
     });
   }
 });

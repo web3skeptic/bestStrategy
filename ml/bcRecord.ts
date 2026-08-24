@@ -28,7 +28,7 @@ export function stateSig(s: GameState): string {
   ).sort().join('|');
   const temples = [
     ...s.capitals.map(c => `${c.id}:${c.playerId}:${c.hp}`),
-    ...s.strategicSites.map(t => `${t.id}:${t.state}:${t.ownerId}:${t.hp}:${t.devotionLevel}`),
+    ...s.strategicSites.map(t => `${t.id}:${t.state}:${t.ownerId}:${t.hp}:${t.templeLevel}`),
     ...s.farms.map(f => `${f.id}:${f.ownerId}:${f.hp}`),
   ].sort().join('|');
   const players = s.players.map(p => `${p.id}:${p.aura}`).sort().join('|');

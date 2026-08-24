@@ -13,7 +13,7 @@ import {
   getOwnedStructures, getPlayerCapital,
   researchTech, canResearch,
   getTeleportAt,
-  canStartFarm, startFarm, getValidFarmHexes, canBuyDevotion, buyDevotion,
+  canStartFarm, startFarm, getValidFarmHexes, canStartTempleUpgrade, startTempleUpgrade,
   canBuildRoad, buildRoad, getValidRoadHexes,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
@@ -430,16 +430,16 @@ function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): 
   }
 }
 
-// Temple Devotion — phase 4/10 economy. Greedy: buy the next level on every
-// owned Temple site that can afford it, one purchase per site per turn.
-// Agrar's Farm-building is handled per-unit in actCombatUnit instead (it's
-// Builder-driven, not site-driven — see §6-9).
+// Temple upgrade (v11) — phase 4/10 economy. Greedy: start the Temple
+// I->II upgrade on every owned Temple site that can afford it, one start
+// per site per turn. Agrar's Farm-building is handled per-unit in
+// actCombatUnit instead (it's Builder-driven, not site-driven — see §6-9).
 function doEconomy(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   for (const site of getOwnedSites(state, aiPlayerId)) {
-    if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
-      observe(state, 'buy-devotion', { templeId: site.id });
-      if (buyDevotion(state, site.id)) {
-        actions.push({ type: 'upgrade', pos: { ...site.pos }, description: `Hard AI purchases Devotion at (${site.pos.q},${site.pos.r})` });
+    if (site.state === 'temple' && canStartTempleUpgrade(state, site.id)) {
+      observe(state, 'upgrade-temple', { templeId: site.id });
+      if (startTempleUpgrade(state, site.id)) {
+        actions.push({ type: 'upgrade', pos: { ...site.pos }, description: `Hard AI starts Temple upgrade at (${site.pos.q},${site.pos.r})` });
       }
     }
   }

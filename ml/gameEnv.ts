@@ -22,7 +22,7 @@ import {
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getOwnedStructures,
   canBuildTeleportPair, getValidTeleportHexes, getValidTeleportHexesForOtherTemples,
-  canBuyDevotion,
+  canStartTempleUpgrade,
 } from '../src/game';
 import { executeAction, computeUnitActions, UnifiedActionName } from '../server/actionDispatcher';
 import { hexDistance } from '../src/hex';
@@ -115,12 +115,12 @@ export function legalMicros(state: GameState): Micro[] {
     out.push({ action: 'build-teleport', params: { templeId: structure.id, pos: a[0]!, targetPos: posB } });
   }
 
-  // Devotion — a purchase for each owned Temple below max level. Farms are
+  // Temple upgrade (v11) — a start for each owned Temple I. Farms are
   // handled above (Builder-driven, via computeUnitActions' 'build-farm').
   for (const site of state.strategicSites) {
     if (site.ownerId !== pid) continue;
-    if (site.state === 'temple' && canBuyDevotion(state, site.id)) {
-      out.push({ action: 'buy-devotion', params: { templeId: site.id } });
+    if (site.state === 'temple' && canStartTempleUpgrade(state, site.id)) {
+      out.push({ action: 'upgrade-temple', params: { templeId: site.id } });
     }
   }
 

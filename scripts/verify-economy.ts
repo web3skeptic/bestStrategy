@@ -1,26 +1,28 @@
-// Phase 10/11 verification, plus the economy/pacing balance pass: the
-// macro-economy correction — "Agrar controls area (Farms), Temple controls
-// points (Temples)" — the phase 11 Builder-adjacency Farm placement, the
-// slowed-down Energy scale (3 base income / 3 starting, 7 max instead of
-// 6/6/10), and Agrar Territory split back into two distinct, single-purpose
-// radii (infrastructure reach vs shrine-denial cultivation), with the
-// territory defense bonus removed entirely. Exercises the real engine
-// mutators end-to-end (no forked logic) — createGameState, startFounding,
-// startFarm, endTurn, buyDevotion, attackStructure.
+// Phase 10/11 verification, plus the economy/pacing balance pass and the v11
+// Temple conquest/upgrade system: the macro-economy correction — "Agrar
+// controls area (Farms), Temple controls points (Temples)" — the phase 11
+// Builder-adjacency Farm placement, the slowed-down Energy scale (3 base
+// income / 3 starting, 7 max instead of 6/6/10), Agrar Territory split back
+// into two distinct, single-purpose radii (infrastructure reach vs
+// shrine-denial cultivation) with the territory defense bonus removed
+// entirely, and Temple's two-stage Temple I -> Temple II build/upgrade
+// (replacing the old Devotion I/II purchase ladder). Exercises the real
+// engine mutators end-to-end (no forked logic) — createGameState,
+// startFounding, startFarm, endTurn, startTempleUpgrade, attackStructure.
 //
 // Run with: npx tsx scripts/verify-economy.ts
 import {
   createGameState, endTurn, chooseFaction, startFounding, canStartFounding,
   getPlayerIncome, getProductionSlots,
   canStartFarm, startFarm, getValidFarmHexes, getAgrarTerritory, getAgrarCultivation,
-  canBuyDevotion, buyDevotion,
+  canStartTempleUpgrade, startTempleUpgrade,
   selectUnit, attackStructure, getStructureAt, getEffectiveDefense,
   createUnit,
 } from '../src/game';
 import {
   BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS,
   AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING, SITE_ESTABLISH_COST,
-  TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_INCOME, TEMPLE_DEVOTION_MAX_LEVEL,
+  TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
 } from '../src/factions';
 import { hexDistance, hexNeighbors, hexEqual, hexKey } from '../src/hex';
 import type { GameState, Unit, HexCoord } from '../src/types';
@@ -120,13 +122,12 @@ function foundTemple(state: GameState, playerId: number, siteIndex = 0) {
   return site;
 }
 
-// Founds AND fully develops (Devotion I + II) a Temple for playerId.
+// Founds AND fully upgrades (Temple I -> Temple II) a Temple for playerId.
 function foundFullTemple(state: GameState, playerId: number, siteIndex = 0) {
   const site = foundTemple(state, playerId, siteIndex);
   state.currentPlayerIndex = playerId;
-  buyDevotion(state, site.id);
-  state.currentPlayerIndex = playerId;
-  buyDevotion(state, site.id);
+  startTempleUpgrade(state, site.id);
+  advanceOneRound(state);
   return site;
 }
 
@@ -339,30 +340,33 @@ console.log('\n=== Agrar Territory grants NO defense bonus (§9) ===');
   check('effective DEF equals base DEF + terrain/support only (no territory term)', getEffectiveDefense(state, defender) === defender.stats.defense);
 }
 
-// ── Temple Devotion (§4) ──
-console.log('\n=== Temple Devotion (§4) ===');
+// ── Temple I -> Temple II upgrade (v11 Temple conquest/upgrade system) ──
+console.log('\n=== Temple I -> Temple II upgrade (v11) ===');
 {
   const state = setup();
   const temple = foundTemple(state, 1, 0);
-  check('founding produces a Temple for the Temple faction', temple.state === 'temple', `got ${temple.state}`);
+  check('founding produces a Temple I for the Temple faction', temple.state === 'temple' && temple.templeLevel === 1, `got ${temple.state}/${temple.templeLevel}`);
   const player = state.players[1]!;
-  check('flat income with Devotion 0', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND, `income=${getPlayerIncome(state, 1)}`);
-  check('TEMPLE_DEVOTION_COST is 4 (was 3)', TEMPLE_DEVOTION_COST === 4, `got ${TEMPLE_DEVOTION_COST}`);
+  check('SITE_ESTABLISH_COST is 6 (matches AGRAR_FARM_COST)', SITE_ESTABLISH_COST === 6, `got ${SITE_ESTABLISH_COST}`);
+  check('Temple I income is +1 (total 4)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_LEVEL_INCOME[1], `income=${getPlayerIncome(state, 1)}`);
+  check('Temple I grants no production slot', getProductionSlots(state, 1) === 2, `got ${getProductionSlots(state, 1)}`);
+  check('TEMPLE_UPGRADE_COST is 6 (matches SITE_ESTABLISH_COST)', TEMPLE_UPGRADE_COST === 6, `got ${TEMPLE_UPGRADE_COST}`);
 
   state.currentPlayerIndex = 1;
   const auraBefore = player.aura;
-  const bought = buyDevotion(state, temple.id);
-  check('buyDevotion succeeds at level 0', bought);
-  check('buyDevotion charges TEMPLE_DEVOTION_COST', player.aura === auraBefore - TEMPLE_DEVOTION_COST, `aura=${player.aura}`);
-  check('devotionLevel increments', temple.devotionLevel === 1);
-  check('income increases by TEMPLE_DEVOTION_INCOME per level', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_DEVOTION_INCOME, `income=${getPlayerIncome(state, 1)}`);
-  check('a partially-developed (Devotion I) Temple grants no production slot', getProductionSlots(state, 1) === 2, `got ${getProductionSlots(state, 1)}`);
+  const started = startTempleUpgrade(state, temple.id);
+  check('startTempleUpgrade succeeds on an owned Temple I', started);
+  check('startTempleUpgrade charges TEMPLE_UPGRADE_COST immediately', player.aura === auraBefore - TEMPLE_UPGRADE_COST, `aura=${player.aura}`);
+  check('the site moves to upgradingTemple', temple.state === 'upgradingTemple', `got ${temple.state}`);
+  check('a second upgrade cannot start while one is in progress', !canStartTempleUpgrade(state, temple.id));
+  check('income during upgrade stays at Temple I level (+1, not +2)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_LEVEL_INCOME[1], `income=${getPlayerIncome(state, 1)}`);
+  check('production during upgrade stays at 0 bonus (Temple II benefit not applied early)', getProductionSlots(state, 1) === 2, `got ${getProductionSlots(state, 1)}`);
 
-  for (let i = temple.devotionLevel; i < TEMPLE_DEVOTION_MAX_LEVEL; i++) buyDevotion(state, temple.id);
-  check(`Devotion caps at TEMPLE_DEVOTION_MAX_LEVEL (${TEMPLE_DEVOTION_MAX_LEVEL})`, temple.devotionLevel === TEMPLE_DEVOTION_MAX_LEVEL);
-  check('cannot buy Devotion past the level cap', !canBuyDevotion(state, temple.id));
-  check('income at full Devotion development', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_DEVOTION_MAX_LEVEL * TEMPLE_DEVOTION_INCOME, `income=${getPlayerIncome(state, 1)}`);
-  check('a fully-developed (Devotion II) Temple grants +1 production slot', getProductionSlots(state, 1) === 3, `got ${getProductionSlots(state, 1)}`);
+  advanceOneRound(state);
+  check('the upgrade resolves to Temple II next round', temple.state === 'temple' && temple.templeLevel === 2, `got ${temple.state}/${temple.templeLevel}`);
+  check('Temple II income is +2 TOTAL, not +1 on top of Temple I (total 5)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_LEVEL_INCOME[2], `income=${getPlayerIncome(state, 1)}`);
+  check('Temple II grants +1 production slot', getProductionSlots(state, 1) === 2 + TEMPLE_II_PRODUCTION_BONUS, `got ${getProductionSlots(state, 1)}`);
+  check('cannot upgrade a Temple II any further', !canStartTempleUpgrade(state, temple.id));
 }
 
 // ── §27-28 Economic symmetry curve + macro-investment-equality invariants ──
@@ -386,35 +390,33 @@ console.log('\n=== Temple economic curve (§27) ===');
   const state = setup();
   check('0 full neutral Temples = 3 income', getPlayerIncome(state, 1) === 3, `got ${getPlayerIncome(state, 1)}`);
   const t0 = foundTemple(state, 1, 0);
-  check('Temple + no Devotion = +0 income', getPlayerIncome(state, 1) === 3, `got ${getPlayerIncome(state, 1)}`);
+  check('Temple I = +1 income (total 4)', getPlayerIncome(state, 1) === 4, `got ${getPlayerIncome(state, 1)}`);
   state.currentPlayerIndex = 1;
-  buyDevotion(state, t0.id);
-  check('Devotion I = +1 income (total 4)', getPlayerIncome(state, 1) === 4, `got ${getPlayerIncome(state, 1)}`);
-  state.currentPlayerIndex = 1;
-  buyDevotion(state, t0.id);
-  check('Devotion II = +2 income (total 5)', getPlayerIncome(state, 1) === 5, `got ${getPlayerIncome(state, 1)}`);
-  check('1 Devotion-II Temple = 5 income', getPlayerIncome(state, 1) === 5);
-  check('1 Devotion-II Temple = 3 production', getProductionSlots(state, 1) === 3, `got ${getProductionSlots(state, 1)}`);
+  startTempleUpgrade(state, t0.id);
+  advanceOneRound(state);
+  check('Temple II = +2 income TOTAL (total 5)', getPlayerIncome(state, 1) === 5, `got ${getPlayerIncome(state, 1)}`);
+  check('1 Temple II = 5 income', getPlayerIncome(state, 1) === 5);
+  check('1 Temple II = 3 production', getProductionSlots(state, 1) === 3, `got ${getProductionSlots(state, 1)}`);
   if (state.strategicSites.length > 1) {
     foundFullTemple(state, 1, 1);
-    check('2 Devotion-II Temples = 7 income', getPlayerIncome(state, 1) === 7, `got ${getPlayerIncome(state, 1)}`);
-    check('2 Devotion-II Temples = 4 production', getProductionSlots(state, 1) === 4, `got ${getProductionSlots(state, 1)}`);
+    check('2 Temple II sites = 7 income', getPlayerIncome(state, 1) === 7, `got ${getPlayerIncome(state, 1)}`);
+    check('2 Temple II sites = 4 production', getProductionSlots(state, 1) === 4, `got ${getProductionSlots(state, 1)}`);
   }
 }
-console.log('\n=== Macro investment equality (§28) ===');
+console.log('\n=== Macro investment equality (§28-29) ===');
 {
   // Raw sticker prices, computed from the constants directly (NOT by
   // measuring aura drift across foundFarm/foundTemple — those helpers
-  // advance real rounds, so base/Devotion income would accrue in between
-  // and confound a "spent" measurement).
+  // advance real rounds, so base/Temple income would accrue in between and
+  // confound a "spent" measurement).
   const cost2Farms = AGRAR_FARM_COST * 2;
   const cost4Farms = AGRAR_FARM_COST * 4;
-  const cost1Temple = SITE_ESTABLISH_COST + TEMPLE_DEVOTION_COST * TEMPLE_DEVOTION_MAX_LEVEL;
+  const cost1Temple = SITE_ESTABLISH_COST + TEMPLE_UPGRADE_COST;
   const cost2Temples = cost1Temple * 2;
   check('2 Agrar Farms cost exactly 12⚡', cost2Farms === 12, `got ${cost2Farms}`);
   check('4 Agrar Farms cost exactly 24⚡', cost4Farms === 24, `got ${cost4Farms}`);
-  check('1 fully-developed Temple costs exactly 12⚡ (4 found + 4 + 4 Devotion)', cost1Temple === 12, `got ${cost1Temple}`);
-  check('2 fully-developed Temples cost exactly 24⚡', cost2Temples === 24, `got ${cost2Temples}`);
+  check('1 Temple II costs exactly 12⚡ (6 found + 6 upgrade)', cost1Temple === 12, `got ${cost1Temple}`);
+  check('2 Temple II sites cost exactly 24⚡', cost2Temples === 24, `got ${cost2Temples}`);
   check('2 Farms and 1 fully-developed Temple represent EQUAL macro investment (cost)', cost2Farms === cost1Temple);
   check('4 Farms and 2 fully-developed Temples represent EQUAL macro investment (cost)', cost4Farms === cost2Temples);
 
@@ -615,14 +617,129 @@ console.log('\n=== Cultivated Influence: shrine denial, radius 1, farms only (§
   // cultivation — it only blocks founding/rebuilding, not an active Temple.
   const state = setup();
   const temple = foundTemple(state, 1, 0);
-  state.currentPlayerIndex = 1;
-  buyDevotion(state, temple.id);
   const incomeBefore = getPlayerIncome(state, 1);
   check('Temple is active and earning', temple.state === 'temple' && incomeBefore > BASE_INCOME_PER_ROUND);
   // (No Agrar Farm can legally land ON the Temple hex itself — getValidFarmHexes
   // already excludes any hex with a strategic site — so proximity alone can
   // never flip an active Temple off; nothing further to build here.)
   check('an active Temple is structurally immune to cultivation (no state field ties it to Farms)', temple.ownerId === 1 && temple.state === 'temple');
+}
+
+// A 2-Temple-faction game, for conquest scenarios where the attacker also
+// needs to be able to found/upgrade a Temple of their own afterward.
+function setupTwoTemple(): GameState {
+  const state = createGameState();
+  chooseFaction(state, 0, 'temple');
+  chooseFaction(state, 1, 'temple');
+  for (const p of state.players) p.aura = 200;
+  for (const player of state.players) {
+    const capital = state.capitals.find(c => c.playerId === player.id)!;
+    const [n0, n1] = hexNeighbors(capital.pos);
+    const tech = state.playerTech[player.id];
+    state.units.push(createUnit('founder', player.id, n0!, tech, player.faction));
+    state.units.push(createUnit('warrior', player.id, n1!, tech, player.faction));
+  }
+  return state;
+}
+
+// Destroys a strategic site with a full-health enough attacker, setting its
+// HP to 1 first so a single hit finishes it regardless of the attacker's
+// actual damage output.
+function destroySite(state: GameState, attackerId: number, site: { id: string; pos: HexCoord; hp: number }): void {
+  const attacker = state.units.find(u => u.playerId === attackerId && u.type === 'warrior')!;
+  attacker.pos = { ...hexNeighbors(site.pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = attackerId;
+  selectUnit(state, attacker.id);
+  site.hp = 1;
+  attackStructure(state, site.pos);
+}
+
+// ── Temple-vs-Temple conquest (§13, §30, §33 no ownership snowball) ──
+console.log('\n=== Temple-vs-Temple conquest (§13, §30, §33) ===');
+{
+  const state = setupTwoTemple();
+  const site = foundFullTemple(state, 1, 0); // player 1 builds a full Temple II
+  check('setup: player 1 has a Temple II', site.state === 'temple' && site.templeLevel === 2);
+  const defenderIncomeBefore = getPlayerIncome(state, 1);
+  const attackerIncomeBefore = getPlayerIncome(state, 0);
+
+  destroySite(state, 0, site);
+  check('destroyed Temple II becomes Ruins', site.state === 'ruins' && site.templeLevel === null, `got ${site.state}/${site.templeLevel}`);
+  check('defender income drops by exactly 2 (loses Temple II)', getPlayerIncome(state, 1) === defenderIncomeBefore - 2, `got ${getPlayerIncome(state, 1)}`);
+  check('attacker income gains NOTHING from the kill — no instant transfer', getPlayerIncome(state, 0) === attackerIncomeBefore, `got ${getPlayerIncome(state, 0)}`);
+  // Move the attacking Warrior away — it did its job destroying the Temple;
+  // an "enemy adjacent" warrior sitting right next to the Ruins would
+  // otherwise fail the OWN player's founding attempt below. The defender's
+  // Acolyte is ALSO still physically standing on the site (founding/
+  // upgrading never moves the founder off it) — attackStructure only
+  // destroys the structure, not units on the tile, so it has to move too.
+  state.units.find(u => u.playerId === 0 && u.type === 'warrior')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
+  state.units.find(u => u.playerId === 1 && u.type === 'founder')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 + 1 };
+
+  // Player 0 (the attacker) reconsecrates the Ruins with their own Acolyte.
+  const acolyte = state.units.find(u => u.playerId === 0 && u.type === 'founder')!;
+  acolyte.pos = { ...site.pos };
+  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  const auraBeforeFound = state.players[0]!.aura;
+  startFounding(state, acolyte.id);
+  check('starting founding charges SITE_ESTABLISH_COST immediately', state.players[0]!.aura === auraBeforeFound - SITE_ESTABLISH_COST, `aura=${state.players[0]!.aura}`);
+  advanceOneRound(state); // resolves at the start of player 0's next round
+  check('conquest never inherits the previous Temple level — restarts at Temple I', site.state === 'temple' && site.templeLevel === 1 && site.ownerId === 0, `got ${site.state}/${site.templeLevel}/${site.ownerId}`);
+  check('attacker income after reconquest is only +1 (Temple I), not +2', getPlayerIncome(state, 0) === attackerIncomeBefore + 1, `got ${getPlayerIncome(state, 0)}`);
+
+  // Reaching Temple II again costs the full 6 more, same as building fresh —
+  // measured as a direct charge, not via net aura drift (which would also
+  // include accrued income across the advanceOneRound calls above/below).
+  state.currentPlayerIndex = 0;
+  const auraBeforeUpgrade = state.players[0]!.aura;
+  startTempleUpgrade(state, site.id);
+  check('the upgrade itself costs exactly TEMPLE_UPGRADE_COST', auraBeforeUpgrade - state.players[0]!.aura === TEMPLE_UPGRADE_COST);
+  advanceOneRound(state);
+  check('reconquering a fully-developed Temple needed a fresh 6+6=12⚡ total to reach Temple II again (no salvage from the old investment)', site.templeLevel === 2, `got ${site.templeLevel}`);
+}
+
+// ── Recapturing your own former Ruins (§14) — no free restoration ──
+console.log('\n=== Recapturing your own Ruins: no free restoration (§14) ===');
+{
+  const state = setup(); // agrar=0, temple=1
+  const site = foundFullTemple(state, 1, 0);
+  check('setup: player 1 has a Temple II', site.templeLevel === 2);
+
+  destroySite(state, 0, site);
+  check('the Temple II is destroyed into Ruins', site.state === 'ruins' && site.templeLevel === null);
+  state.units.find(u => u.playerId === 0 && u.type === 'warrior')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
+
+  // The SAME player (1) reconsecrates their own former site.
+  const acolyte = founderOf(state, 1);
+  acolyte.pos = { ...site.pos };
+  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  startFounding(state, acolyte.id);
+  advanceOneRound(state);
+  check('the original owner rebuilding their OWN former site still restarts at Temple I — no Devotion/level carries over', site.state === 'temple' && site.templeLevel === 1, `got ${site.state}/${site.templeLevel}`);
+  check('income reflects only Temple I (+1), not the old Temple II (+2)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + 1, `got ${getPlayerIncome(state, 1)}`);
+}
+
+// ── Temple upgrade interruption (§32) ──
+console.log('\n=== Temple upgrade interruption (§32) ===');
+{
+  const state = setup();
+  const site = foundTemple(state, 1, 0);
+  state.currentPlayerIndex = 1;
+  startTempleUpgrade(state, site.id);
+  check('upgrade takes one full round — not instant', site.state === 'upgradingTemple' && site.templeLevel === 1);
+  check('no production slot exists before Temple II completes', getProductionSlots(state, 1) === 2, `got ${getProductionSlots(state, 1)}`);
+
+  // Destroy the Temple WHILE it's mid-upgrade.
+  destroySite(state, 0, site);
+  check('destroying a Temple mid-upgrade goes straight to Ruins', site.state === 'ruins' && site.templeLevel === null, `got ${site.state}`);
+  check('the upgrade cost is not refunded (no way to observe a refund here — aura was already spent up front)', true);
+
+  // Advancing further rounds must NOT resurrect the upgrade — it's gone.
+  advanceOneRound(state);
+  check('a destroyed mid-upgrade Temple never silently becomes Temple II later', site.state === 'ruins', `got ${site.state}`);
 }
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);

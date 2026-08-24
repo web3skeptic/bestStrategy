@@ -119,7 +119,7 @@ export const COMMAND_TIERS = { start: 6, commandI: 9, commandII: 12 } as const;
 
 // §16-19 (phase 10) — production is centralized for Agrar (scales with
 // active Farm count) and distributed for Temple (scales with FULLY-developed
-// — Devotion II — neutral-Temple count) — see getProductionSlots in game.ts
+// — Temple II, v11 — owned-Temple count) — see getProductionSlots in game.ts
 // for the actual per-faction curve. Both start from the same base and cap
 // at the same max.
 export const PRODUCTION_BASE_SLOTS = 2;
@@ -131,10 +131,13 @@ export const UNIT_TRAINING_ROUNDS = 1;
 // unit/tech/economy costs — one round of base income used to buy most of an
 // opening. Halved so army, economy and tech genuinely compete for the same
 // Energy instead of all being affordable at once. New normal maximum
-// income is 7⚡/round (was 10) — see AGRAR_FARM_INCOME/TEMPLE_DEVOTION_INCOME.
+// income is 7⚡/round (was 10) — see AGRAR_FARM_INCOME/TEMPLE_LEVEL_INCOME.
 export const STARTING_ENERGY = 3;
 export const BASE_INCOME_PER_ROUND = 3;
-export const SITE_ESTABLISH_COST = 4;      // Temple founding only — Agrar never founds a site (§28)
+// v11 — 4->6, matching AGRAR_FARM_COST exactly (Temple conquest/upgrade
+// system's macro-investment-equality invariant: 1 Farm == Temple I == 6⚡ ==
+// +1 income). Temple founding only — Agrar never founds a site (§28).
+export const SITE_ESTABLISH_COST = 6;
 
 // §6-14 (phase 10; placement simplified phase 11; split back into two
 // distinct radii in the economy/pacing balance pass — see AGRAR_TERRITORY_
@@ -165,14 +168,17 @@ export const AGRAR_TERRITORY_RADIUS = 2; // around the Capital, and around each 
 export const CULTIVATION_RADIUS = 1; // an active Farm's own hex + its 6 neighbours — Capital projects none of this
 export const FARM_MIN_SPACING = 2;   // never directly adjacent to another Farm
 
-// §4 (economy/pacing balance pass) — Devotion I/II both cost 4⚡ now (were
-// 3), so a fully developed neutral Temple totals Founding(4) + DevotionI(4)
-// + DevotionII(4) = 12⚡ for +2⚡/round — a 6-round payback, matching Agrar's
-// 2-Farms-for-12⚡-and-+2-income rate exactly (§28 macro-investment-equality
-// invariant).
-export const TEMPLE_DEVOTION_COST = 4;     // x2 devotion levels per Temple
-export const TEMPLE_DEVOTION_INCOME = 1;
-export const TEMPLE_DEVOTION_MAX_LEVEL = 2;
+// v11 (Temple conquest + upgrade system) — replaces the old Devotion I/II
+// purchase ladder with a simple two-stage build/upgrade, matching Agrar's
+// Farm curve one-for-one: Temple I costs SITE_ESTABLISH_COST (6⚡, 1 round,
+// via founding) for +1 income; Temple II costs an ADDITIONAL
+// TEMPLE_UPGRADE_COST (6⚡, 1 round) on top for +2 income TOTAL (not +1 on
+// top of Temple I's +1) and +1 production slot. A fully developed neutral
+// Temple totals 6+6=12⚡ for +2⚡/round — exactly 2 Farms (12⚡, +2 income,
+// +1 production). See TEMPLE_LEVEL_INCOME/canStartTempleUpgrade in game.ts.
+export const TEMPLE_UPGRADE_COST = 6;
+export const TEMPLE_LEVEL_INCOME: Record<1 | 2, number> = { 1: 1, 2: 2 };
+export const TEMPLE_II_PRODUCTION_BONUS = 1;
 
 // §14-15 — Agrar-only physical Roads. Temple gets no equivalent bonus. Kept
 // cheap deliberately: at 3⚡ base income (down from 6), 1⚡ is already

@@ -8,7 +8,7 @@
 import {
   createGameState, endTurn, chooseFaction, spawnUnit, canAfford, canResearch,
   researchTech, getPopulationCap, getPopulationCount, getProductionSlots,
-  getBusyProductionSlotCount, getPlayerCapital, startFounding, buyDevotion,
+  getBusyProductionSlotCount, getPlayerCapital, startFounding, startTempleUpgrade,
 } from '../src/game';
 import { COMMAND_TIERS, PRODUCTION_BASE_SLOTS } from '../src/factions';
 import { TECH_NODES } from '../src/types';
@@ -176,10 +176,10 @@ console.log('\n=== Production slots (§19-20) ===');
   check('both queued recruits eventually deployed', state.units.filter(u => u.playerId === 0 && u.type === 'warrior' && u.hp > 0).length === 2);
 }
 {
-  // Only a FULLY-developed (Devotion II) owned Temple grants +1 production
-  // slot (economy/pacing balance pass §5) — a merely founded or partially
-  // developed Temple grants none (see verify-economy.ts for the full
-  // per-faction production curve, including Agrar's Farm-based one).
+  // Only a FULLY-developed (Temple II, v11) owned Temple grants +1
+  // production slot — a merely founded Temple I grants none (see
+  // verify-economy.ts for the full per-faction production curve, including
+  // Agrar's Farm-based one).
   const state = setup();
   const site = state.strategicSites[0]!;
   state.currentPlayerIndex = 1;
@@ -196,14 +196,14 @@ console.log('\n=== Production slots (§19-20) ===');
   endTurn(state); // opponent's turn
   endTurn(state); // back to this player -> founding resolves (uncontested)
   const site0 = state.strategicSites.find(s => s.id === site.id)!;
-  check('site founded into a Temple', site0.state === 'temple', `got ${site0.state}`);
-  check('a merely-founded Temple (Devotion 0) grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
+  check('site founded into a Temple I', site0.state === 'temple' && site0.templeLevel === 1, `got ${site0.state}/${site0.templeLevel}`);
+  check('a merely-founded Temple I grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
   state.currentPlayerIndex = 1;
-  buyDevotion(state, site0.id);
-  check('a Devotion-I (partially developed) Temple still grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
-  state.currentPlayerIndex = 1;
-  buyDevotion(state, site0.id);
-  check('a fully-developed (Devotion II) Temple grants +1 production slot', getProductionSlots(state, 1) === before + 1, `before=${before} after=${getProductionSlots(state, 1)}`);
+  startTempleUpgrade(state, site0.id);
+  check('a Temple I mid-upgrade still grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
+  endTurn(state); // opponent's turn
+  endTurn(state); // back to this player -> upgrade resolves
+  check('a fully-developed (Temple II) Temple grants +1 production slot', getProductionSlots(state, 1) === before + 1, `before=${before} after=${getProductionSlots(state, 1)}`);
 }
 
 // ── Players are independent ──
