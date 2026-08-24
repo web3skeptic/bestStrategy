@@ -163,7 +163,7 @@ export function cloneState(s: GameState): GameState {
     selectedUnitId: null, selectedSiteId: null, selectionMode: null,
     moveHexes: [], attackHexes: [], structureAttackHexes: [], supportHexes: [], buildHexes: [],
     spawnedSiteIds: new Set(s.spawnedSiteIds),
-    playerTech: s.playerTech.map(pt => ({ researched: new Set(pt.researched) })),
+    playerTech: s.playerTech.map(pt => ({ researched: new Set(pt.researched), researching: pt.researching ? { ...pt.researching } : null })),
     teleportBuildings: s.teleportBuildings.map(tp => ({ ...tp })),
   };
 }

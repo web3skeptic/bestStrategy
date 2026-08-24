@@ -1,6 +1,6 @@
 import {
   GameState, HexCoord, Unit, UnitType, TechId,
-  UNIT_COSTS, TECH_COST,
+  UNIT_COSTS,
   SUPPORT_RANGE,
 } from './types';
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
@@ -418,7 +418,6 @@ const HARD_RESEARCH_PLAN: Record<'agrar' | 'temple', TechId[]> = {
 
 function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   const player = state.players[aiPlayerId]!;
-  if (player.aura < TECH_COST) return;
   const home = getPlayerCapital(state, aiPlayerId);
   const plan = player.faction ? HARD_RESEARCH_PLAN[player.faction] : [];
   for (const tech of plan) {

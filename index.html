@@ -778,10 +778,10 @@
       cursor: pointer;
       transition: filter 0.12s, transform 0.08s;
     }
-    .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched) {
+    .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched):not(.tech-node--researching) {
       filter: brightness(1.18);
     }
-    .tech-node:active:not(.tech-node--locked):not(.tech-node--researched) {
+    .tech-node:active:not(.tech-node--locked):not(.tech-node--researched):not(.tech-node--researching) {
       transform: translateY(1px);
     }
     .tech-node--researched {
@@ -801,6 +801,18 @@
       cursor: not-allowed;
       filter: saturate(0.7) brightness(0.85);
     }
+    .tech-node--researching {
+      /* amber pulse — actively being researched, mid-flight */
+      border-color: #11141c;
+      background:
+        linear-gradient(180deg, rgba(231,194,74,0.22) 0%, rgba(0,0,0,0) 30%),
+        linear-gradient(180deg, #5a4e2f 0%, #4a4223 55%, #3a3020 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(231,194,74,0.32),
+        inset 0 -2px 5px rgba(0,0,0,0.5),
+        0 0 8px rgba(231,194,74,0.35);
+      cursor: default;
+    }
     .tech-node-art {
       display: block; width: 100%; height: 72px; object-fit: contain;
       margin: -2px auto 7px;
@@ -809,12 +821,14 @@
     .tech-node--researched .tech-node-art { opacity: 0.92; }
     .tech-node-name  { font-size: 13px; font-weight: 800; color: #f0f3f8; margin-bottom: 3px; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
     .tech-node-cost  { font-size: 11px; color: #e7c24a; margin-bottom: 4px; }
+    .tech-node-prereq { font-size: 10px; color: #8b94a4; margin-bottom: 4px; font-style: italic; }
     .tech-node-desc  { font-size: 10px; color: #c2c8d4; line-height: 1.4; }
     .tech-node-status { font-size: 11px; font-weight: 800; margin-top: 6px; }
-    .status-researched { color: #33e0a0; }
-    .status-available  { color: #5fd0ff; }
-    .status-locked     { color: #8b94a4; }
-    .status-poor       { color: #e08a4a; }
+    .status-researched  { color: #33e0a0; }
+    .status-available   { color: #5fd0ff; }
+    .status-locked      { color: #8b94a4; }
+    .status-poor        { color: #e08a4a; }
+    .status-researching { color: #e7c24a; }
 
     /* ── Build Teleport button ── */
     #teleportBtn {

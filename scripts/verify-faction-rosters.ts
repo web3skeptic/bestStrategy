@@ -11,8 +11,8 @@ import {
   getUnlockedUnits, getUnitCost, unitDisplayName, researchTech, getPlayerCapital,
 } from '../src/game';
 import { AGRAR_UNITS, TEMPLE_UNITS, FACTION_UNITS } from '../src/factions';
-import { TECH_COST } from '../src/types';
-import type { GameState, FactionId, UnitType } from '../src/types';
+import { TECH_NODES } from '../src/types';
+import type { GameState, FactionId, UnitType, TechId } from '../src/types';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: string): void {
@@ -38,6 +38,20 @@ function capitalId(state: GameState, playerId: number): string {
 function advanceOneRound(state: GameState): void {
   endTurn(state);
   endTurn(state);
+}
+
+// Tech-tree pacing pass — research is single-slot and multi-round now:
+// starts it, then advances exactly that tech's researchTime rounds so it
+// resolves, and returns whether it actually completed. (Comprehensive
+// tech-mechanic coverage — cost/timing/single-slot/Command II rule — lives
+// in verify-tech.ts; this helper is just for this file's roster/recruiting
+// integration checks.)
+function researchAndComplete(state: GameState, playerId: number, techId: TechId): boolean {
+  state.currentPlayerIndex = playerId;
+  if (!researchTech(state, techId)) return false;
+  const node = TECH_NODES.find(n => n.id === techId)!;
+  for (let i = 0; i < node.researchTime; i++) advanceOneRound(state);
+  return state.playerTech[playerId]!.researched.has(techId);
 }
 
 // §5 (phase 11) — spawnUnit only queues a TrainingOrder now; it does NOT
@@ -153,17 +167,18 @@ console.log('\n=== Builder/Acolyte: matched stats, both recruitable (§5/§12) =
 
 // ── Tech unlock gates faction recruiting — faction-specific Heavy-unit line
 // with a real 2-step prerequisite chain (phase 11 §33-34), not a flat unlock ──
-console.log('\n=== Tech gates faction recruiting (phase 11 Heavy-unit line) ===');
+console.log('\n=== Tech gates faction recruiting (phase 11 Heavy-unit line, timed research) ===');
 {
-  check('TECH_COST is 6 (was 5, economy/pacing balance pass §7)', TECH_COST === 6, `got ${TECH_COST}`);
   const state = setup();
+  state.players[0]!.aura = 200; // enough for the whole chain + the unit itself
   state.currentPlayerIndex = 0;
   check('Agrar cannot recruit Heavy Knight before tech', !canAfford(state, 'heavyknight'));
   check('Agrar cannot research Heavy Knight tech before its prereqs', !researchTech(state, 'agrar_heavy_knight_tech'));
-  check('Agrar can research Heavy Armor (no prereq)', researchTech(state, 'agrar_heavy_armor'));
+  check('Agrar can research + complete Heavy Armor (no prereq)', researchAndComplete(state, 0, 'agrar_heavy_armor'));
   check('still cannot research Heavy Knight tech — missing Command I', !researchTech(state, 'agrar_heavy_knight_tech'));
-  check('Agrar can research Command I', researchTech(state, 'command_1'));
-  check('Agrar can now research Heavy Knight tech (both prereqs met)', researchTech(state, 'agrar_heavy_knight_tech'));
+  check('Agrar can research + complete Command I', researchAndComplete(state, 0, 'command_1'));
+  check('Heavy Knight is NOT unlocked yet — still needs to be researched', !canAfford(state, 'heavyknight'));
+  check('Agrar can now research + complete Heavy Knight tech (both prereqs met)', researchAndComplete(state, 0, 'agrar_heavy_knight_tech'));
   check('Agrar can now recruit Heavy Knight', canAfford(state, 'heavyknight'));
 
   const cap = capitalId(state, 0);

@@ -1,4 +1,4 @@
-import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
+import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
 import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_DEVOTION_COST, TEMPLE_DEVOTION_MAX_LEVEL, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
 import { hexEqual, hexKey } from './hex';
 import { Renderer3D } from './renderer3d';
@@ -1838,6 +1838,17 @@ function renderTechTree(): void {
 
   techBody.innerHTML = '';
 
+  // Tech-tree pacing pass — exactly one active research slot per player; show
+  // it up top so it's obvious why every other card is disabled while it's busy.
+  if (tech.researching) {
+    const node = TECH_NODES.find(n => n.id === tech.researching!.techId)!;
+    const remaining = Math.max(1, tech.researching.completesRound - state.turnNumber);
+    const banner = document.createElement('div');
+    banner.className = 'tech-branch-label';
+    banner.textContent = `⏳ Researching ${node.name} — ${remaining} round${remaining === 1 ? '' : 's'} remaining`;
+    techBody.appendChild(banner);
+  }
+
   // Phase 11 §33-34 — Siege and Heavy-unit lines are faction-specific, each
   // a real 2-step prerequisite chain now (not a flat unlock). Only the
   // current player's own faction variant is ever shown — see node.faction.
@@ -1872,12 +1883,17 @@ function techNodeArt(node: typeof TECH_NODES[number], color: string, faction: Fa
   return null;
 }
 
+// Mirrors game.ts's COMMAND_2_MIN_OTHER_TECHS (not exported — canResearch is
+// the source of truth for the actual gate), purely for the disabled-reason
+// text below.
+const COMMAND_2_MIN_OTHER_TECHS_UI = 2;
+
 function appendSection(
   container: HTMLElement,
   title: string,
   branch: string | undefined,
   nodes: typeof TECH_NODES,
-  tech: { researched: Set<TechId> },
+  tech: PlayerTech,
   aura: number,
   playerColor: string,
   playerFaction: FactionId | null,
@@ -1909,18 +1925,35 @@ function appendSection(
     const prereqsMet = node.prereqs.every(p => tech.researched.has(p));
     const branchBlocked = !!node.branch && nodes.some(n => n.id !== node.id && tech.researched.has(n.id));
     const isResearched = tech.researched.has(node.id);
+    const isResearching = tech.researching?.techId === node.id;
+    const slotBusy = !!tech.researching && !isResearching;
+    // Command II's "at least COMMAND_2_MIN_OTHER_TECHS other completed
+    // technologies" rule lives in canResearch (game.ts) and isn't exposed via
+    // `prereqs` — mirrored here just for the disabled-reason text.
+    const command2Blocked = node.id === 'command_2' && prereqsMet &&
+      [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length < COMMAND_2_MIN_OTHER_TECHS_UI;
     const canAffordIt = aura >= node.cost;
+    const researchable = !isResearched && canResearch(state, node.id);
 
     let stateClass = '';
     let statusText = '';
     let statusClass = '';
-    if (isResearched) {
+    if (isResearching) {
+      const remaining = Math.max(1, tech.researching!.completesRound - state.turnNumber);
+      stateClass = 'tech-node--researching';
+      statusText = `⏳ ${remaining} round${remaining === 1 ? '' : 's'} left`;
+      statusClass = 'status-researching';
+    } else if (isResearched) {
       stateClass = 'tech-node--researched';
       statusText = '✓ Researched';
       statusClass = 'status-researched';
-    } else if (!prereqsMet || branchBlocked) {
+    } else if (slotBusy) {
       stateClass = 'tech-node--locked';
-      statusText = branchBlocked ? '✗ Branch taken' : '✗ Requires prerequisite';
+      statusText = 'Research slot occupied';
+      statusClass = 'status-locked';
+    } else if (!prereqsMet || branchBlocked || command2Blocked) {
+      stateClass = 'tech-node--locked';
+      statusText = branchBlocked ? '✗ Branch taken' : command2Blocked ? '✗ Needs 2 other completed techs' : '✗ Requires prerequisite';
       statusClass = 'status-locked';
     } else if (!canAffordIt) {
       stateClass = 'tech-node--poor';
@@ -1936,22 +1969,26 @@ function appendSection(
       ? `<img class="tech-node-art" src="${artUrl}" alt="${node.name}" draggable="false">`
       : '';
 
+    const prereqNames = node.prereqs.map(p => TECH_NODES.find(n => n.id === p)?.name ?? p).join(', ');
+    const prereqHtml = prereqNames ? `<div class="tech-node-prereq">Requires: ${prereqNames}</div>` : '';
+
     const card = document.createElement('div');
     card.className = `tech-node ${stateClass}`;
     card.innerHTML = `
       ${artHtml}
       <div class="tech-node-name">${node.name}</div>
-      <div class="tech-node-cost">Cost: ${node.cost} ⚡</div>
+      <div class="tech-node-cost">Cost: ${node.cost} ⚡ · ${node.researchTime} round${node.researchTime === 1 ? '' : 's'}</div>
+      ${prereqHtml}
       <div class="tech-node-desc">${node.description}</div>
       <div class="tech-node-status ${statusClass}">${statusText}</div>
     `;
 
-    if (!isResearched && prereqsMet && !branchBlocked && canAffordIt && localHasTurn()) {
+    if (researchable && localHasTurn()) {
       card.addEventListener('click', () => {
         if (!localHasTurn()) return; // view-only on an opponent's turn (server rejects too)
         const applyLocal = (): void => {
           if (researchTech(state, node.id)) {
-            logCombat(`Researched: ${node.name} (−${node.cost} ⚡)`);
+            logCombat(`Started research: ${node.name} (−${node.cost} ⚡, ${node.researchTime} round${node.researchTime === 1 ? '' : 's'})`);
             renderTechTree();
           }
         };

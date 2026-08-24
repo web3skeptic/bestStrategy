@@ -12,7 +12,7 @@
 // than crash. Properly representing the new site/structure mechanics needs a
 // deliberate retraining pass, out of scope here — this just keeps the
 // existing pipeline compiling and non-crashing against the new engine types.
-import { GameState, Unit, StrategicSite, HexCoord, UnitType, TechId, UNIT_COSTS, TECH_COST, TECH_NODES } from '../src/types';
+import { GameState, Unit, StrategicSite, HexCoord, UnitType, TechId, UNIT_COSTS, TECH_NODES } from '../src/types';
 import { getEffectiveAttack, getEffectiveDefense, getUnitTypeMultiplier } from '../src/game';
 import { hexDistance, hexKey } from '../src/hex';
 import { Micro } from './gameEnv';
@@ -108,7 +108,12 @@ export function actionFeatures(state: GameState, ctx: ActionCtx, micro: Micro, o
   // rather than reused, to avoid shifting every other index's meaning.
   const aura = Math.max(1, ctx.aura);
   if (micro.action === 'recruit' && typeof p.unitType === 'string') s[9] = Math.min(1, (UNIT_COSTS[p.unitType as UnitType] ?? 3) / aura);
-  else if (micro.action === 'research') s[9] = Math.min(1, TECH_COST / aura);
+  else if (micro.action === 'research' && typeof p.techId === 'string') {
+    // Tech-tree pacing pass: TECH_COST (a single flat constant) is gone —
+    // every node sets its own cost now, so look it up per-node.
+    const node = TECH_NODES.find(n => n.id === p.techId);
+    s[9] = Math.min(1, (node?.cost ?? 16) / aura);
+  }
   // 11: tech index bucket (research)
   if (micro.action === 'research' && typeof p.techId === 'string') { const ti = techIdx.get(p.techId as TechId); s[11] = ti !== undefined ? (ti + 1) / (TECH_NODES.length + 1) : 0; }
   // 12: current aura context (shared)

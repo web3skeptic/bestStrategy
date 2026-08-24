@@ -13,6 +13,7 @@
  */
 
 const SID_KEY = 'gu-chat-sid';
+const PASS_KEY = 'gu-chat-pass';
 
 function sessionId(): string {
   let sid = localStorage.getItem(SID_KEY);
@@ -123,7 +124,14 @@ export function mountChatPanel(): void {
   const sid = sessionId();
   // Same convention as the game's WS URL in main.ts: BASE_URL ends in '/', and
   // nginx strips the mount prefix before the Express app sees the path.
-  const api = (p: string) => `${import.meta.env.BASE_URL.replace(/\/$/, '')}${p}`;
+  const base = (p: string) => `${import.meta.env.BASE_URL.replace(/\/$/, '')}${p}`;
+
+  // Gated behind a shared passphrase, checked server-side on every request.
+  // Cached in localStorage after the first correct entry.
+  let pass = localStorage.getItem(PASS_KEY) ?? '';
+  const withPass = (p: string, extra = ''): string =>
+    base(p) + (p.includes('?') ? '&' : '?') + `pass=${encodeURIComponent(pass)}` + extra;
+  const api = withPass; // GET helper: query string carries the passphrase.
 
   document.head.append(el('style', { textContent: STYLES }));
 
@@ -217,16 +225,48 @@ export function mountChatPanel(): void {
     };
   }
 
-  async function loadHistory(): Promise<void> {
+  async function loadHistory(): Promise<'ok' | 'unauthorized' | 'error'> {
     try {
       const r = await fetch(api(`/api/chat/history?sid=${encodeURIComponent(sid)}`));
+      if (r.status === 401) return 'unauthorized';
+      if (!r.ok) return 'error';
       const data = await r.json() as { events: ChatEvent[]; running: boolean };
       for (const ev of data.events) render(ev);
       setRunning(data.running);
-    } catch { /* the SSE replay will fill it in */ }
+      return 'ok';
+    } catch { return 'error'; }
   }
 
-  btn.addEventListener('click', () => {
+  // ── Passphrase gate. The server checks `pass` on every request; this just
+  // prompts for it, caches a correct value, and re-prompts if it's rejected.
+  let unlocked = false;
+  async function unlock(): Promise<boolean> {
+    for (;;) {
+      if (!pass) {
+        const entered = window.prompt('Passphrase for the game agent chat:');
+        if (entered === null) return false;
+        pass = entered.trim();
+      }
+      const result = await loadHistory();
+      if (result === 'unauthorized') {
+        alert('Wrong passphrase.');
+        pass = '';
+        localStorage.removeItem(PASS_KEY);
+        continue;
+      }
+      if (result === 'error') return false;
+      localStorage.setItem(PASS_KEY, pass);
+      return true;
+    }
+  }
+
+  btn.addEventListener('click', async () => {
+    if (!unlocked) {
+      const ok = await unlock();
+      if (!ok) return;
+      unlocked = true;
+      connect();
+    }
     const opening = !panel.classList.contains('open');
     panel.classList.toggle('open', opening);
     if (opening) { input.focus(); scroll(); }
@@ -234,10 +274,10 @@ export function mountChatPanel(): void {
   closeBtn.addEventListener('click', () => panel.classList.remove('open'));
   resetBtn.addEventListener('click', async () => {
     if (!confirm('Start a new conversation? The current one is discarded.')) return;
-    await fetch(api('/api/chat/reset'), {
+    await fetch(base('/api/chat/reset'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sid }),
+      body: JSON.stringify({ sid, pass }),
     });
     log.replaceChildren();
     lastSeq = 0;
@@ -251,22 +291,26 @@ export function mountChatPanel(): void {
     if (!text || running) return;
     input.value = '';
     setRunning(true);
-    const res = await fetch(api('/api/chat/send'), {
+    const res = await fetch(base('/api/chat/send'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sid, text }),
+      body: JSON.stringify({ sid, text, pass }),
     }).catch(() => null);
     if (!res || !res.ok) {
       setRunning(false);
-      log.append(el('div', { className: 'gu-msg error', textContent: 'Could not reach the agent.' }));
+      const msg = res?.status === 401 ? 'Wrong passphrase.' : 'Could not reach the agent.';
+      log.append(el('div', { className: 'gu-msg error', textContent: msg }));
       scroll();
     }
   });
   input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
   });
 
-  void loadHistory().then(connect);
+  // If a passphrase is already cached, unlock eagerly so the status dot and
+  // history are live without requiring an extra click.
+  if (pass) void unlock().then((ok) => { unlocked = ok; if (ok) connect(); });
 }
 
 if (document.readyState === 'loading') {

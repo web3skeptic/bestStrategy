@@ -226,6 +226,16 @@ async function runTurn(s: ChatSession, text: string): Promise<void> {
 
 export const chatRouter = express.Router();
 
+// This agent can edit and commit to the live deployment, so it's gated behind
+// a shared passphrase (checked as ?pass= on GET, body.pass on POST) rather
+// than being open to anyone who finds the URL.
+const CHAT_PASSWORD: string = process.env.CHAT_PASSWORD || (() => { throw new Error('CHAT_PASSWORD environment variable is required'); })();
+chatRouter.use((req, res, next) => {
+  const pass = req.method === 'GET' ? req.query.pass : req.body?.pass;
+  if (pass !== CHAT_PASSWORD) { res.status(401).json({ error: 'wrong passphrase' }); return; }
+  next();
+});
+
 chatRouter.get('/history', (req, res) => {
   const sid = String(req.query.sid ?? '');
   if (!sid) { res.status(400).json({ error: 'sid required' }); return; }

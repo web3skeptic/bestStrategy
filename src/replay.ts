@@ -168,7 +168,11 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
 
   const playerTech: PlayerTech[] = players.map((_, i) => {
     const entry = s.tech.find(t => t.playerId === i);
-    return { researched: new Set<TechId>((entry?.researched ?? []) as TechId[]) };
+    // The headless/replay snapshot only records completed research, not the
+    // in-progress single-slot state (tech-tree pacing pass) — this is a
+    // rendering-only reconstruction, so a replay never shows a still-
+    // researching tech mid-flight; it appears once completed.
+    return { researched: new Set<TechId>((entry?.researched ?? []) as TechId[]), researching: null };
   });
 
   // Winner — find full Player object by id.

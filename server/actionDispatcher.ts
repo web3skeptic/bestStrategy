@@ -250,9 +250,11 @@ export function buildRulesPayload(): Record<string, unknown> {
     name: n.name,
     description: n.description,
     cost: n.cost,
+    researchTime: n.researchTime,
     prereqs: n.prereqs,
     branch: n.branch ?? null,
     unitUnlock: n.unitUnlock ?? null,
+    faction: n.faction ?? null,
   }));
 
   // §37/§38 — once a player's faction is revealed, recruiting uses THESE
@@ -281,7 +283,10 @@ export function buildRulesPayload(): Record<string, unknown> {
   return {
     units: unitTypes,
     factions: factionRosters,
-    techTree,
+    techTree: {
+      note: 'Tech-tree pacing pass — research is a real, single-slot, multi-round civilization investment: each player has exactly ONE active research slot at a time (see the "research" action). Starting a tech charges its full `cost` in aura immediately, same as Farm/Temple founding, but its effect (unlock/stat bonus/population cap raise) only applies once `researchTime` rounds have elapsed — banking Energy does not let a player bypass this, the slot itself is the limiter. Command II additionally requires Command I completed AND at least 2 other completed technologies (not expressible via `prereqs`), and the Heavy Knight/Champion Rite final unlocks each require BOTH their faction\'s tier-1 tech AND Command I.',
+      nodes: techTree,
+    },
     strategicSites: {
       note: 'Temple-only expansion (phase 10 correction — Agrar never founds a site, see economy.agrarFarms instead). A neutral or ruined site is founded by an Acolyte into an actual Temple over a multi-turn process — see the "found" action and the openingFlow/structures blocks below.',
       establishCost: SITE_ESTABLISH_COST,

@@ -48,7 +48,19 @@ export type FactionId = 'agrar' | 'temple';
 // 'infantry_move' tech removed from TechId/TECH_NODES; 'longrange_hp' now
 // +3 HP (was +5); Agrar Knight/Heavy Knight/Builder speed restored to 2
 // (was 1 for every Agrar unit).
-export const RULES_VERSION = 9;
+// v10 (tech-tree pacing pass): research is single-slot and timed now —
+// PlayerTech gains `researching: ResearchProgress | null`; TECH_COST (a
+// single flat constant) removed, every TechNode carries its own cost and a
+// new `researchTime` (rounds until the effect applies, same semantics as
+// Farm/Temple founding); new cost/time table (Command I 12⚡/1rd, Support/
+// Stat-bonus 14⚡/2rd, Siege unlock 16⚡/2rd, Heavy prereq 16⚡/2rd, Splash
+// 18⚡/2rd, Command II 18⚡/2rd, Heavy Knight/Champion Rite 22⚡/3rd);
+// Command II now additionally requires >=2 other completed technologies
+// (COMMAND_2_MIN_OTHER_TECHS in game.ts) on top of Command I; the Champion
+// unlock renamed to 'temple_champion_rite' ("Champion Rite"), and the splash
+// upgrades renamed to 'agrar_siegecraft_splash' ("Explosive Shot") /
+// 'temple_mobile_siege_splash' ("Blast Rite").
+export const RULES_VERSION = 10;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -294,15 +306,20 @@ export type TechId =
   | 'command_2'
   ;
 
-// §7 (economy/pacing balance pass) — one basic tech should cost roughly 2
-// rounds of undeveloped base income, not less than one.
-export const TECH_COST = 6;
-
+// Tech-tree pacing pass — research is a real, single-slot, multi-round
+// civilization investment now, not a cheap instant menu purchase. See
+// ResearchProgress/PlayerTech.researching, canResearch, researchTech and
+// resolveResearchForPlayer in game.ts. TECH_COST as a single flat constant
+// is gone — every node sets its own cost per the pacing table below (§10 of
+// the design brief); `researchTime` (in rounds, same semantics as Farm/
+// Temple-founding — resolves at the start of the researching player's Nth
+// round from now) is new on every node.
 export interface TechNode {
   id: TechId;
   name: string;
   description: string;
   cost: number;
+  researchTime: number;    // rounds until the effect applies — see resolveResearchForPlayer
   prereqs: TechId[];
   branch?: string;         // branch id — only one per branch can be researched
   unitUnlock?: UnitType;   // if set, this tech unlocks a unit type
@@ -311,33 +328,50 @@ export interface TechNode {
 
 export const TECH_NODES: TechNode[] = [
   // Siege line — faction-specific, no prereq for the base unlock.
-  { id: 'agrar_siegecraft',        name: 'Siegecraft',      description: 'Unlock the Catapult — long-range siege weapon with area splash damage.', cost: TECH_COST, prereqs: [], unitUnlock: 'catapult', faction: 'agrar' },
-  { id: 'agrar_siegecraft_splash', name: 'Splash Range +1', description: 'Catapults gain splash radius 1.',                                        cost: TECH_COST, prereqs: ['agrar_siegecraft'], faction: 'agrar' },
-  { id: 'temple_mobile_siege_tech',   name: 'Mobile Siege',    description: 'Unlock Mobile Siege — long-range siege weapon with area splash damage.', cost: TECH_COST, prereqs: [], unitUnlock: 'catapult', faction: 'temple' },
-  { id: 'temple_mobile_siege_splash', name: 'Splash Range +1', description: 'Mobile Siege gains splash radius 1.',                                    cost: TECH_COST, prereqs: ['temple_mobile_siege_tech'], faction: 'temple' },
+  { id: 'agrar_siegecraft',        name: 'Siegecraft',      description: 'Unlock the Catapult — long-range siege weapon with area splash damage.', cost: 16, researchTime: 2, prereqs: [], unitUnlock: 'catapult', faction: 'agrar' },
+  { id: 'agrar_siegecraft_splash', name: 'Explosive Shot',  description: 'Catapults gain splash radius 1. Requires Siegecraft.',                    cost: 18, researchTime: 2, prereqs: ['agrar_siegecraft'], faction: 'agrar' },
+  { id: 'temple_mobile_siege_tech',   name: 'Mobile Siege',    description: 'Unlock Mobile Siege — long-range siege weapon with area splash damage.', cost: 16, researchTime: 2, prereqs: [], unitUnlock: 'catapult', faction: 'temple' },
+  { id: 'temple_mobile_siege_splash', name: 'Blast Rite',      description: 'Mobile Siege gains splash radius 1. Requires Mobile Siege.',             cost: 18, researchTime: 2, prereqs: ['temple_mobile_siege_tech'], faction: 'temple' },
   // Heavy-unit line — faction-specific, genuinely gated (needs the tier-1
-  // tech AND Command I, not a single flat unlock — §30).
-  { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for Heavy Knight.',                                                cost: TECH_COST, prereqs: [], faction: 'agrar' },
-  { id: 'agrar_heavy_knight_tech', name: 'Heavy Knight',    description: 'Unlock the Heavy Knight — heavily armoured mounted unit with high HP and attack. Requires Heavy Armor and Command I.', cost: TECH_COST, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
-  { id: 'temple_warrior_rite',    name: 'Warrior Rite',     description: 'Prerequisite for Champion.',                                                    cost: TECH_COST, prereqs: [], faction: 'temple' },
-  { id: 'temple_champion_rite',   name: 'Champion',         description: 'Unlock the Champion — heavily armoured mounted unit with high HP and attack. Requires Warrior Rite and Command I.', cost: TECH_COST, prereqs: ['temple_warrior_rite', 'command_1'], unitUnlock: 'heavyknight', faction: 'temple' },
+  // tech AND Command I, not a single flat unlock — §30). The final unlock
+  // is a deliberate 3-round, 22⚡ late-game commitment — do not shorten it.
+  { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for Heavy Knight.',                                                cost: 16, researchTime: 2, prereqs: [], faction: 'agrar' },
+  { id: 'agrar_heavy_knight_tech', name: 'Heavy Knight',    description: 'Unlock the Heavy Knight — heavily armoured mounted unit with high HP and attack. Requires Heavy Armor and Command I.', cost: 22, researchTime: 3, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
+  { id: 'temple_warrior_rite',    name: 'Warrior Rite',     description: 'Prerequisite for Champion Rite.',                                               cost: 16, researchTime: 2, prereqs: [], faction: 'temple' },
+  { id: 'temple_champion_rite',   name: 'Champion Rite',    description: 'Unlock the Champion — heavily armoured mounted unit with high HP and attack. Requires Warrior Rite and Command I.', cost: 22, researchTime: 3, prereqs: ['temple_warrior_rite', 'command_1'], unitUnlock: 'heavyknight', faction: 'temple' },
   // Branch: Stat Bonus (pick ONE) — shared by both factions. Infantry March
-  // (Warrior/Pike +1 SPD) removed (balance pass §17) — undermined the
-  // Roads/native-speed faction identity too directly.
-  { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +3 max HP.',                                                    cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
-  { id: 'horse_sight',         name: 'Scout Cavalry',     description: 'Horseriders and Heavy Knights gain +1 vision range.',                                       cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
+  // (Warrior/Pike +1 SPD) removed (economy/pacing balance pass §17) —
+  // undermined the Roads/native-speed faction identity too directly.
+  { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +3 max HP.',                                                    cost: 14, researchTime: 2, prereqs: [], branch: 'stat_bonus' },
+  { id: 'horse_sight',         name: 'Scout Cavalry',     description: 'Horseriders and Heavy Knights gain +1 vision range.',                                       cost: 14, researchTime: 2, prereqs: [], branch: 'stat_bonus' },
   // Branch: Support Unit (pick ONE) — shared by both factions.
-  { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'healer' },
-  { id: 'unlock_damagebooster',name: 'Damage Booster',    description: 'Unlock Damage Booster — support unit that increases attack of nearby allies.',             cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'damageBooster' },
-  { id: 'unlock_rangebooster', name: 'Range Booster',     description: 'Unlock Range Booster — support unit that increases attack range of nearby allies.',        cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'rangeBooster' },
+  { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: 14, researchTime: 2, prereqs: [], branch: 'support', unitUnlock: 'healer' },
+  { id: 'unlock_damagebooster',name: 'Damage Booster',    description: 'Unlock Damage Booster — support unit that increases attack of nearby allies.',             cost: 14, researchTime: 2, prereqs: [], branch: 'support', unitUnlock: 'damageBooster' },
+  { id: 'unlock_rangebooster', name: 'Range Booster',     description: 'Unlock Range Booster — support unit that increases attack range of nearby allies.',        cost: 14, researchTime: 2, prereqs: [], branch: 'support', unitUnlock: 'rangeBooster' },
   // §21 — Command tiers, linear (not a branch): only Command I/II raise the
   // population cap — territory never does (see COMMAND_TIERS in factions.ts).
-  { id: 'command_1',           name: 'Command I',         description: 'Raise your population cap.',                                                               cost: TECH_COST, prereqs: [] },
-  { id: 'command_2',           name: 'Command II',        description: 'Raise your population cap further.',                                                       cost: TECH_COST, prereqs: ['command_1'] },
+  // Command II ALSO requires at least 2 completed non-Command technologies
+  // (checked separately in canResearch — not expressible via `prereqs`,
+  // which means "all of these", not "at least N of anything else") so a
+  // player can't rush straight from Command I into Command II with no other
+  // development.
+  { id: 'command_1',           name: 'Command I',         description: 'Raise your population cap (6 -> 9).',                                                      cost: 12, researchTime: 1, prereqs: [] },
+  { id: 'command_2',           name: 'Command II',        description: 'Raise your population cap further (9 -> 12). Requires Command I and at least 2 other completed technologies.', cost: 18, researchTime: 2, prereqs: ['command_1'] },
 ];
+
+// One in-progress research per player — see canResearch/researchTech/
+// resolveResearchForPlayer. Mirrors FoundingProgress/Farm.founding: the
+// Energy is committed the instant research STARTS, the effect only applies
+// once `completesRound` is reached.
+export interface ResearchProgress {
+  techId: TechId;
+  startedRound: number;
+  completesRound: number;
+}
 
 export interface PlayerTech {
   researched: Set<TechId>;
+  researching: ResearchProgress | null;
 }
 
 // ── Teleport buildings ──

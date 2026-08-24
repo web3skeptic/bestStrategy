@@ -1,4 +1,4 @@
-import { GameState, TechId, RULES_VERSION } from './types';
+import { GameState, TechId, ResearchProgress, RULES_VERSION } from './types';
 
 // Serialized form: Sets become arrays for JSON transport
 export interface SerializedGameState {
@@ -31,7 +31,7 @@ export interface SerializedGameState {
   structureAttackHexes: GameState['structureAttackHexes'];
   supportHexes: GameState['supportHexes'];
   spawnedSiteIds: string[];
-  playerTech: { researched: string[] }[];
+  playerTech: { researched: string[]; researching: ResearchProgress | null }[];
   teleportBuildings: GameState['teleportBuildings'];
   buildHexes: GameState['buildHexes'];
 }
@@ -46,7 +46,7 @@ export function serialize(state: GameState): SerializedGameState {
     forests:        Array.from(state.forests),
     explored:       state.explored.map(s => Array.from(s)),
     spawnedSiteIds: Array.from(state.spawnedSiteIds),
-    playerTech:     state.playerTech.map(pt => ({ researched: Array.from(pt.researched) })),
+    playerTech:     state.playerTech.map(pt => ({ researched: Array.from(pt.researched), researching: pt.researching })),
   };
 }
 
@@ -85,7 +85,7 @@ export function deserialize(data: SerializedGameState): GameState {
     forests:          new Set<string>(data.forests),
     explored:         data.explored.map(arr => new Set<string>(arr)),
     spawnedSiteIds:   new Set<string>(data.spawnedSiteIds),
-    playerTech:       data.playerTech.map(pt => ({ researched: new Set<TechId>(pt.researched as TechId[]) })),
+    playerTech:       data.playerTech.map(pt => ({ researched: new Set<TechId>(pt.researched as TechId[]), researching: pt.researching ?? null })),
     units:            data.units,
     // Live multiplayer is authoritative for selection: the server sends the
     // acting player their current selection + highlight hexes in every

@@ -11,7 +11,8 @@ import {
   getBusyProductionSlotCount, getPlayerCapital, startFounding, buyDevotion,
 } from '../src/game';
 import { COMMAND_TIERS, PRODUCTION_BASE_SLOTS } from '../src/factions';
-import type { GameState } from '../src/types';
+import { TECH_NODES } from '../src/types';
+import type { GameState, TechId } from '../src/types';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: string): void {
@@ -36,6 +37,18 @@ function capitalId(state: GameState, playerId: number): string {
 function advanceOneRound(state: GameState): void {
   endTurn(state);
   endTurn(state);
+}
+
+// Tech-tree pacing pass — research is single-slot and multi-round now:
+// starts it, then advances exactly that tech's researchTime rounds so it
+// resolves. Comprehensive tech-mechanic coverage lives in verify-tech.ts;
+// this is just for this file's Command/population integration checks.
+function researchAndComplete(state: GameState, playerId: number, techId: TechId): boolean {
+  state.currentPlayerIndex = playerId;
+  if (!researchTech(state, techId)) return false;
+  const node = TECH_NODES.find(n => n.id === techId)!;
+  for (let i = 0; i < node.researchTime; i++) advanceOneRound(state);
+  return state.playerTech[playerId]!.researched.has(techId);
 }
 
 // §5 (phase 11) — a deployed recruit that lands ON the Capital tile blocks
@@ -80,10 +93,20 @@ console.log('\n=== Population cap tiers (§6) ===');
   state.currentPlayerIndex = 0;
   check('command_2 not researchable before command_1', !canResearch(state, 'command_2'));
   const r1 = researchTech(state, 'command_1');
-  check('research command_1 succeeds', r1);
-  check('cap raised to COMMAND_TIERS.commandI', getPopulationCap(state, 0) === COMMAND_TIERS.commandI, `got ${getPopulationCap(state, 0)}`);
-  const r2 = researchTech(state, 'command_2');
-  check('research command_2 succeeds after command_1', r2);
+  check('research command_1 succeeds (starts it — does not apply immediately)', r1);
+  check('cap unchanged the instant Command I STARTS (only completion applies it)', getPopulationCap(state, 0) === COMMAND_TIERS.start, `got ${getPopulationCap(state, 0)}`);
+  check('command_2 still not researchable — Command I hasn\'t completed yet', !canResearch(state, 'command_2'));
+  for (let i = 0; i < TECH_NODES.find(n => n.id === 'command_1')!.researchTime; i++) advanceOneRound(state);
+  check('cap raised to COMMAND_TIERS.commandI once Command I completes', getPopulationCap(state, 0) === COMMAND_TIERS.commandI, `got ${getPopulationCap(state, 0)}`);
+  check('command_2 still not researchable — needs 2 OTHER completed technologies too', !canResearch(state, 'command_2'));
+  // Complete two unrelated, faction-agnostic techs to satisfy Command II's
+  // "at least 2 other completed technologies" requirement.
+  check('research + complete unlock_healer', researchAndComplete(state, 0, 'unlock_healer'));
+  check('command_2 still not researchable — only 1 other completed tech so far', !canResearch(state, 'command_2'));
+  check('research + complete horse_sight', researchAndComplete(state, 0, 'horse_sight'));
+  state.currentPlayerIndex = 0;
+  check('command_2 now researchable (Command I + 2 other completed techs)', canResearch(state, 'command_2'));
+  check('research + complete command_2', researchAndComplete(state, 0, 'command_2'));
   check('cap raised to COMMAND_TIERS.commandII', getPopulationCap(state, 0) === COMMAND_TIERS.commandII, `got ${getPopulationCap(state, 0)}`);
   check('territory never raises the cap (only tech does)', COMMAND_TIERS.commandII > COMMAND_TIERS.commandI && COMMAND_TIERS.commandI > COMMAND_TIERS.start);
 }
@@ -92,10 +115,10 @@ console.log('\n=== Population cap tiers (§6) ===');
 console.log('\n=== Population cost is commandCost-weighted, not flat 1-per-unit ===');
 {
   const state = setup();
+  check('research + complete Heavy Armor', researchAndComplete(state, 0, 'agrar_heavy_armor'));
+  check('research + complete Command I', researchAndComplete(state, 0, 'command_1'));
+  check('research + complete Heavy Knight tech', researchAndComplete(state, 0, 'agrar_heavy_knight_tech'));
   state.currentPlayerIndex = 0;
-  researchTech(state, 'agrar_heavy_armor');
-  researchTech(state, 'command_1');
-  researchTech(state, 'agrar_heavy_knight_tech');
   const cap = getPopulationCap(state, 0);
   // §3 (phase 11) — zero starting units: a fresh player starts at population 0.
   check('fresh player starts at population 0 (zero starting units)', getPopulationCount(state, 0) === 0, `got ${getPopulationCount(state, 0)}`);

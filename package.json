@@ -17,7 +17,8 @@
     "test:command": "tsx scripts/verify-command.ts",
     "test:roads": "tsx scripts/verify-roads.ts",
     "test:zoc": "tsx scripts/verify-zoc.ts",
-    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc",
+    "test:tech": "tsx scripts/verify-tech.ts",
+    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech",
     "build:root": "vite build"
   },
   "keywords": [],

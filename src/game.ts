@@ -981,7 +981,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     faction: null, // chosen right at the start of the match — see chooseFaction()
   }));
 
-  const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>() }));
+  const playerTech: PlayerTech[] = players.map(() => ({ researched: new Set<TechId>(), researching: null }));
 
   // Randomized site placement each game (Capitals + neutrals), with a minimum
   // separation. Sites may sit on the border.
@@ -1505,13 +1505,28 @@ function pillageRoadIfEnemy(state: GameState, unit: Unit): void {
   state.pillagedRoadHexes.add(hexKey(road.pos));
 }
 
-// ── Tech research ──
+// ── Tech research (single-slot, multi-round — tech-tree pacing pass) ──
+//
+// Research is a real civilization investment now, not an instant menu
+// purchase: each player has exactly ONE active research slot (see
+// PlayerTech.researching). Starting a tech commits its Energy cost
+// immediately, same as Farm/Temple founding, but the effect (researched
+// set membership, and therefore every stat/unlock it drives) only applies
+// once `researchTime` rounds have elapsed — see resolveResearchForPlayer,
+// called from endTurn() exactly like the other founding/training resolvers.
+
+// Command II additionally requires at least this many OTHER completed
+// technologies (not expressible via `prereqs`, which means "all of these")
+// — stops a player rushing straight from Command I into Command II with no
+// other development.
+const COMMAND_2_MIN_OTHER_TECHS = 2;
 
 export function canResearch(state: GameState, techId: TechId): boolean {
   if (isMatchSetupRestricted(state)) return false;
   const player = getCurrentPlayer(state);
   const tech = state.playerTech[player.id]!;
   if (tech.researched.has(techId)) return false;
+  if (tech.researching) return false; // §2 — exactly one active research slot
 
   const node = TECH_NODES.find(n => n.id === techId);
   if (!node) return false;
@@ -1519,6 +1534,11 @@ export function canResearch(state: GameState, techId: TechId): boolean {
 
   for (const prereq of node.prereqs) {
     if (!tech.researched.has(prereq)) return false;
+  }
+
+  if (techId === 'command_2') {
+    const otherCompleted = [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length;
+    if (otherCompleted < COMMAND_2_MIN_OTHER_TECHS) return false;
   }
 
   if (node.branch) {
@@ -1531,25 +1551,42 @@ export function canResearch(state: GameState, techId: TechId): boolean {
   return player.aura >= node.cost;
 }
 
+// Begin research: charges the full Energy cost immediately (same "commit up
+// front" rule as Farm/Temple founding) and occupies the player's one
+// research slot for `researchTime` rounds. Resolves automatically — see
+// resolveResearchForPlayer, called from endTurn().
 export function researchTech(state: GameState, techId: TechId): boolean {
   if (!canResearch(state, techId)) return false;
   const player = getCurrentPlayer(state);
   const node = TECH_NODES.find(n => n.id === techId)!;
   player.aura -= node.cost;
-  state.playerTech[player.id]!.researched.add(techId);
+  state.playerTech[player.id]!.researching = {
+    techId,
+    startedRound: state.turnNumber,
+    completesRound: state.turnNumber + node.researchTime,
+  };
+  return true;
+}
 
-  // Retroactively apply this tech (and any previously-researched tech that
-  // happened to be missing from a unit's stats) to every living unit owned
-  // by the researcher. Without this, `applyTechToStats` only fires at
-  // `createUnit` time, so existing units never benefit from techs like
-  // `longrange_hp` or `horse_sight` — bug discovered in REPORT.md §6.
-  const tech = state.playerTech[player.id]!;
+// §11 — called once per player, right when it becomes their turn (mirrors
+// resolveFoundingForPlayer/resolveFarmFoundingForPlayer/resolveTrainingFor
+// Player). If that player's research is due, it completes: added to
+// `researched` (freeing the slot) and retroactively applied to every living
+// unit they own — `applyTechToStats` only fires at `createUnit` time, so
+// existing units would otherwise never benefit from techs like
+// `longrange_hp`/`horse_sight` (bug discovered in REPORT.md §6). Research
+// never fails or gets interrupted once started — unlike founding/Farms
+// there's no board presence to contest, it's a pure Energy/time commitment.
+function resolveResearchForPlayer(state: GameState, playerId: number): void {
+  const tech = state.playerTech[playerId]!;
+  if (!tech.researching || state.turnNumber < tech.researching.completesRound) return;
+  const player = state.players.find(p => p.id === playerId)!;
+  tech.researched.add(tech.researching.techId);
+  tech.researching = null;
   for (const unit of state.units) {
-    if (unit.playerId !== player.id || unit.hp <= 0) continue;
+    if (unit.playerId !== playerId || unit.hp <= 0) continue;
     rebuildUnitStats(unit, tech, player.faction);
   }
-
-  return true;
 }
 
 // ── Spawning ──
@@ -2183,6 +2220,10 @@ export function endTurn(state: GameState): void {
   // §5 — deploy any due TrainingOrders (units queued by recruiting), which
   // also frees their production slots on success.
   resolveTrainingForPlayer(state, newPlayer.id);
+
+  // §11 (tech-tree pacing pass) — complete any due research, freeing the
+  // player's single research slot and applying its effect.
+  resolveResearchForPlayer(state, newPlayer.id);
 
   // §4-19 — real economy: flat base + Agrar's active Farms / Temple's
   // Devotion. See getPlayerIncome.
