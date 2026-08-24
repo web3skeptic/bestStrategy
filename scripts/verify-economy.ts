@@ -655,49 +655,54 @@ function destroySite(state: GameState, attackerId: number, site: { id: string; p
   attackStructure(state, site.pos);
 }
 
-// ── Temple-vs-Temple conquest (§13, §30, §33 no ownership snowball) ──
-console.log('\n=== Temple-vs-Temple conquest (§13, §30, §33) ===');
+// ── Temple-vs-Temple conquest by presence (v12) ──
+console.log('\n=== Temple-vs-Temple conquest by presence, inherits level (v12) ===');
 {
   const state = setupTwoTemple();
   const site = foundFullTemple(state, 1, 0); // player 1 builds a full Temple II
   check('setup: player 1 has a Temple II', site.state === 'temple' && site.templeLevel === 2);
   const defenderIncomeBefore = getPlayerIncome(state, 1);
   const attackerIncomeBefore = getPlayerIncome(state, 0);
+  // The defender's own unit never moved off the site after founding/
+  // upgrading it — move it away so player 0's unit can actually stand there.
+  state.units.find(u => u.playerId === 1 && u.type === 'founder')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
 
-  destroySite(state, 0, site);
-  check('destroyed Temple II becomes Ruins', site.state === 'ruins' && site.templeLevel === null, `got ${site.state}/${site.templeLevel}`);
-  check('defender income drops by exactly 2 (loses Temple II)', getPlayerIncome(state, 1) === defenderIncomeBefore - 2, `got ${getPlayerIncome(state, 1)}`);
-  check('attacker income gains NOTHING from the kill — no instant transfer', getPlayerIncome(state, 0) === attackerIncomeBefore, `got ${getPlayerIncome(state, 0)}`);
-  // Move the attacking Warrior away — it did its job destroying the Temple;
-  // an "enemy adjacent" warrior sitting right next to the Ruins would
-  // otherwise fail the OWN player's founding attempt below. The defender's
-  // Acolyte is ALSO still physically standing on the site (founding/
-  // upgrading never moves the founder off it) — attackStructure only
-  // destroys the structure, not units on the tile, so it has to move too.
-  state.units.find(u => u.playerId === 0 && u.type === 'warrior')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
-  state.units.find(u => u.playerId === 1 && u.type === 'founder')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 + 1 };
-
-  // Player 0 (the attacker) reconsecrates the Ruins with their own Acolyte.
-  const acolyte = state.units.find(u => u.playerId === 0 && u.type === 'founder')!;
-  acolyte.pos = { ...site.pos };
-  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  // Player 0 walks a unit directly onto the ACTIVE enemy Temple — v12: no
+  // destruction needed at all, ANY Temple unit can target it directly
+  // (Agrar is the only faction that destroys Temples via combat).
+  const attacker = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  attacker.pos = { ...site.pos };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
   state.currentPlayerIndex = 0;
-  const auraBeforeFound = state.players[0]!.aura;
-  startFounding(state, acolyte.id);
-  check('starting founding charges SITE_ESTABLISH_COST immediately', state.players[0]!.aura === auraBeforeFound - SITE_ESTABLISH_COST, `aura=${state.players[0]!.aura}`);
-  advanceOneRound(state); // resolves at the start of player 0's next round
-  check('conquest never inherits the previous Temple level — restarts at Temple I', site.state === 'temple' && site.templeLevel === 1 && site.ownerId === 0, `got ${site.state}/${site.templeLevel}/${site.ownerId}`);
-  check('attacker income after reconquest is only +1 (Temple I), not +2', getPlayerIncome(state, 0) === attackerIncomeBefore + 1, `got ${getPlayerIncome(state, 0)}`);
+  check('any Temple unit can target an ACTIVE enemy Temple directly', canStartFounding(state, attacker) !== null);
+  const auraBefore = state.players[0]!.aura;
+  startFounding(state, attacker.id);
+  check('starting conquest charges SITE_ESTABLISH_COST immediately', state.players[0]!.aura === auraBefore - SITE_ESTABLISH_COST, `aura=${state.players[0]!.aura}`);
+  check('the Temple keeps operating for the DEFENDER throughout the contest', site.ownerId === 1 && site.state === 'temple' && site.templeLevel === 2);
+  check('defender income is unaffected while conquest is merely in progress', getPlayerIncome(state, 1) === defenderIncomeBefore, `got ${getPlayerIncome(state, 1)}`);
 
-  // Reaching Temple II again costs the full 6 more, same as building fresh —
-  // measured as a direct charge, not via net aura drift (which would also
-  // include accrued income across the advanceOneRound calls above/below).
+  advanceOneRound(state); // resolves at attacker's next round, uncontested
+  check('conquest completes and INHERITS the Temple II level as-is — no reset', site.state === 'temple' && site.templeLevel === 2 && site.ownerId === 0, `got ${site.state}/${site.templeLevel}/${site.ownerId}`);
+  check('defender loses the full +2 income the instant conquest completes', getPlayerIncome(state, 1) === defenderIncomeBefore - 2, `got ${getPlayerIncome(state, 1)}`);
+  check('attacker GAINS the full +2 income immediately — a real transfer', getPlayerIncome(state, 0) === attackerIncomeBefore + 2, `got ${getPlayerIncome(state, 0)}`);
+  check('attacker also inherits the +1 production slot', getProductionSlots(state, 0) === 2 + TEMPLE_II_PRODUCTION_BONUS, `got ${getProductionSlots(state, 0)}`);
+}
+// ── Only Agrar destroys Temples; Temple never does, even to a rival's ──
+console.log('\n=== Only Agrar destroys Temples via combat (v12) ===');
+{
+  const state = setupTwoTemple();
+  const site = foundTemple(state, 1, 0);
+  state.units.find(u => u.playerId === 1 && u.type === 'founder')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
+  const attacker = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  attacker.pos = { ...hexNeighbors(site.pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
   state.currentPlayerIndex = 0;
-  const auraBeforeUpgrade = state.players[0]!.aura;
-  startTempleUpgrade(state, site.id);
-  check('the upgrade itself costs exactly TEMPLE_UPGRADE_COST', auraBeforeUpgrade - state.players[0]!.aura === TEMPLE_UPGRADE_COST);
-  advanceOneRound(state);
-  check('reconquering a fully-developed Temple needed a fresh 6+6=12⚡ total to reach Temple II again (no salvage from the old investment)', site.templeLevel === 2, `got ${site.templeLevel}`);
+  selectUnit(state, attacker.id);
+  check('a Temple-faction unit has no attack-structure option against a Temple', !state.structureAttackHexes.some(h => hexEqual(h, site.pos)));
+  site.hp = 1; // even at 1 HP, a blocked attack must not finish it off
+  const result = attackStructure(state, site.pos);
+  check('attackStructure itself refuses a Temple-faction attacker', result === null);
+  check('the Temple is completely untouched', site.state === 'temple' && site.hp === 1);
 }
 
 // ── Recapturing your own former Ruins (§14) — no free restoration ──

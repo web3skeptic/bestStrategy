@@ -74,7 +74,25 @@ export type FactionId = 'agrar' | 'temple';
 // exception) — every reconstruction restarts at Temple I. See
 // canStartTempleUpgrade/startTempleUpgrade/resolveTempleUpgradeForPlayer in
 // game.ts.
-export const RULES_VERSION = 11;
+// v12 (conquest redesign — instant-presence conquest, Agrar-only destruction):
+// the Acolyte ('temple_acolyte') is REMOVED from TEMPLE_UNITS entirely —
+// Temple no longer has a founder-slot unit at all. Founding/conquering a
+// site is no longer Acolyte-gated: ANY Temple-faction unit standing on a
+// valid site with an unused attack action can start it (may move onto the
+// site the same turn — "just step on it"), still resolving one round later
+// (FoundingProgress unchanged in shape). The big behavioral flip: a Temple
+// player can now target an ACTIVE enemy-owned Temple directly (no need to
+// destroy it first) — completing that conquest INHERITS the site's current
+// templeLevel as-is (a Temple II stays Temple II under the new owner)
+// rather than resetting to Temple I; the defender keeps full income/
+// production throughout the contest. Conversely, ONLY Agrar may attack/
+// destroy an active Temple structure via attack-structure any more —
+// Temple-faction players can no longer reduce a rival Temple to Ruins by
+// combat, only by walking onto it and outlasting the 1-round contest.
+// Founding a virgin neutral site, or reconsecrating Ruins (destroyed via
+// Agrar combat — those have no level on record), is unchanged: always
+// produces Temple I.
+export const RULES_VERSION = 12;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -148,20 +166,27 @@ export function unitYetToMove(unit: Unit): boolean {
 // base is a separate `Capital` entity (see below), not a StrategicSite state.
 export type StrategicSiteState =
   | 'neutral'         // unclaimed — foundable only by Temple
-  | 'foundingTemple'  // Temple Acolyte founding; 0 income/production until complete
-  | 'temple'          // completed Temple-faction structure (see templeLevel for I vs II)
+  | 'foundingTemple'  // a Temple-faction unit founding a neutral/ruined site; 0 income/production until complete
+  | 'temple'          // completed Temple-faction structure (see templeLevel for I vs II) — also the target state while being CONQUERED (site stays fully active/owned throughout, see FoundingProgress)
   | 'upgradingTemple' // Temple I -> II upgrade in progress; still grants Temple I-level economy
-  | 'ruins';          // a destroyed temple — refoundable (Temple only), always restarts at Temple I
+  | 'ruins';          // a destroyed temple (Agrar-only, via combat) — refoundable by Temple, always restarts at Temple I
 
-// In-progress founding, tracked with explicit round numbers rather than a
-// loose "turn count" (§6 of the brief): founding completes at the START of
-// the founding player's NEXT round, giving the opponent the rest of the
-// current round to respond.
+// In-progress founding OR conquest, tracked with explicit round numbers
+// rather than a loose "turn count" (§6 of the brief): resolves at the START
+// of the acting player's NEXT round, giving the opponent the rest of the
+// current round to respond. v12 — ANY Temple-faction unit can start this
+// (no more Acolyte-only restriction), and it now also covers conquering an
+// ACTIVE enemy Temple directly (fromState 'temple') — no destruction
+// required first; see canStartFounding/completeFounding in game.ts.
 export interface FoundingProgress {
   playerId: number;
-  unitId: string;               // the Acolyte performing the founding
+  unitId: string;               // the unit performing the founding/conquest
   targetState: 'temple';
-  fromState: 'neutral' | 'ruins'; // what to revert to if founding fails (§9 — no half-built garbage states)
+  // What to revert `state`/`ownerId` to if interrupted (§9 — no half-built
+  // garbage states). 'temple' means an active enemy Temple being conquered
+  // — its state/ownerId/templeLevel were never touched in the first place
+  // (see startFounding), so failure is a true no-op there.
+  fromState: 'neutral' | 'ruins' | 'temple';
   startedRound: number;
   completesRound: number;       // startedRound + 1 — see resolveFoundingForPlayer in game.ts
 }

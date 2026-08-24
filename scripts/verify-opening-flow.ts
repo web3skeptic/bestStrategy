@@ -166,14 +166,17 @@ async function main(): Promise<void> {
   check('still zero units for both players right after reveal', ruA.state.units.length === 0);
 
   // ── §5 — recruit queues, does NOT create a unit immediately ──
+  // Recruits a Warrior (not 'founder' — v12 removed the Acolyte, so 'founder'
+  // is Agrar-only now and this test deliberately doesn't care which player
+  // (agrar or temple) goes first) to exercise the generic training-queue flow.
   const nowActingSlot = ruA.state.currentPlayerIndex;
   const nowActing = clientBySlot[nowActingSlot]!;
   const nowActingFaction = ruA.state.players.find((p: any) => p.id === nowActingSlot).faction;
   const actingCapital = ruA.state.capitals.find((c: any) => c.playerId === nowActingSlot);
-  nowActing.send({ type: 'action', action: 'recruit', params: { unitType: 'founder', templeId: actingCapital.id } });
+  nowActing.send({ type: 'action', action: 'recruit', params: { unitType: 'warrior', templeId: actingCapital.id } });
   const [postRecruitA, postRecruitB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
   check('the recruited unit does NOT exist on the battlefield immediately', postRecruitA.state.units.filter((u: any) => u.playerId === nowActingSlot).length === 0);
-  check('the recruiting player was charged the Builder/Acolyte cost (2⚡, from 3⚡ starting)', postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 1, `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
+  check('the recruiting player was charged the Warrior cost (1⚡, from 3⚡ starting)', postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 2, `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
 
   // ── End this player's turn, then the opponent's — the order should deploy
   // at the start of the RECRUITING player's next round (their turn comes
@@ -184,8 +187,8 @@ async function main(): Promise<void> {
   otherActing.send({ type: 'action', action: 'end-turn', params: {} });
   const [deployA, deployB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
   const deployedUnit = deployA.state.units.find((u: any) => u.playerId === nowActingSlot);
-  check('the Builder/Acolyte deploys at the start of the recruiting player\'s next round', !!deployedUnit, `units now: ${JSON.stringify(deployA.state.units.map((u: any) => ({ p: u.playerId, t: u.type })))}`);
-  check('the deployed unit is the correct type (founder)', deployedUnit?.type === 'founder');
+  check('the Warrior deploys at the start of the recruiting player\'s next round', !!deployedUnit, `units now: ${JSON.stringify(deployA.state.units.map((u: any) => ({ p: u.playerId, t: u.type })))}`);
+  check('the deployed unit is the correct type (warrior)', deployedUnit?.type === 'warrior');
   check('both clients agree on the deployed unit', deployB.state.units.some((u: any) => u.id === deployedUnit?.id));
   check('the deployed unit can act immediately (hasMoved/hasAttacked false)', deployedUnit && !deployedUnit.hasMoved && !deployedUnit.hasAttacked);
 

@@ -84,7 +84,11 @@ export const TEMPLE_UNITS: FactionUnitDef[] = [
   { id: 'temple_priest',    faction: 'temple', slot: 'healer',   displayName: 'Priest',    earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 7,  defense: 2, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: true,  isSiege: false, projectsZOC: false, assetReference: 'healer_standing',  placeholderAsset: false },
   { id: 'temple_war_support', faction: 'temple', slot: 'damageBooster', displayName: 'Chanter', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 7, defense: 2, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'damagebooster_standing', placeholderAsset: false },
   { id: 'temple_rng_support', faction: 'temple', slot: 'rangeBooster', displayName: 'Oracle', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 7, defense: 2, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'rangebooster_standing', placeholderAsset: false },
-  { id: 'temple_acolyte',   faction: 'temple', slot: 'founder',  displayName: 'Acolyte',   earlyUnlock: true,  unitClass: 'support', cost: 2, hp: 12, attack: 5, defense: 3, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'warrior_standing', placeholderAsset: false },
+  // v12 — the Acolyte ('temple_acolyte', slot 'founder') is REMOVED
+  // entirely: Temple has no founder-slot unit any more. Founding/conquering
+  // a site is no longer gated to one special recruit — ANY Temple unit can
+  // do it (see canStartFounding in game.ts) — so there's nothing left for a
+  // dedicated founder unit to be exclusively good at.
 ];
 
 export const FACTION_UNITS: Record<FactionId, FactionUnitDef[]> = {

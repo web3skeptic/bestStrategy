@@ -183,16 +183,17 @@ console.log('\n=== Production slots (§19-20) ===');
   const state = setup();
   const site = state.strategicSites[0]!;
   state.currentPlayerIndex = 1;
-  const acolyteRecruited = spawnUnit(state, capitalId(state, 1), 'founder');
-  check('Temple can queue an Acolyte recruit', acolyteRecruited);
+  // v12 — no Acolyte any more; any Temple unit can found, so recruit a Warrior.
+  const warriorRecruited = spawnUnit(state, capitalId(state, 1), 'warrior');
+  check('Temple can queue a Warrior recruit', warriorRecruited);
   const before = getProductionSlots(state, 1);
-  advanceOneRound(state); // deploy the Acolyte
+  advanceOneRound(state); // deploy the Warrior
   sweepUnitsOffCapital(state, 1);
-  const acolyte = state.units.find(u => u.playerId === 1 && u.type === 'founder' && u.hp > 0)!;
-  acolyte.pos = { ...site.pos };
-  acolyte.hasMoved = false; acolyte.hasAttacked = false;
+  const founder = state.units.find(u => u.playerId === 1 && u.type === 'warrior' && u.hp > 0)!;
+  founder.pos = { ...site.pos };
+  founder.hasMoved = false; founder.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  startFounding(state, acolyte.id);
+  startFounding(state, founder.id);
   endTurn(state); // opponent's turn
   endTurn(state); // back to this player -> founding resolves (uncontested)
   const site0 = state.strategicSites.find(s => s.id === site.id)!;

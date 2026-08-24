@@ -1133,9 +1133,9 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
-  // The 3rd slab starts founding for the selected unit (a Builder/Acolyte
-  // standing on a neutral/ruined site — §7-10, replaces the old temple-level
-  // slab, there's no more leveling), OR builds a road (Agrar only, §23-25) if
+  // The 3rd slab starts founding/conquest for the selected unit — v12: ANY
+  // Temple-faction unit standing on a neutral/ruined/active-enemy site, no
+  // more Acolyte-only restriction — OR builds a road (Agrar only, §23-25) if
   // founding isn't available but a road is — mutually exclusive per-tile
   // states, see doFound(). INVISIBLE unless one of the two is currently legal;
   // when shown it displays the relevant aura cost.
@@ -1224,13 +1224,17 @@ function updateUI(): void {
       const foundable = canStartFounding(state, unit);
       const isAgrarBuilder = unit.type === 'founder' && player.faction === 'agrar';
       if (foundable) {
-        // v11 §20/§24 — "Consecrate" for a virgin neutral site, "Re-consecrate"
-        // for Ruins; both always produce Temple I, never restore a prior level.
-        const verb = foundable.site.state === 'ruins' ? 'Re-consecrate' : 'Consecrate';
+        // v12 — "Consecrate" for a virgin neutral site, "Re-consecrate" for
+        // Ruins (both always produce Temple I), "Conquer" for an ACTIVE
+        // enemy Temple (inherits its current level as-is — no reset). ANY
+        // Temple-faction unit can do this now, not just the (removed) Acolyte.
+        const label = foundable.site.state === 'ruins' ? 'Re-consecrate Temple I'
+          : foundable.site.state === 'temple' ? `Conquer this Temple (currently level ${foundable.site.templeLevel})`
+          : 'Consecrate Temple I';
         captureBtn.style.display = 'block';
         captureBtn.disabled = false;
         captureBtn.title = '';
-        captureBtn.textContent = `⚒ ${verb} Temple I (⚡${SITE_ESTABLISH_COST}) — 1 round`;
+        captureBtn.textContent = `⚒ ${label} (⚡${SITE_ESTABLISH_COST}) — 1 round`;
       } else if (isAgrarBuilder) {
         // §39-40 (phase 11 correction) — Build Road is ALWAYS shown for an
         // Agrar Builder, never hidden behind a hidden precondition; disabled
@@ -1299,6 +1303,13 @@ function updateUI(): void {
         economyNote = ' | Temple II — Income +2⚡ | Production +1 (fully upgraded)';
       } else if (site && site.state === 'upgradingTemple') {
         economyNote = ' | Upgrading to Temple II — Income +1⚡ | Production +0 | completes next round';
+      }
+      // v12 — a rival Temple-faction unit can be actively conquering this
+      // Temple right now (state stays 'temple' throughout — see startFounding
+      // in game.ts) without any visible structure change, so surface it here.
+      if (site?.founding && site.founding.playerId !== site.ownerId) {
+        const conqueror = state.players.find(p => p.id === site.founding!.playerId)?.name ?? 'an enemy';
+        economyNote += ` | ⚠ Under siege by ${conqueror} — falls next round unless interrupted`;
       }
       const label = capital
         ? `Capital HP ${capital.hp}/${capital.maxHp}`
@@ -2047,12 +2058,10 @@ techOverlay.addEventListener('click', (e) => {
   if (e.target === techOverlay) closeTechTree();
 });
 
-// ── Temple level-up (3rd HUD slab) ──
-// Upgrades the currently-selected temple — same action as the old upgrade
-// button. The slab is greyed out by updateUI() unless the upgrade is valid.
-// Start founding at the neutral/ruined site the selected unit (a Builder/
-// Acolyte) is standing on. Replaces the old temple-upgrade slab — there's no
-// more leveling (§7-10).
+// ── Found/conquer (3rd HUD slab) ──
+// Starts founding/conquest at the neutral, ruined, or active-enemy-Temple
+// site the selected unit is standing on — v12: ANY Temple-faction unit, no
+// more Acolyte-only restriction (§7-10, extended for direct conquest).
 // The same slab does double duty for the Builder: found a site if it's
 // standing on a neutral/ruined one, otherwise enter Build Road ring-pick
 // mode if that's available (Agrar only, §23-25) — mutually exclusive

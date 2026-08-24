@@ -182,19 +182,20 @@ console.log('\n=== Ownership (§7) ===');
   check('walking onto a site never auto-changes its owner', site.ownerId === null && site.state === 'neutral');
 }
 {
+  // v12 — the Acolyte is gone; ANY Temple-faction unit can found/conquer now.
   const state = setup();
   const site = state.strategicSites[0]!;
-  const warrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!; // any non-founder
+  const warrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
   warrior.pos = { ...site.pos };
   warrior.hasMoved = false; warrior.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  check('a non-Acolyte unit cannot found (e.g. warrior)', canStartFounding(state, warrior) === null);
+  check('any Temple unit can found (e.g. warrior, no Acolyte needed — v12)', canStartFounding(state, warrior) !== null);
 }
 {
   const state = setup();
   const { founder } = primeFounding(state, 0);
   const templeCheck = canStartFounding(state, founder);
-  check('Temple Acolyte targets Temple', templeCheck?.targetState === 'temple', `got ${templeCheck?.targetState}`);
+  check('a Temple unit targets Temple', templeCheck?.targetState === 'temple', `got ${templeCheck?.targetState}`);
 }
 
 // ── Capital combat + victory (§4-5, §11) ──
@@ -268,6 +269,38 @@ console.log('\n=== Temple destruction (§11) ===');
   check('a Temple reduced to 0 HP becomes Ruins', site.state === 'ruins', `got ${site.state}`);
   check('Ruins has no owner', site.ownerId === null);
   check('game is NOT over from a Temple falling (only Capital ends it)', state.phase === 'playing');
+}
+{
+  // v12 — ONLY Agrar may destroy a Temple via combat. A rival Temple-faction
+  // player can never attack-structure one, even standing right next to it —
+  // a 3-player game (2 Temple, 1 Agrar) so there's a genuine rival Temple
+  // attacker distinct from the owner.
+  const state = createGameState([
+    { name: 'A', color: '#ff4444' }, { name: 'B', color: '#4488ff' }, { name: 'C', color: '#44cc55' },
+  ]);
+  chooseFaction(state, 0, 'temple'); // owner
+  chooseFaction(state, 1, 'temple'); // rival — will attempt the illegal attack
+  chooseFaction(state, 2, 'agrar');
+  for (const p of state.players) p.aura = 200;
+  const capital0 = state.capitals.find(c => c.playerId === 0)!;
+  const tech0 = state.playerTech[0];
+  const owner = createUnit('warrior', 0, { ...hexNeighbors(capital0.pos)[0]! }, tech0, 'temple');
+  state.units.push(owner);
+  const site = state.strategicSites[0]!;
+  owner.pos = { ...site.pos };
+  owner.hasMoved = false; owner.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  startFounding(state, owner.id);
+  endTurn(state); endTurn(state); endTurn(state); // back around to player 0's next round
+  check('setup: the site is an active Temple owned by player 0', site.state === 'temple' && site.ownerId === 0, `got ${site.state}/${site.ownerId}`);
+
+  const rival = createUnit('warrior', 1, { ...hexNeighbors(site.pos)[0]! }, state.playerTech[1], 'temple');
+  state.units.push(rival);
+  state.currentPlayerIndex = 1;
+  selectUnit(state, rival.id);
+  const blocked = attackStructure(state, site.pos);
+  check('a rival Temple-faction attacker cannot destroy a Temple via attack-structure', blocked === null);
+  check('the Temple is untouched', site.state === 'temple' && site.ownerId === 0 && site.hp === site.maxHp);
 }
 
 // ── Legacy removal ──
