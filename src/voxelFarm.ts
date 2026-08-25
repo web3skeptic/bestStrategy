@@ -42,6 +42,29 @@ function cone(r: number, h: number, material: THREE.Material, x: number, y: numb
   return m;
 }
 
+// A hex-prism plot — same 6-sided cylinder + 30° twist convention used for
+// the ground tiles themselves, so the Farm's own footprint actually reads
+// as a hexagon matching the tile underneath it, not a square dropped onto one.
+function hexPlot(r: number, h: number, material: THREE.Material, y: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 6), material);
+  m.rotation.y = Math.PI / 6;
+  m.position.y = y;
+  m.receiveShadow = true;
+  m.castShadow = true;
+  return m;
+}
+
+// The 6 corners of that same hex footprint (radius r), for perimeter fence
+// posts — matches hexPlot's 30° twist (corners sit at 30°, 90°, 150°...).
+function hexCorners(r: number): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 6 + (i * Math.PI) / 3;
+    pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return pts;
+}
+
 function pyramidRoof(w: number, h: number, d: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const geo = new THREE.ConeGeometry(Math.max(w, d) * 0.72, h, 4);
   geo.rotateY(Math.PI / 4);
@@ -74,8 +97,10 @@ export function buildFarm(teamColor: number, damageStage: 0 | 1 | 2 = 0): THREE.
   const cropMat = mat(cropColor, 0.85);
   const teamMat = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.6, metalness: 0.1 });
 
-  // Soil plot — a low, wide plinth filling most of the tile.
-  g.add(block(1.5, 0.08, 1.5, soilMat, 0, 0.04, 0));
+  // Soil plot — a low hex-prism plinth filling most of the tile, matching
+  // the hex ground tile's own footprint (§ hexagon fix).
+  const plotR = 0.78;
+  g.add(hexPlot(plotR, 0.08, soilMat, 0.04));
 
   // Crop rows — a grid, skipping cells as damage increases (a raided/burned
   // field, not a uniform darken) so the degradation reads at a glance.
@@ -115,14 +140,18 @@ export function buildFarm(teamColor: number, damageStage: 0 | 1 | 2 = 0): THREE.
   // Team-colored door trim — faction ownership reads even at a glance.
   g.add(block(0.08, 0.14, 0.03, teamMat, hutX, 0.11, hutZ + 0.185));
 
-  // Low perimeter fence — thin posts around the plot edge, missing a few
-  // once heavily damaged (a raided field, fence knocked down).
+  // Low perimeter fence — a post at each of the hex plot's 6 corners (plus
+  // one at each edge midpoint for a denser enclosure), missing a few once
+  // heavily damaged (a raided field, fence knocked down). Following the
+  // plot's own hex corners keeps the fence reading as a hexagon too.
   const fenceMat = mat(FENCE, 0.9);
-  const fencePositions: [number, number][] = [
-    [-0.72, -0.6], [-0.36, -0.68], [0, -0.72], [0.36, -0.68], [0.72, -0.6],
-    [-0.72, 0.6], [-0.36, 0.68], [0.72, 0.6],
-  ];
-  fencePositions.forEach(([x, z], idx) => {
+  const fenceR = plotR + 0.04;
+  const corners = hexCorners(fenceR);
+  const edgeMids: [number, number][] = corners.map(([x, z], i) => {
+    const [nx, nz] = corners[(i + 1) % 6]!;
+    return [(x + nx) / 2, (z + nz) / 2];
+  });
+  [...corners, ...edgeMids].forEach(([x, z], idx) => {
     if (damageStage >= 2 && idx % 3 === 0) return; // knocked-down gap
     g.add(block(0.04, 0.16, 0.04, fenceMat, x, 0.08, z));
   });
