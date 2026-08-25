@@ -21,7 +21,7 @@ import {
 } from '../src/game';
 import {
   BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS,
-  AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING, SITE_ESTABLISH_COST,
+  AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, SITE_ESTABLISH_COST,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS, STRUCTURES,
 } from '../src/factions';
 import { hexDistance, hexNeighbors, hexEqual, hexKey } from '../src/hex';
@@ -105,9 +105,8 @@ function foundFarm(state: GameState, playerId: number, pos: HexCoord): void {
 }
 
 // A small ring of hexes, each EXACTLY AGRAR_TERRITORY_RADIUS (2) from the
-// origin/Capital AND at least FARM_MIN_SPACING (2) from every other hex in
-// the ring — every entry is independently valid as Capital-anchored (no
-// chaining through a prior Farm needed), and none collide with each other.
+// origin/Capital — every entry is independently valid as Capital-anchored
+// (no chaining through a prior Farm needed), and none collide with each other.
 const FARM_RING: HexCoord[] = [{ q: 2, r: 0 }, { q: 0, r: 2 }, { q: -2, r: 2 }, { q: -2, r: 0 }];
 
 // Founds a Temple site to completion for playerId (Temple-only) and returns it.
@@ -218,8 +217,11 @@ console.log('\n=== Agrar Farms: construction (§3) ===');
 // ── Agrar Farms: placement rules — Builder-adjacency AND infrastructure territory ──
 console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
 {
-  // A Farm CAN now be directly adjacent to the Capital (encourages tight
-  // bunkering) — only the farm-to-farm minimum spacing still excludes hexes.
+  // A Farm CAN be directly adjacent to the Capital (encourages tight
+  // bunkering) — there is no minimum Farm-to-Farm spacing either (removed —
+  // it rejected legitimate-looking adjacent tiles for a rule players found
+  // confusing rather than meaningful); only landing exactly ON another
+  // structure's own hex is excluded.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
@@ -229,10 +231,10 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
 
   const hexesFromCapitalEdge = getValidFarmHexes(state, builder);
   check('no candidate hex lands on the Capital itself', !hexesFromCapitalEdge.some(h => hexEqual(h, capital.pos)));
-  check('a Farm CAN be built directly adjacent to the Capital now', hexesFromCapitalEdge.some(h => hexDistance(h, capital.pos) === 1), `got ${JSON.stringify(hexesFromCapitalEdge)}`);
+  check('a Farm CAN be built directly adjacent to the Capital', hexesFromCapitalEdge.some(h => hexDistance(h, capital.pos) === 1), `got ${JSON.stringify(hexesFromCapitalEdge)}`);
 
-  // Build one Farm, then verify a hex adjacent to it is excluded but one at
-  // exactly FARM_MIN_SPACING is still fine (and still within reach).
+  // Build one Farm, then verify a hex directly adjacent to it is STILL a
+  // valid candidate (no spacing rule) as long as it's inside territory.
   builder.pos = { q: 2, r: 0 };
   builder.hasMoved = false; builder.hasAttacked = false;
   const first = getValidFarmHexes(state, builder)[0]!;
@@ -242,8 +244,8 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   builder2.pos = { ...hexNeighbors(first)[0]! };
   builder2.hasMoved = false; builder2.hasAttacked = false;
   const hexesAfter = getValidFarmHexes(state, builder2);
-  check('a hex adjacent to the new Farm is excluded (min spacing)', !hexesAfter.some(h => hexDistance(h, first) === 1));
-  check(`every remaining candidate is at least FARM_MIN_SPACING (${FARM_MIN_SPACING}) from the Farm`, hexesAfter.every(h => hexDistance(h, first) >= FARM_MIN_SPACING));
+  check('a hex directly adjacent to an existing Farm is a valid candidate (no min spacing)', hexesAfter.some(h => hexDistance(h, first) === 1), `got ${JSON.stringify(hexesAfter)}`);
+  check('the existing Farm\'s own hex is still excluded (can\'t overlap)', !hexesAfter.some(h => hexEqual(h, first)));
 }
 {
   // A Farm can NOT be started far from the Capital or any existing Farm,

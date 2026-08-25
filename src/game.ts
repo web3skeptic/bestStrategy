@@ -16,7 +16,7 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -1276,15 +1276,15 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
 // bunker, it can never leapfrog to some far corner of the map, and building
 // a new Farm immediately expands the territory for the next one. It must
 // also be: on the map, empty/passable terrain, not a sacred site/Capital/
-// structure, not occupied by a unit, and never directly adjacent to another
-// existing Farm (founding or active — `distance >= FARM_MIN_SPACING`).
-// Adjacent to the Capital itself is fine (encourages tight bunkering).
+// structure, not occupied by a unit. Adjacent to the Capital OR another
+// Farm is fine — no minimum spacing between Farms (removed; it made
+// legitimate-looking adjacent tiles reject for a rule players found
+// confusing rather than meaningful).
 export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return [];
   const capital = state.capitals.find(c => c.playerId === player.id);
   if (!capital) return [];
-  const allOwn = allFarmsOf(state, player.id);
   const territory = getAgrarTerritory(state, player.id);
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
@@ -1296,7 +1296,6 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
     if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
     if (getUnitAt(state, hex)) continue;
     if (!territory.has(key)) continue; // must land inside existing Agrar Territory
-    if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue; // not adjacent to another Farm
     result.push(hex);
   }
   return result;
@@ -1409,7 +1408,7 @@ export function getAgrarCultivation(state: GameState, agrarPlayerId: number): Se
   return hexes;
 }
 
-function isSiteCultivationBlocked(state: GameState, pos: HexCoord, templePlayerId: number): boolean {
+export function isSiteCultivationBlocked(state: GameState, pos: HexCoord, templePlayerId: number): boolean {
   const key = hexKey(pos);
   for (const p of state.players) {
     if (p.id === templePlayerId || p.faction !== 'agrar') continue;

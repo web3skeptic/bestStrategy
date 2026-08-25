@@ -155,8 +155,9 @@ export const SITE_ESTABLISH_COST = 6;
 // land INSIDE existing AGRAR_TERRITORY_RADIUS infrastructure reach — the
 // network only grows as a connected bunker, it can't leapfrog across the
 // map, and completing a new Farm itself immediately EXPANDS that reach for
-// the next one. It must never be directly adjacent to another Farm
-// (FARM_MIN_SPACING) — adjacent to the CAPITAL is fine (tight bunkering).
+// the next one. Adjacent to the CAPITAL or another Farm is fine — there is
+// no minimum Farm-to-Farm spacing (removed — it rejected legitimate-looking
+// adjacent tiles for a rule players found confusing rather than meaningful).
 // A Farm costing 6⚡ against +1⚡/round income is a deliberate 6-round
 // payback — a meaningful long-term investment, not something bought
 // casually alongside a full army.
@@ -173,7 +174,6 @@ export const AGRAR_TERRITORY_RADIUS = 2; // around the Capital, and around each 
 // SMALLER and farm-only (no Capital projection) so a Farm can't block
 // founding from two hexes away — see getAgrarCultivation.
 export const CULTIVATION_RADIUS = 1; // an active Farm's own hex + its 6 neighbours — Capital projects none of this
-export const FARM_MIN_SPACING = 2;   // never directly adjacent to another Farm
 
 // v11 (Temple conquest + upgrade system) — replaces the old Devotion I/II
 // purchase ladder with a simple two-stage build/upgrade, matching Agrar's
