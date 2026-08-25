@@ -251,9 +251,9 @@ function tryAttackStructure(state: GameState, unit: Unit, hard: boolean, actions
 function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: boolean, actions: AIAction[]): void {
   if (state.phase !== 'playing' || unit.hp <= 0) return;
 
-  // v12 — ANY Temple unit tries to found/conquer the site it's standing on
-  // (neutral, ruined, or an active enemy Temple — no more Acolyte-only
-  // restriction; no-op — canStartFounding returns null — for Agrar units).
+  // v13 — the Acolyte founds/reconstructs a neutral/ruined site it's
+  // standing on (no-op — canStartFounding returns null — for every other
+  // unit type or an active enemy Temple, which must be destroyed first).
   const founding = canStartFounding(state, unit);
   if (founding) {
     observe(state, 'found', { unitId: unit.id });
@@ -465,12 +465,11 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
   const faction = state.players[aiPlayerId]?.faction;
   const cost = (t: UnitType) => getUnitCost(t, faction);
 
-  // §5, §39 (phase 11 correction; v12 — Agrar-only now, the Acolyte is
-  // gone) — there are zero starting units, so the Builder is recruited like
-  // anything else. Get exactly one out first — without it Agrar can never
-  // build a Farm/Road — so this takes priority over any combat unit. Temple
-  // never unlocks 'founder' at all any more (any of its ordinary combat
-  // units can found/conquer a site instead — see actCombatUnit).
+  // §5, §39 (phase 11 correction) — there are zero starting units now, so
+  // the Builder/Acolyte is recruited like anything else. Get exactly one
+  // out first — without it Agrar can never build a Farm/Road and Temple can
+  // never found/reconstruct a Temple site — so this takes priority over any
+  // combat unit.
   if (unlocked.has('founder') && count('founder') === 0 && aura >= cost('founder')) {
     return 'founder';
   }

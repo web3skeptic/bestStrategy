@@ -158,6 +158,8 @@ export function serializeStateForApi(session: HeadlessSession, viewerId?: number
         upgrade: site.upgrade,
         hp: site.hp, maxHp: site.maxHp, defense: site.defense,
         templeLevel: site.templeLevel,
+        previousTempleLevel: site.previousTempleLevel,
+        previousOwnerId: site.previousOwnerId,
       })),
       farms: s.farms.map(f => ({
         id: f.id, pos: f.pos, ownerId: f.ownerId, state: f.state, founding: f.founding,

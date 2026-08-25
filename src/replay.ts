@@ -32,6 +32,7 @@ interface SnapshotSite {
   id: string; pos: HexCoord; state: StrategicSiteState; ownerId: number | null;
   founding: FoundingProgress | null; upgrade: TempleUpgradeProgress | null;
   hp: number; maxHp: number; defense: number; templeLevel: 1 | 2 | null;
+  previousTempleLevel: 1 | 2 | null; previousOwnerId: number | null;
 }
 interface SnapshotFarm {
   id: string; pos: HexCoord; ownerId: number; state: 'foundingFarm' | 'farm';
@@ -126,6 +127,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
     id: site.id, pos: site.pos, state: site.state, ownerId: site.ownerId,
     founding: site.founding, upgrade: site.upgrade ?? null, hp: site.hp, maxHp: site.maxHp, defense: site.defense,
     templeLevel: site.templeLevel ?? null,
+    previousTempleLevel: site.previousTempleLevel ?? null, previousOwnerId: site.previousOwnerId ?? null,
   }));
 
   const farms: Farm[] = (s.map.farms ?? []).map(f => ({

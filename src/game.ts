@@ -300,6 +300,8 @@ function createStrategicSite(pos: HexCoord): StrategicSite {
     upgrade: null,
     hp: 0, maxHp: 0, defense: 0,
     templeLevel: null,
+    previousTempleLevel: null,
+    previousOwnerId: null,
   };
 }
 
@@ -1104,64 +1106,63 @@ export function getStrategicSiteAt(state: GameState, pos: HexCoord): StrategicSi
   return state.strategicSites.find(s => hexEqual(s.pos, pos));
 }
 
-// ── Strategic site founding + conquest (v12 — Temple-only) ──
+// ── Strategic site founding + reconstruction (v13 — Temple-only) ──
 //
-// A neutral/ruined site becomes a Temple, OR an active enemy-owned Temple
-// changes hands, through a one-round process ANY Temple-faction unit can
-// start (no more Acolyte-only restriction — that unit type doesn't exist
-// any more, v12) simply by standing on the site with an unused attack
-// action. Phase 10 correction still holds: Agrar NEVER founds/conquers a
-// site — "Agrar controls area (Farms), Temple controls points (Temples)".
-// v12 flips who destroys Temples, though: ONLY Agrar may reduce an active
-// Temple to Ruins via combat (see attackStructure) — Temple-faction players
-// never destroy a rival Temple, they simply walk onto it and, if
-// uncontested for one full round, take it over AS-IS (inheriting its
-// current level — I or II — rather than resetting to Temple I). Founding a
-// virgin neutral site, or reconsecrating Ruins (which have no level to
-// inherit — see attackStructure), still always produces Temple I.
+// Back to the destroy-then-rebuild model (v12's direct-conquest-by-presence
+// is GONE): a neutral/ruined site becomes a Temple ONLY through a one-round
+// founding process performed by an Acolyte (unit type 'founder' — the
+// Acolyte is back, v13), never by merely standing on an ACTIVE enemy
+// Temple. Any combat unit of EITHER faction may attack an active Temple
+// (see attackStructure) — Agrar is no longer the sole destroyer. Phase 10
+// correction still holds: Agrar NEVER founds/reconstructs a site — "Agrar
+// controls area (Farms), Temple controls points (Temples)".
+//
+// v13 reconstruction memory: destroying a Temple stores its
+// previousTempleLevel/previousOwnerId on the Ruins (see attackStructure).
+// If the SAME player who owned it reconstructs those Ruins, the Temple
+// returns directly to its previous level for the same flat
+// SITE_ESTABLISH_COST/1-round cost — restoring is cheaper than rebuilding a
+// whole civilization investment from scratch. A DIFFERENT Temple player
+// consecrating the same Ruins always gets Temple I regardless of the
+// previous level, then must pay the usual upgrade cost/time to reach II.
+
+function isFounderUnit(unit: Unit): boolean {
+  return unit.type === 'founder';
+}
 
 export interface FoundingCheck {
   site: StrategicSite;
   targetState: 'temple';
 }
 
-// §7 — everything that must hold true to START founding/conquest.
+// §7 — everything that must hold true to START founding/reconstruction.
 export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | null {
   if (isMatchSetupRestricted(state)) return null;
   if (unit.playerId !== getCurrentPlayer(state).id) return null;
-  if (unit.hasAttacked) return null; // needs an unused action (may already have moved onto the site this turn)
+  if (unit.hasMoved || unit.hasAttacked) return null; // needs a fully unused activation
+  if (!isFounderUnit(unit)) return null; // only the Acolyte
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || !player.faction) return null;
-  if (player.faction !== 'temple') return null; // §28 — Agrar never founds/conquers a site
+  if (player.faction !== 'temple') return null; // §28 — Agrar never founds/reconstructs a site
   const site = getStrategicSiteAt(state, unit.pos);
   if (!site) return null;
-  if (site.ownerId === unit.playerId) return null; // already yours — nothing to conquer
-  // 'foundingTemple' (someone else mid-founding a neutral/ruined site) and
-  // 'upgradingTemple' (owner mid-upgrade) are not valid targets — wait for
-  // those to resolve first. 'temple' covers both an unowned-impossible case
-  // (never happens) and the real target: an ACTIVE enemy Temple to conquer.
-  if (site.state !== 'neutral' && site.state !== 'ruins' && site.state !== 'temple') return null;
-  if (site.founding) return null; // already being founded/conquered by someone
+  if (site.state !== 'neutral' && site.state !== 'ruins') return null; // never an active Temple — see attackStructure
+  if (site.founding) return null; // already being founded/reconstructed by someone
   const enemyOnSite = state.units.some(u => u.hp > 0 && u.id !== unit.id && u.playerId !== unit.playerId && hexEqual(u.pos, site.pos));
   if (enemyOnSite) return null;
   if (player.aura < SITE_ESTABLISH_COST) return null;
-  // §10-11 — a NEUTRAL/RUINED site inside enemy Agrar cultivated territory
-  // cannot be founded/reconsecrated. Doesn't apply to conquering an already-
-  // active Temple — cultivation only blocks NEW construction (§16).
-  if (site.state !== 'temple' && isSiteCultivationBlocked(state, site.pos, player.id)) return null;
+  // §10-11 — a site inside enemy Agrar cultivated territory cannot be
+  // founded/reconstructed by ANY Temple player — original owner or not.
+  if (isSiteCultivationBlocked(state, site.pos, player.id)) return null;
   return { site, targetState: 'temple' };
 }
 
-// Begin founding/conquest: charges SITE_ESTABLISH_COST immediately ("do not
-// wait until completion to charge it, otherwise the player can start
-// construction without actually committing resources") and consumes the
-// unit's action (it may already have moved onto the site this same turn —
-// v12 "just step on it", no more separate free-activation requirement).
-// Resolves automatically at the start of the founder's next round — see
-// resolveFoundingForPlayer, called from endTurn(). Conquering an ACTIVE
-// enemy Temple deliberately does NOT touch its state/ownerId/templeLevel
-// yet — the current owner keeps its full income/production throughout the
-// contest, right up until the moment it actually completes.
+// Begin founding/reconstruction: charges SITE_ESTABLISH_COST immediately
+// ("do not wait until completion to charge it, otherwise the player can
+// start construction without actually committing resources") and consumes
+// the Acolyte's whole activation. Resolves automatically at the start of
+// the founder's next round — see resolveFoundingForPlayer, called from
+// endTurn().
 export function startFounding(state: GameState, unitId: string): boolean {
   const unit = state.units.find(u => u.id === unitId && u.hp > 0);
   if (!unit) return false;
@@ -1171,8 +1172,8 @@ export function startFounding(state: GameState, unitId: string): boolean {
   const player = state.players.find(p => p.id === unit.playerId)!;
   player.aura -= SITE_ESTABLISH_COST;
 
-  const fromState = check.site.state as 'neutral' | 'ruins' | 'temple';
-  if (fromState !== 'temple') check.site.state = 'foundingTemple';
+  const fromState = check.site.state as 'neutral' | 'ruins'; // canStartFounding already restricted this
+  check.site.state = 'foundingTemple';
   check.site.founding = {
     playerId: unit.playerId,
     unitId: unit.id,
@@ -1187,34 +1188,32 @@ export function startFounding(state: GameState, unitId: string): boolean {
   return true;
 }
 
-// Founding a virgin neutral site, or reconsecrating Ruins (which have no
-// level on record — see attackStructure), always produces a fresh Temple I.
-// Conquering an ACTIVE enemy Temple (fromState 'temple') instead INHERITS
-// its current templeLevel as-is — v12, "just step on it, no reset".
+// v13 — reconstruction memory: if the completing player is the SAME player
+// recorded as the Ruins' previous owner, the Temple returns directly to its
+// previousTempleLevel (restoration); any other player (or a virgin site
+// that was never destroyed, which has no memory at all) always gets a
+// fresh Temple I. Either way the memory is consumed/cleared on success.
 function completeFounding(state: GameState, site: StrategicSite): void {
   const founding = site.founding!;
-  const inheritedLevel = founding.fromState === 'temple' ? site.templeLevel : null;
+  const isOriginalOwner = site.previousOwnerId !== null && site.previousOwnerId === founding.playerId;
   site.ownerId = founding.playerId;
   site.state = 'temple';
-  site.templeLevel = inheritedLevel ?? 1;
+  site.templeLevel = isOriginalOwner ? (site.previousTempleLevel ?? 1) : 1;
   site.hp = STRUCTURES.temple.hp;
   site.maxHp = STRUCTURES.temple.hp;
   site.defense = STRUCTURES.temple.defense;
   site.founding = null;
+  site.previousTempleLevel = null;
+  site.previousOwnerId = null;
 }
 
-// §9 — failure on a neutral/ruined target returns the site to whatever it
-// was before, cleanly, with NO refund of the aura already spent. An
-// interrupted CONQUEST of an active Temple never touched the site's
-// state/ownerId/templeLevel in the first place (see startFounding), so
-// there's nothing to revert — it's simply still owned and active for
-// whoever had it, unchanged.
+// §9 — failure returns the site to whatever it was before, cleanly, with NO
+// refund of the aura already spent. No permanent "half-built" state. The
+// Ruins' previousTempleLevel/previousOwnerId memory (if any) is untouched —
+// a failed attempt doesn't erase anyone's restoration eligibility.
 function failFounding(site: StrategicSite): void {
-  const fromState = site.founding!.fromState;
-  if (fromState !== 'temple') {
-    site.state = fromState;
-    site.ownerId = null;
-  }
+  site.state = site.founding!.fromState;
+  site.ownerId = null;
   site.founding = null;
 }
 
@@ -1230,9 +1229,7 @@ function failFounding(site: StrategicSite): void {
 // real interrupt window without needing a ZOC system.
 function resolveFoundingForPlayer(state: GameState, playerId: number): void {
   for (const site of state.strategicSites) {
-    // v12 — conquering an ACTIVE enemy Temple deliberately leaves `state` as
-    // 'temple' throughout (see startFounding), so gate on `founding` itself
-    // rather than state — 'foundingTemple' only covers the neutral/ruins case.
+    if (site.state !== 'foundingTemple') continue;
     const founding = site.founding;
     if (!founding || founding.playerId !== playerId) continue;
     if (state.turnNumber < founding.completesRound) continue;
@@ -1855,14 +1852,12 @@ function updateHighlights(state: GameState): void {
     for (const capital of state.capitals) {
       if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) enemyStructures.push(capital.pos);
     }
-    // v12 — only Agrar may attack a Temple; Temple-faction players conquer
-    // rival Temples by presence instead (canStartFounding), never combat.
-    const canAttackTemples = state.players.find(p => p.id === unit.playerId)?.faction === 'agrar';
-    if (canAttackTemples) {
-      for (const site of state.strategicSites) {
-        if ((site.state === 'temple' || site.state === 'upgradingTemple') && site.ownerId !== unit.playerId
-          && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
-      }
+    // v13 — ANY unit of either faction may attack an active Temple; the
+    // only way to change its ownership is destroy it to Ruins, then have a
+    // Temple Acolyte reconsecrate it (see canStartFounding).
+    for (const site of state.strategicSites) {
+      if ((site.state === 'temple' || site.state === 'upgradingTemple') && site.ownerId !== unit.playerId
+        && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
     }
     for (const farm of state.farms) {
       if (farm.state === 'farm' && farm.ownerId !== unit.playerId && hexDistance(unit.pos, farm.pos) <= effectiveRange) enemyStructures.push(farm.pos);
@@ -2128,10 +2123,10 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
   const ref = getStructureAt(state, targetPos);
   if (!ref) return null;
   if (structureOwnerId(ref) === attacker.playerId) return null;
-  // v12 — only Agrar may destroy a Temple via combat; Temple-faction players
-  // take rival Temples over by conquest (canStartFounding/startFounding)
-  // instead, never by reducing them to Ruins.
-  if (ref.kind === 'site' && state.players.find(p => p.id === attacker.playerId)?.faction !== 'agrar') return null;
+  // v13 — ANY unit of either faction may attack/destroy a Temple; taking it
+  // over afterward still requires a Temple Acolyte reconsecrating the Ruins
+  // (canStartFounding) — standing on or merely attacking it never changes
+  // ownership by itself.
 
   const typeMult = getTypeMultiplier(UNIT_CLASS[attacker.type], 'structure');
   const attackerHpFrac = attacker.hp / attacker.stats.maxHp;
@@ -2155,10 +2150,14 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
     destroyed = ref.site.hp <= 0;
     if (destroyed) {
       ref.site.hp = 0;
-      // v11 §11 — Temple destruction (whether Temple I, Temple II, or
-      // mid-upgrade) goes to Ruins, not a game-over: clear ownership,
-      // founding/upgrade progress AND templeLevel — nothing is preserved or
-      // transferred to the attacker (see completeFounding/RULES_VERSION v11).
+      // v13 §11-13 — Temple destruction (whether Temple I, Temple II, or
+      // mid-upgrade) goes to Ruins, not a game-over: clear active ownership/
+      // founding/upgrade state, BUT remember previousTempleLevel/
+      // previousOwnerId — the ORIGINAL owner reconstructing these exact
+      // Ruins restores directly to that level (see completeFounding); any
+      // other player still always gets a fresh Temple I.
+      ref.site.previousTempleLevel = ref.site.templeLevel;
+      ref.site.previousOwnerId = ref.site.ownerId;
       ref.site.state = 'ruins';
       ref.site.ownerId = null;
       ref.site.founding = null;

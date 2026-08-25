@@ -1,11 +1,11 @@
-// Phase 5 verification (updated phase 11, then v12): full Agrar/Temple
-// faction rosters (design brief §37-39), the faction-specific, prerequisite-
-// gated Heavy-unit tech line, and (v12) the Builder becoming Agrar-only —
-// the Acolyte (Temple's old founder-slot unit) was removed entirely, since
-// founding/conquering a site no longer needs a dedicated unit type at all.
-// Exercises the real engine mutators end-to-end (no forked logic) —
-// createGameState, chooseFaction, researchTech, spawnUnit,
-// resolveTrainingForPlayer (via endTurn).
+// Phase 5 verification (updated phase 11): full Agrar/Temple faction
+// rosters (design brief §37-39), now including the Builder/Acolyte as an
+// ordinary recruitable slot and the faction-specific, prerequisite-gated
+// Heavy-unit tech line. (v12 briefly removed the Acolyte and made 'founder'
+// Agrar-only; v13 reverted that — the Acolyte is back, required for
+// founding/reconstructing a Temple site.) Exercises the real engine
+// mutators end-to-end (no forked logic) — createGameState, chooseFaction,
+// researchTech, spawnUnit, resolveTrainingForPlayer (via endTurn).
 //
 // Run with: npx tsx scripts/verify-faction-rosters.ts
 import {
@@ -72,13 +72,10 @@ console.log('\n=== Early unlock (§39) ===');
   const state = setup();
   const agrarUnlocked = getUnlockedUnits(state.playerTech[0]!, 'agrar');
   const templeUnlocked = getUnlockedUnits(state.playerTech[1]!, 'temple');
-  for (const t of ['warrior', 'archer', 'spearsman', 'horserider'] as UnitType[]) {
+  for (const t of ['warrior', 'archer', 'spearsman', 'horserider', 'founder'] as UnitType[]) {
     check(`Agrar unlocks ${t} immediately`, agrarUnlocked.has(t));
     check(`Temple unlocks ${t} immediately`, templeUnlocked.has(t));
   }
-  // v12 — the Acolyte is gone; 'founder' (the Builder) is Agrar-only now.
-  check('Agrar unlocks founder (Builder) immediately', agrarUnlocked.has('founder'));
-  check('Temple does NOT unlock founder — the Acolyte no longer exists (v12)', !templeUnlocked.has('founder'));
   for (const t of ['catapult', 'heavyknight', 'healer', 'damageBooster', 'rangeBooster'] as UnitType[]) {
     check(`Agrar does NOT unlock ${t} without tech`, !agrarUnlocked.has(t));
     check(`Temple does NOT unlock ${t} without tech`, !templeUnlocked.has(t));
@@ -151,16 +148,20 @@ console.log('\n=== Same slot, distinct faction flavor ===');
   check('Heavy Knight and Champion cost the same (symmetric slot)', agrarHK.cost === templeChamp.cost, `agrar=${agrarHK.cost} temple=${templeChamp.cost}`);
 }
 
-// ── Builder: Agrar-only now — the Acolyte was removed entirely (v12) ──
-console.log('\n=== Builder is Agrar-only; the Acolyte no longer exists (v12) ===');
+// ── Builder/Acolyte: matched stats, both recruitable (v13 — Acolyte is back) ──
+console.log('\n=== Builder/Acolyte: matched stats, both recruitable (v13) ===');
 {
   const state = setup();
   const agrarBuilder = recruitAndDeploy(state, 0, capitalId(state, 0), 'founder');
+  const templeAcolyte = recruitAndDeploy(state, 1, capitalId(state, 1), 'founder');
   check('Agrar can recruit the Builder', !!agrarBuilder);
-  check('Builder SPD == 2 (economic-expansion units keep their mobility)', !!agrarBuilder && agrarBuilder.stats.speed === 2, `builder=${agrarBuilder?.stats.speed}`);
-  check('founder IS in Agrar\'s unlocked recruit set', getUnlockedUnits(state.playerTech[0]!, 'agrar').has('founder'));
-  check('founder is NOT in Temple\'s unlocked recruit set — no Acolyte any more', !getUnlockedUnits(state.playerTech[1]!, 'temple').has('founder'));
-  check('Temple cannot recruit a founder-type unit at all', !canAfford({ ...state, currentPlayerIndex: 1 }, 'founder'));
+  check('Temple can recruit the Acolyte', !!templeAcolyte);
+  check('Builder and Acolyte share HP/ATK/DEF', !!agrarBuilder && !!templeAcolyte
+    && agrarBuilder.stats.maxHp === templeAcolyte.stats.maxHp
+    && agrarBuilder.stats.attack === templeAcolyte.stats.attack
+    && agrarBuilder.stats.defense === templeAcolyte.stats.defense);
+  check('Builder SPD == Acolyte SPD == 2', !!agrarBuilder && !!templeAcolyte && agrarBuilder.stats.speed === 2 && templeAcolyte.stats.speed === 2, `builder=${agrarBuilder?.stats.speed} acolyte=${templeAcolyte?.stats.speed}`);
+  check('founder IS in the unlocked recruit set for both factions', getUnlockedUnits(state.playerTech[0]!, 'agrar').has('founder') && getUnlockedUnits(state.playerTech[1]!, 'temple').has('founder'));
 }
 
 // ── Tech unlock gates faction recruiting — faction-specific Heavy-unit line

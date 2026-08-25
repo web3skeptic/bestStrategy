@@ -1,6 +1,6 @@
 import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
-import { hexEqual, hexKey } from './hex';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, FARM_MIN_SPACING } from './factions';
+import { hexEqual, hexKey, hexDistance } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
   createGameState,
@@ -49,6 +49,7 @@ import {
   canStartFarm,
   startFarm,
   getValidFarmHexes,
+  getAgrarTerritory,
   canStartTempleUpgrade,
   startTempleUpgrade,
   canBuildRoad,
@@ -185,6 +186,23 @@ const economyBtn = document.getElementById('economyBtn') as HTMLButtonElement;
 // slab is currently "armed" for; re-armed only when the SAME unit is tapped
 // twice. Any selection change / re-render for a different unit resets it.
 let destroyArmedUnitId: string | null = null;
+
+// End-round notification (§21-23). `endTurnArmed` is the two-tap confirm
+// guard for ending the round while units remain unacted (mirrors
+// destroyArmedUnitId's pattern) — reset the instant the turn actually ends.
+// `announcedAllActedThisTurn` gates the one-time "All units have acted"
+// toast so it fires once per turn, not on every re-render.
+let endTurnArmed = false;
+let announcedAllActedThisTurn = false;
+
+// A unit "has an action left" until it's actually attacked — moving alone
+// (hasMoved but not hasAttacked) still leaves a legal attack available, so
+// only hasAttacked (which the engine always sets alongside hasMoved for
+// every activation that fully spends a unit — move+attack, attack-only,
+// found, build-farm, build-road) means truly done for the round (§22).
+function unactedUnitCount(state: GameState, playerId: number): number {
+  return state.units.filter(u => u.hp > 0 && u.playerId === playerId && !u.hasAttacked).length;
+}
 
 // Show the contextual destroy slab for `unitId`, reflecting the current armed
 // state (red tint + "Sure?" strip when armed).
@@ -961,6 +979,27 @@ function farmBlockReason(state: GameState, unit: Unit): string | null {
   return null;
 }
 
+// Farm-UX pass (§3) — WHY a specific candidate hex (a direct neighbour of
+// the Builder) can't take a Farm, mirroring getValidFarmHexes' checks one
+// by one instead of collapsing them into a single "not valid" no. Only
+// meaningful for a hex the player could reasonably expect to be a
+// candidate (a Builder neighbour) — see the buildingFarm click handler.
+function farmHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord): string | null {
+  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return 'outside the map';
+  const key = hexKey(hex);
+  if (state.hills.has(key) || state.walls.has(key)) return 'invalid terrain';
+  if (getStrategicSiteAt(state, hex)) return 'a sacred site is here';
+  if (state.capitals.some(c => hexEqual(c.pos, hex))) return 'a structure is already here';
+  if (state.farms.some(f => hexEqual(f.pos, hex))) return 'a structure is already here';
+  const occupant = getUnitAt(state, hex);
+  if (occupant) return occupant.playerId === unit.playerId ? 'occupied by your own unit' : 'an enemy unit is here';
+  const player = state.players.find(p => p.id === unit.playerId)!;
+  if (!getAgrarTerritory(state, player.id).has(key)) return 'outside Agrar infrastructure territory';
+  const allOwn = state.farms.filter(f => f.ownerId === player.id);
+  if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) return 'too close to another Farm';
+  return null;
+}
+
 function roadBlockReason(state: GameState, unit: Unit): string | null {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return 'not your unit';
@@ -1133,11 +1172,32 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
-  // The 3rd slab starts founding/conquest for the selected unit — v12: ANY
-  // Temple-faction unit standing on a neutral/ruined/active-enemy site, no
-  // more Acolyte-only restriction — OR builds a road (Agrar only, §23-25) if
-  // founding isn't available but a road is — mutually exclusive per-tile
-  // states, see doFound(). INVISIBLE unless one of the two is currently legal;
+  // End-round notification (§21-23) — only while it's genuinely the local
+  // player's turn and no ring-pick placement mode is left dangling; a unit
+  // still counts as "has an action left" until it's actually attacked (the
+  // only activation that fully spends a unit, per hasMoved/hasAttacked).
+  if (myTurn && !spectatorMode && state.phase === 'playing' && !buildingFarm && !buildingRoad && !buildingTeleport) {
+    const remaining = unactedUnitCount(state, player.id);
+    if (remaining === 0) {
+      // Auto-clear a stale "N left — Sure?" confirm arm once the player
+      // finishes acting on their own — nothing left to confirm past.
+      if (endTurnArmed) { endTurnArmed = false; renderer.setHudButtonArmed('endTurn', false); }
+      renderer.setHudButtonPrice('endTurn', 'All Acted!');
+      if (!announcedAllActedThisTurn) {
+        announcedAllActedThisTurn = true;
+        showToast('All units have acted — End Round', 'good');
+      }
+    } else if (!endTurnArmed) {
+      renderer.setHudButtonPrice('endTurn', '');
+    }
+  } else if (!endTurnArmed) {
+    renderer.setHudButtonPrice('endTurn', '');
+  }
+  // The 3rd slab starts founding/reconstruction for the selected unit (a
+  // Temple Acolyte standing on a neutral/ruined site — §7-10, v13), OR
+  // builds a road (Agrar only, §23-25) if founding isn't available but a
+  // road is — mutually exclusive per-tile states, see doFound(). INVISIBLE
+  // unless one of the two is currently legal;
   // when shown it displays the relevant aura cost.
   const selUnitForFound = state.selectionMode === 'unit' && state.selectedUnitId
     ? state.units.find(u => u.id === state.selectedUnitId)
@@ -1224,12 +1284,13 @@ function updateUI(): void {
       const foundable = canStartFounding(state, unit);
       const isAgrarBuilder = unit.type === 'founder' && player.faction === 'agrar';
       if (foundable) {
-        // v12 — "Consecrate" for a virgin neutral site, "Re-consecrate" for
-        // Ruins (both always produce Temple I), "Conquer" for an ACTIVE
-        // enemy Temple (inherits its current level as-is — no reset). ANY
-        // Temple-faction unit can do this now, not just the (removed) Acolyte.
-        const label = foundable.site.state === 'ruins' ? 'Re-consecrate Temple I'
-          : foundable.site.state === 'temple' ? `Conquer this Temple (currently level ${foundable.site.templeLevel})`
+        // v13 §17 — an Acolyte on Ruins this player previously owned sees
+        // "Restore Temple <level>" (returns directly to that level); Ruins
+        // with no memory, or memory belonging to someone else, always show
+        // "Consecrate Temple I" (a fresh site always starts at level 1).
+        const isOwnRuins = foundable.site.state === 'ruins' && foundable.site.previousOwnerId === player.id;
+        const label = isOwnRuins ? `Restore Temple ${foundable.site.previousTempleLevel === 2 ? 'II' : 'I'}`
+          : foundable.site.state === 'ruins' ? 'Consecrate Temple I'
           : 'Consecrate Temple I';
         captureBtn.style.display = 'block';
         captureBtn.disabled = false;
@@ -1303,13 +1364,6 @@ function updateUI(): void {
         economyNote = ' | Temple II — Income +2⚡ | Production +1 (fully upgraded)';
       } else if (site && site.state === 'upgradingTemple') {
         economyNote = ' | Upgrading to Temple II — Income +1⚡ | Production +0 | completes next round';
-      }
-      // v12 — a rival Temple-faction unit can be actively conquering this
-      // Temple right now (state stays 'temple' throughout — see startFounding
-      // in game.ts) without any visible structure change, so surface it here.
-      if (site?.founding && site.founding.playerId !== site.ownerId) {
-        const conqueror = state.players.find(p => p.id === site.founding!.playerId)?.name ?? 'an enemy';
-        economyNote += ` | ⚠ Under siege by ${conqueror} — falls next round unless interrupted`;
       }
       const label = capital
         ? `Capital HP ${capital.hp}/${capital.maxHp}`
@@ -2058,10 +2112,10 @@ techOverlay.addEventListener('click', (e) => {
   if (e.target === techOverlay) closeTechTree();
 });
 
-// ── Found/conquer (3rd HUD slab) ──
-// Starts founding/conquest at the neutral, ruined, or active-enemy-Temple
-// site the selected unit is standing on — v12: ANY Temple-faction unit, no
-// more Acolyte-only restriction (§7-10, extended for direct conquest).
+// ── Found/reconstruct (3rd HUD slab) ──
+// Starts founding/reconstruction at the neutral or ruined site the selected
+// Acolyte is standing on (§7-10, v13 — an active enemy Temple must be
+// destroyed first; standing on it never changes ownership).
 // The same slab does double duty for the Builder: found a site if it's
 // standing on a neutral/ruined one, otherwise enter Build Road ring-pick
 // mode if that's available (Agrar only, §23-25) — mutually exclusive
@@ -2180,6 +2234,15 @@ function handleHexClick(clientX: number, clientY: number): void {
       });
       return;
     } else {
+      // Farm-UX pass (§3) — a click on a hex adjacent to the Builder (a
+      // hex the player might reasonably expect to be buildable) explains
+      // WHY it's illegal instead of silently exiting build mode; any other
+      // click is a genuine "change my mind" and just cancels as before.
+      const builder = state.units.find(u => u.id === builderUnitId);
+      if (builder && hexDistance(builder.pos, hex) === 1) {
+        const reason = farmHexIllegalReason(state, builder, hex);
+        if (reason) { showToast(`Can't build a Farm here — ${reason}`, 'bad'); return; }
+      }
       cancelBuildFarm();
       render();
       return;
@@ -2495,6 +2558,21 @@ function doEndTurn(): void {
   if (handoffPending) return;   // curtain up — next player hasn't started their turn
   if (aiRunning) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
+  // §23 — two-tap confirm (mirrors the destroy slab) when units remain
+  // unacted: first tap arms the button and names how many are left instead
+  // of ending the round; a second tap while still armed proceeds anyway.
+  if (!buildingFarm && !buildingRoad && !buildingTeleport) {
+    const remaining = unactedUnitCount(state, getCurrentPlayer(state).id);
+    if (remaining > 0 && !endTurnArmed) {
+      endTurnArmed = true;
+      renderer.setHudButtonArmed('endTurn', true);
+      renderer.setHudButtonPrice('endTurn', `${remaining} unit${remaining > 1 ? 's' : ''} left — Sure?`);
+      return;
+    }
+  }
+  endTurnArmed = false;
+  announcedAllActedThisTurn = false;
+  renderer.setHudButtonArmed('endTurn', false);
   if (buildingTeleport) cancelBuildTeleport();
   if (buildingFarm) cancelBuildFarm();
   if (buildingRoad) cancelBuildRoad();

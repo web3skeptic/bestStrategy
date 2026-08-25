@@ -22,7 +22,7 @@ import {
 import {
   BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS,
   AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING, SITE_ESTABLISH_COST,
-  TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
+  TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS, STRUCTURES,
 } from '../src/factions';
 import { hexDistance, hexNeighbors, hexEqual, hexKey } from '../src/hex';
 import type { GameState, Unit, HexCoord } from '../src/types';
@@ -316,6 +316,112 @@ console.log('\n=== Agrar Farms: destruction (§15) ===');
   rebuildBuilder.pos = { q: capital.pos.q + 2, r: capital.pos.r };
   rebuildBuilder.hasMoved = false; rebuildBuilder.hasAttacked = false;
   check('the freed slot can be rebuilt elsewhere', getValidFarmHexes(state, rebuildBuilder).length > 0);
+}
+
+// ── Farm survivability + full attack targeting (structure combat pass) ──
+console.log('\n=== Farm survivability + attack targeting (structure combat pass) ===');
+{
+  check('Farm HP is 18 (was 12)', STRUCTURES.farm.hp === 18, `got ${STRUCTURES.farm.hp}`);
+  check('Farm DEF is 5 (was 4)', STRUCTURES.farm.defense === 5, `got ${STRUCTURES.farm.defense}`);
+}
+function freshFarm(state: GameState, playerId: number): { pos: HexCoord } {
+  clearFarmArea(state, playerId);
+  const builder = founderOf(state, playerId);
+  const hex = getValidFarmHexes(state, builder)[0]!;
+  foundFarm(state, playerId, hex);
+  return { pos: hex };
+}
+{
+  // Warrior can target and damage a Farm; damage persists (doesn't reset).
+  const state = setup();
+  const { pos } = freshFarm(state, 0);
+  const farm = state.farms.find(f => hexEqual(f.pos, pos))!;
+  const attacker = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  attacker.pos = { ...hexNeighbors(pos)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  selectUnit(state, attacker.id);
+  check('enemy Warrior can target the Farm', state.structureAttackHexes.some(h => hexEqual(h, pos)));
+  const hpBefore = farm.hp;
+  const result = attackStructure(state, pos);
+  check('the attack lands and deals damage', !!result && result.damageDealt > 0, `dealt=${result?.damageDealt}`);
+  check('Farm damage persists on the structure (not reset)', farm.hp === hpBefore - (result?.damageDealt ?? 0), `hp=${farm.hp}`);
+  check('a healthy Farm generally survives one ordinary non-siege hit', farm.hp > 0, `hp=${farm.hp}`);
+  check('Farm does not Revenge — the attacker takes no damage', attacker.hp === attacker.stats.maxHp);
+}
+{
+  // Archer can target a Farm within range.
+  const state = setup();
+  const { pos } = freshFarm(state, 0);
+  const attacker = createUnit('archer', 1, { q: pos.q + 2, r: pos.r }, state.playerTech[1], state.players[1]!.faction);
+  state.units.push(attacker);
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  selectUnit(state, attacker.id);
+  check('enemy Archer can target the Farm at range 2', state.structureAttackHexes.some(h => hexEqual(h, pos)));
+  const result = attackStructure(state, pos);
+  check('Archer attack against the Farm succeeds', !!result && result.damageDealt > 0);
+}
+{
+  // Cavalry can target a Farm.
+  const state = setup();
+  const { pos } = freshFarm(state, 0);
+  const attacker = createUnit('horserider', 1, { ...hexNeighbors(pos)[0]! }, state.playerTech[1], state.players[1]!.faction);
+  state.units.push(attacker);
+  state.currentPlayerIndex = 1;
+  selectUnit(state, attacker.id);
+  check('enemy Cavalry can target the Farm', state.structureAttackHexes.some(h => hexEqual(h, pos)));
+  const result = attackStructure(state, pos);
+  check('Cavalry attack against the Farm succeeds', !!result && result.damageDealt > 0);
+}
+{
+  // Siege gets the structure multiplier (1.30x) — an unlocked siege unit
+  // deals proportionally more than an equal-attack non-siege unit.
+  const state = setup();
+  const { pos } = freshFarm(state, 0);
+  const farm = state.farms.find(f => hexEqual(f.pos, pos))!;
+  const tech = state.playerTech[1];
+  const siege = createUnit('catapult', 1, { ...hexNeighbors(pos)[0]! }, tech, state.players[1]!.faction);
+  state.units.push(siege);
+  state.currentPlayerIndex = 1;
+  selectUnit(state, siege.id);
+  const result = attackStructure(state, pos);
+  check('Siege can target and damage the Farm', !!result && result.damageDealt > 0);
+  check('destroying a healthy Farm generally needs more than one ordinary hit', farm.hp > 0 || !!result?.destroyed);
+}
+{
+  // Full destruction consequences: income, cultivation, infrastructure, slot.
+  // Chain a Farm out beyond the Capital's own AGRAR_TERRITORY_RADIUS reach
+  // (see the "Farm CAN chain outward" test above) so a hex ONLY that Farm's
+  // own radius covers can prove infrastructure reach is gone once it dies —
+  // the Capital's own projection can't be confounding the result.
+  const state = setup();
+  clearFarmArea(state, 0, state.mapRadius);
+  foundFarm(state, 0, { q: 2, r: 0 }); // anchor link, within Capital's own reach
+  const hex = { q: 4, r: 0 }; // adjacent to the anchor, beyond the Capital's own reach
+  foundFarm(state, 0, hex);
+  const farm = state.farms.find(f => hexEqual(f.pos, hex))!;
+  const farOutHex = { q: 6, r: 0 }; // only covered by THIS Farm's own AGRAR_TERRITORY_RADIUS, not the Capital's
+  check('setup: the far hex is only reachable via this Farm, not the Capital', getAgrarTerritory(state, 0).has(hexKey(farOutHex)));
+  check('income includes the Farm before destruction', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND + AGRAR_FARM_INCOME * 2);
+  check('cultivation includes the Farm hex before destruction', getAgrarCultivation(state, 0).has(hexKey(hex)));
+  const slotsBefore = allFarmSlotCount(state, 0);
+
+  const attacker = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  attacker.pos = { ...hexNeighbors(hex)[0]! };
+  attacker.hasMoved = false; attacker.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  selectUnit(state, attacker.id);
+  farm.hp = 1;
+  const result = attackStructure(state, hex);
+  check('the Farm is destroyed at HP <= 0', !!result?.destroyed);
+  check('income drops by exactly AGRAR_FARM_INCOME — no lingering Farm income', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND + AGRAR_FARM_INCOME);
+  check('cultivation is removed immediately', !getAgrarCultivation(state, 0).has(hexKey(hex)));
+  check('infrastructure reach projected ONLY by this Farm is removed immediately', !getAgrarTerritory(state, 0).has(hexKey(farOutHex)));
+  check('the Farm slot is freed immediately', allFarmSlotCount(state, 0) === slotsBefore - 1);
+}
+function allFarmSlotCount(state: GameState, playerId: number): number {
+  return state.farms.filter(f => f.ownerId === playerId).length;
 }
 
 // ── Territory grants NO combat bonus (§9) ──
@@ -624,6 +730,33 @@ console.log('\n=== Cultivated Influence: shrine denial, radius 1, farms only (§
   // never flip an active Temple off; nothing further to build here.)
   check('an active Temple is structurally immune to cultivation (no state field ties it to Farms)', temple.ownerId === 1 && temple.state === 'temple');
 }
+{
+  // v13 §16 — Agrar Cultivated Influence blocks reconstruction on Ruins
+  // regardless of whether the Acolyte belongs to the previous owner or a
+  // different Temple player entirely.
+  const state = setup(); // agrar=0, temple=1
+  clearFarmArea(state, 0);
+  const site = foundTemple(state, 1, 0);
+  destroySite(state, 0, site);
+  check('setup: the site is Ruins remembering player 1', site.state === 'ruins' && site.previousOwnerId === 1);
+
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const farmHex = { q: capital.pos.q + AGRAR_TERRITORY_RADIUS, r: capital.pos.r };
+  const builder = founderOf(state, 0);
+  builder.pos = { ...hexNeighbors(farmHex)[0]! };
+  builder.hasMoved = false; builder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  startFarm(state, builder.id, farmHex);
+  advanceOneRound(state);
+  site.pos = farmHex; // relocate the Ruins under the new Farm's cultivation
+  check('setup: the Ruins are now inside enemy Agrar cultivation', getAgrarCultivation(state, 0).has(hexKey(site.pos)));
+
+  const originalOwnerAcolyte = founderOf(state, 1);
+  originalOwnerAcolyte.pos = { ...site.pos };
+  originalOwnerAcolyte.hasMoved = false; originalOwnerAcolyte.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  check('cultivation blocks even the ORIGINAL owner from restoring their own Ruins', canStartFounding(state, originalOwnerAcolyte) === null);
+}
 
 // A 2-Temple-faction game, for conquest scenarios where the attacker also
 // needs to be able to found/upgrade a Temple of their own afterward.
@@ -655,40 +788,8 @@ function destroySite(state: GameState, attackerId: number, site: { id: string; p
   attackStructure(state, site.pos);
 }
 
-// ── Temple-vs-Temple conquest by presence (v12) ──
-console.log('\n=== Temple-vs-Temple conquest by presence, inherits level (v12) ===');
-{
-  const state = setupTwoTemple();
-  const site = foundFullTemple(state, 1, 0); // player 1 builds a full Temple II
-  check('setup: player 1 has a Temple II', site.state === 'temple' && site.templeLevel === 2);
-  const defenderIncomeBefore = getPlayerIncome(state, 1);
-  const attackerIncomeBefore = getPlayerIncome(state, 0);
-  // The defender's own unit never moved off the site after founding/
-  // upgrading it — move it away so player 0's unit can actually stand there.
-  state.units.find(u => u.playerId === 1 && u.type === 'founder')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
-
-  // Player 0 walks a unit directly onto the ACTIVE enemy Temple — v12: no
-  // destruction needed at all, ANY Temple unit can target it directly
-  // (Agrar is the only faction that destroys Temples via combat).
-  const attacker = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
-  attacker.pos = { ...site.pos };
-  attacker.hasMoved = false; attacker.hasAttacked = false;
-  state.currentPlayerIndex = 0;
-  check('any Temple unit can target an ACTIVE enemy Temple directly', canStartFounding(state, attacker) !== null);
-  const auraBefore = state.players[0]!.aura;
-  startFounding(state, attacker.id);
-  check('starting conquest charges SITE_ESTABLISH_COST immediately', state.players[0]!.aura === auraBefore - SITE_ESTABLISH_COST, `aura=${state.players[0]!.aura}`);
-  check('the Temple keeps operating for the DEFENDER throughout the contest', site.ownerId === 1 && site.state === 'temple' && site.templeLevel === 2);
-  check('defender income is unaffected while conquest is merely in progress', getPlayerIncome(state, 1) === defenderIncomeBefore, `got ${getPlayerIncome(state, 1)}`);
-
-  advanceOneRound(state); // resolves at attacker's next round, uncontested
-  check('conquest completes and INHERITS the Temple II level as-is — no reset', site.state === 'temple' && site.templeLevel === 2 && site.ownerId === 0, `got ${site.state}/${site.templeLevel}/${site.ownerId}`);
-  check('defender loses the full +2 income the instant conquest completes', getPlayerIncome(state, 1) === defenderIncomeBefore - 2, `got ${getPlayerIncome(state, 1)}`);
-  check('attacker GAINS the full +2 income immediately — a real transfer', getPlayerIncome(state, 0) === attackerIncomeBefore + 2, `got ${getPlayerIncome(state, 0)}`);
-  check('attacker also inherits the +1 production slot', getProductionSlots(state, 0) === 2 + TEMPLE_II_PRODUCTION_BONUS, `got ${getProductionSlots(state, 0)}`);
-}
-// ── Only Agrar destroys Temples; Temple never does, even to a rival's ──
-console.log('\n=== Only Agrar destroys Temples via combat (v12) ===');
+// ── Any unit of either faction can destroy a Temple (v13) ──
+console.log('\n=== Any unit of either faction can destroy a Temple via combat (v13) ===');
 {
   const state = setupTwoTemple();
   const site = foundTemple(state, 1, 0);
@@ -698,15 +799,16 @@ console.log('\n=== Only Agrar destroys Temples via combat (v12) ===');
   attacker.hasMoved = false; attacker.hasAttacked = false;
   state.currentPlayerIndex = 0;
   selectUnit(state, attacker.id);
-  check('a Temple-faction unit has no attack-structure option against a Temple', !state.structureAttackHexes.some(h => hexEqual(h, site.pos)));
-  site.hp = 1; // even at 1 HP, a blocked attack must not finish it off
+  check('a rival Temple-faction unit HAS an attack-structure option against a Temple', state.structureAttackHexes.some(h => hexEqual(h, site.pos)));
+  site.hp = 1;
   const result = attackStructure(state, site.pos);
-  check('attackStructure itself refuses a Temple-faction attacker', result === null);
-  check('the Temple is completely untouched', site.state === 'temple' && site.hp === 1);
+  check('attackStructure succeeds for a Temple-faction attacker (v13)', !!result?.destroyed);
+  check('the Temple is reduced to Ruins', site.state === 'ruins');
 }
 
-// ── Recapturing your own former Ruins (§14) — no free restoration ──
-console.log('\n=== Recapturing your own Ruins: no free restoration (§14) ===');
+// ── Reconstruction memory (v13 §13-15): original owner restores, a ──
+// ── different player always resets to Temple I ──
+console.log('\n=== Reconstruction memory: original owner restores, new owner resets (v13) ===');
 {
   const state = setup(); // agrar=0, temple=1
   const site = foundFullTemple(state, 1, 0);
@@ -714,6 +816,8 @@ console.log('\n=== Recapturing your own Ruins: no free restoration (§14) ===');
 
   destroySite(state, 0, site);
   check('the Temple II is destroyed into Ruins', site.state === 'ruins' && site.templeLevel === null);
+  check('Ruins remember the previous level (2)', site.previousTempleLevel === 2, `got ${site.previousTempleLevel}`);
+  check('Ruins remember the previous owner (1)', site.previousOwnerId === 1, `got ${site.previousOwnerId}`);
   state.units.find(u => u.playerId === 0 && u.type === 'warrior')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
 
   // The SAME player (1) reconsecrates their own former site.
@@ -721,10 +825,40 @@ console.log('\n=== Recapturing your own Ruins: no free restoration (§14) ===');
   acolyte.pos = { ...site.pos };
   acolyte.hasMoved = false; acolyte.hasAttacked = false;
   state.currentPlayerIndex = 1;
+  const auraBeforeRestore = state.players[1]!.aura;
   startFounding(state, acolyte.id);
+  check('restoration costs the same flat SITE_ESTABLISH_COST (6⚡)', state.players[1]!.aura === auraBeforeRestore - SITE_ESTABLISH_COST, `aura=${state.players[1]!.aura}`);
   advanceOneRound(state);
-  check('the original owner rebuilding their OWN former site still restarts at Temple I — no Devotion/level carries over', site.state === 'temple' && site.templeLevel === 1, `got ${site.state}/${site.templeLevel}`);
-  check('income reflects only Temple I (+1), not the old Temple II (+2)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + 1, `got ${getPlayerIncome(state, 1)}`);
+  check('the original owner is RESTORED directly to Temple II — no re-upgrade needed', site.state === 'temple' && site.templeLevel === 2, `got ${site.state}/${site.templeLevel}`);
+  check('income reflects the restored Temple II (+2)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + 2, `got ${getPlayerIncome(state, 1)}`);
+  check('the reconstruction memory is consumed after a successful restore', site.previousTempleLevel === null && site.previousOwnerId === null);
+}
+{
+  // A DIFFERENT Temple player conquering the same Ruins always gets Temple I,
+  // regardless of the previous level — then must pay again to reach II.
+  const state = setupTwoTemple();
+  const site = foundFullTemple(state, 1, 0); // player 1's Temple II
+  const p1Founder = state.units.find(u => u.playerId === 1 && u.type === 'founder')!;
+  p1Founder.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 };
+  destroySite(state, 0, site);
+  check('setup: Ruins remember player 1 at level 2', site.previousOwnerId === 1 && site.previousTempleLevel === 2);
+  state.units.find(u => u.playerId === 0 && u.type === 'warrior')!.pos = { q: state.mapRadius * 6, r: state.mapRadius * 6 + 1 };
+
+  // Player 0 (a DIFFERENT Temple player) reconsecrates it instead.
+  const p0Founder = state.units.find(u => u.playerId === 0 && u.type === 'founder')!;
+  p0Founder.pos = { ...site.pos };
+  p0Founder.hasMoved = false; p0Founder.hasAttacked = false;
+  state.currentPlayerIndex = 0;
+  startFounding(state, p0Founder.id);
+  advanceOneRound(state);
+  check('a DIFFERENT player conquering the Ruins always gets Temple I, never the old level', site.state === 'temple' && site.templeLevel === 1 && site.ownerId === 0, `got ${site.state}/${site.templeLevel}/${site.ownerId}`);
+  check('the memory is consumed either way', site.previousTempleLevel === null && site.previousOwnerId === null);
+
+  // They can still pay again to reach Temple II, same as building fresh.
+  state.currentPlayerIndex = 0;
+  startTempleUpgrade(state, site.id);
+  advanceOneRound(state);
+  check('the new owner can still upgrade to Temple II for the usual extra cost/time', site.templeLevel === 2);
 }
 
 // ── Temple upgrade interruption (§32) ──

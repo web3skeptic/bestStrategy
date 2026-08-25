@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
-import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory } from './game';
+import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory, getAgrarCultivation } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
 import { buildTemple } from './voxelTemple';
+import { buildFarm } from './voxelFarm';
 import { buildUnitModel } from './voxelUnits';
 import { getSharedFaceTexture } from './voxelWarrior';
 
@@ -261,7 +262,10 @@ export class Renderer3D {
   // (same phase); the temple model itself is tinted (no floating markers).
   private structureTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
-  private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
+  private lastStructHp = new Map<string, number>(); // Capital/Temple/Farm — same purpose, structure combat pass
+  private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number; stage: number }>();
+  private structHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number }>();
+  private structFlashUntil = new Map<string, number>(); // brief red hit-flash, cleared in advanceAnimations
   private teleportMeshes = new Map<string, THREE.Object3D>();
   private highlightPool: THREE.Mesh[] = [];
 
@@ -542,6 +546,9 @@ export class Renderer3D {
     this.toMoveTintIds.clear();
     this.structureTintIds.clear();
     this.lastUnitHp.clear();
+    this.lastStructHp.clear();
+    this.structHpBars.clear();
+    this.structFlashUntil.clear();
     this.structureMeshes.clear();
     this.teleportMeshes.clear();
     this.highlightPool = [];
@@ -739,7 +746,21 @@ export class Renderer3D {
     this.explosions.push({ start: performance.now() + delayMs, group, cx: x, cy, cz: z, flash, flashMat, flashGeo, sparks, sparkMat, sparkGeo, light, sizeMul: mag });
   }
 
-  /** Raycast a screen point onto the board plane → hex coord (or null). */
+  /**
+   * Raycast a screen point onto the board → hex coord (or null).
+   *
+   * Selection-reliability pass: prefer a REAL raycast against the actual
+   * tile meshes over a flat y=0 math plane. Hills/structures raise the
+   * visible surface (elevationAt) but the old flat-plane projection always
+   * assumed y=0 — with any camera tilt, that silently resolves a click on
+   * an elevated tile (or a unit standing on one) to the WRONG hex (the one
+   * behind/beyond it from the camera's angle), which is exactly the
+   * "clicks don't reliably select the intended unit" symptom. Raycasting
+   * the tile geometry itself always lands on the surface actually drawn on
+   * screen, elevation included. Falls back to the flat-plane projection
+   * only if the ray somehow misses every tile (shouldn't happen once tiles
+   * are built, but keeps this defensive).
+   */
   pickHex(clientX: number, clientY: number): HexCoord | null {
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -747,6 +768,19 @@ export class Renderer3D {
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
+
+    if (this.tileMeshes.size > 0) {
+      const hits = this.raycaster.intersectObjects([...this.tileMeshes.values()], true);
+      for (const hit of hits) {
+        let o: THREE.Object3D | null = hit.object;
+        while (o && o.userData.hexKey === undefined) o = o.parent;
+        if (o) {
+          const [qs, rs] = (o.userData.hexKey as string).split(',');
+          return { q: Number(qs), r: Number(rs) };
+        }
+      }
+    }
+
     const pt = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.groundPlane, pt)) return null;
     const { q, r } = worldToHexFractional(pt.x, pt.z);
@@ -833,6 +867,7 @@ export class Renderer3D {
         : B.build_tilePlain(THREE, this.P);
       const { x, z } = hexToWorld(hex);
       tile.position.set(x, 0, z);
+      tile.userData.hexKey = key; // selection-reliability pass — see pickHex
       this.tileGroup.add(tile);
       this.tileMeshes.set(key, tile);
 
@@ -1084,15 +1119,30 @@ export class Renderer3D {
     const zocSet = state.selectionMode === 'unit' && state.selectedUnitId
       ? getZocHexes(state, playerId)
       : new Set<string>();
-    // Agrar Territory — persistent, always-on (not selection-gated, unlike
-    // ZOC) so both players can always see it: within AGRAR_TERRITORY_RADIUS
-    // of an Agrar Capital or an active Farm. Drives where new Farms can be
-    // built, blocks enemy Temple founding, and grants a defense bonus — a
-    // clearly-visible red/rust wash marks it directly on the ground.
+    // Agrar Infrastructure Reach / Cultivated Influence — Farm-UX pass:
+    // shown only for the VIEWER's own Agrar territory, and only while it's
+    // actually useful (a Builder selected, an owned Farm selected, or a
+    // Farm/Road/teleport build mode active via state.buildHexes) — not a
+    // permanent board-wide wash. Two visually distinct rings: infrastructure
+    // reach (radius 2, subtle outer wash — where a new Farm/Road may land)
+    // and cultivated influence (radius 1 from active Farms only, stronger
+    // inner tint — blocks enemy Temple founding/reconstruction) so the
+    // player never has to infer either invisible radius.
     const territorySet = new Set<string>();
-    for (const p of state.players) {
-      if (p.faction !== 'agrar') continue;
-      for (const key of getAgrarTerritory(state, p.id)) territorySet.add(key);
+    const cultivationSet = new Set<string>();
+    const viewerPlayer = state.players.find(p => p.id === playerId);
+    if (viewerPlayer?.faction === 'agrar') {
+      const selectedUnit = state.selectionMode === 'unit' && state.selectedUnitId
+        ? state.units.find(u => u.id === state.selectedUnitId) : undefined;
+      const selectedOwnFarm = state.selectionMode === 'site' && state.selectedSiteId
+        ? state.farms.some(f => f.id === state.selectedSiteId && f.ownerId === playerId) : false;
+      const relevant = state.buildHexes.length > 0
+        || (selectedUnit?.type === 'founder' && selectedUnit.playerId === playerId)
+        || selectedOwnFarm;
+      if (relevant) {
+        for (const key of getAgrarTerritory(state, playerId)) territorySet.add(key);
+        for (const key of getAgrarCultivation(state, playerId)) cultivationSet.add(key);
+      }
     }
 
     let i = 0;
@@ -1129,7 +1179,12 @@ export class Renderer3D {
       else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
       else if (roadSet.has(key)) place(hex, 0xb98c50, 0.3);
       else if (zocSet.has(key)) place(hex, 0xff9a2a, 0.22);
-      else if (territorySet.has(key)) place(hex, 0xe8401f, 0.32);
+      // Cultivated Influence (radius 1, active Farms only) is the tighter,
+      // stronger-tinted inner ring; Infrastructure Reach (radius 2, Capital
+      // + Farms) is the subtler outer wash — visually distinct so the two
+      // never get confused despite overlapping (§5 Farm-UX pass).
+      else if (cultivationSet.has(key)) place(hex, 0xa020f0, 0.34);
+      else if (territorySet.has(key)) place(hex, 0xe8401f, 0.2);
     }
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }
@@ -1155,15 +1210,16 @@ export class Renderer3D {
     // occludes those flat tints, which is exactly why we tint the model itself here).
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
 
-    interface StructureVisual { id: string; pos: HexCoord; tier: number; colorNum: number; canPendingFound: boolean; }
+    interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; }
     const structures: StructureVisual[] = [];
     for (const capital of state.capitals as Capital[]) {
       const owner = state.players.find(p => p.id === capital.playerId);
       structures.push({
-        id: capital.id, pos: capital.pos,
+        id: capital.id, pos: capital.pos, kind: 'capital',
         tier: this.structureVisualTier('capital'),
         colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
         canPendingFound: false,
+        hp: capital.hp, maxHp: capital.maxHp,
       });
     }
     for (const site of state.strategicSites as StrategicSite[]) {
@@ -1172,24 +1228,25 @@ export class Renderer3D {
       const isCompleted = site.state === 'temple' || site.state === 'upgradingTemple';
       const isFounding = site.state === 'foundingTemple';
       structures.push({
-        id: site.id, pos: site.pos,
+        id: site.id, pos: site.pos, kind: 'site',
         tier: this.structureVisualTier(isCompleted ? 'completed' : isFounding ? 'founding' : 'neutralOrRuins'),
         colorNum: owner ? new THREE.Color(owner.color).getHex()
           : foundingOwner ? new THREE.Color(foundingOwner.color).getHex()
           : this.P.colors.neutral,
         canPendingFound: site.state === 'neutral' || site.state === 'ruins',
+        hp: site.hp, maxHp: site.maxHp,
       });
     }
-    // Farms — Agrar's physical income buildings. Small fixed tier (a Farm is
-    // deliberately modest next to a Capital/Temple), placeholder pending real
-    // asset work (§70) — same tier whether still founding or active for now.
+    // Farms — Agrar's physical income buildings, own dedicated low-profile
+    // model (voxelFarm.ts) with a 3-stage damage look driven by HP fraction.
     for (const farm of state.farms as Farm[]) {
       const owner = state.players.find(p => p.id === farm.ownerId);
       structures.push({
-        id: farm.id, pos: farm.pos,
+        id: farm.id, pos: farm.pos, kind: 'farm',
         tier: this.structureVisualTier('founding'),
         colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
         canPendingFound: false,
+        hp: farm.hp, maxHp: farm.maxHp,
       });
     }
 
@@ -1202,26 +1259,52 @@ export class Renderer3D {
       this.disposeObject(entry.mesh);
       this.structureMeshes.delete(id);
       this.structureTintIds.delete(id);
+      const bar = this.structHpBars.get(id);
+      if (bar) { this.disposeObject(bar.group); this.structHpBars.delete(id); }
+      this.structFlashUntil.delete(id);
     }
 
     for (const st of structures) {
       const key = hexKey(st.pos);
+      // Coarse 3-stage damage look (structure combat pass §11/§26): above
+      // 66% HP = normal, 33-66% = damaged, below 33% = heavily damaged. Only
+      // meaningful once a structure actually has HP (maxHp > 0) — a
+      // neutral/founding site's tier already carries that distinction.
+      const stage: number = st.maxHp <= 0 ? 0 : st.hp / st.maxHp > 0.66 ? 0 : st.hp / st.maxHp > 0.33 ? 1 : 2;
       let entry = this.structureMeshes.get(st.id);
       let rebuilt = false;
-      if (!entry || entry.color !== st.colorNum || entry.level !== st.tier) {
+      if (!entry || entry.color !== st.colorNum || entry.level !== st.tier || (st.kind === 'farm' && entry.stage !== stage)) {
         if (entry) { this.structureGroup.remove(entry.mesh); this.disposeObject(entry.mesh); }
-        const mesh = buildTemple(st.colorNum, st.tier);
+        const mesh = st.kind === 'farm' ? buildFarm(st.colorNum, stage as 0 | 1 | 2) : buildTemple(st.colorNum, st.tier);
         const { x, z } = hexToWorld(st.pos);
         mesh.position.set(x, 0, z);
         this.structureGroup.add(mesh);
-        entry = { mesh, color: st.colorNum, level: st.tier };
+        entry = { mesh, color: st.colorNum, level: st.tier, stage };
         this.structureMeshes.set(st.id, entry);
         rebuilt = true;
+      } else {
+        entry.stage = stage;
       }
       // Remembered-but-unseen structures dim like the terrain (fading) instead
       // of staying bright; only currently-visible structures show at full brightness.
       const want = visible.has(key) ? 'lit' : explored.has(key) ? 'dark' : 'hidden';
       this.applyStructFog(entry.mesh, 'T' + st.id, want, rebuilt);
+
+      // Structure HP bar (§10) — a small billboarded bar above the model,
+      // same visual language as unit HP bars. Visible while damaged, while
+      // this structure is the current site selection, or briefly after a
+      // hit (structFlashUntil, set in detectHits) — never on a pristine,
+      // unselected structure (avoids cluttering an otherwise clean board).
+      if (st.maxHp > 0) {
+        let bar = this.structHpBars.get(st.id);
+        if (!bar || rebuilt) {
+          if (bar) this.disposeObject(bar.group);
+          bar = this.addStructHpBar(entry.mesh, st.id, st.kind);
+        }
+        const isSelected = state.selectionMode === 'site' && state.selectedSiteId === st.id;
+        const recentlyHit = this.structFlashUntil.has(st.id);
+        this.updateStructHpBar(st.id, st.hp, st.maxHp, isSelected || recentlyHit);
+      }
 
       // Warm-yellow tint (emissive pulsed in advanceAnimations, same phase as the
       // unit to-move tint):
@@ -1404,6 +1487,51 @@ export class Renderer3D {
     (bar.fg.material as THREE.MeshBasicMaterial).color.setHex(c);
   }
 
+  // Floating HP bar above a structure (Capital/Temple/Farm) — same visual
+  // language as addHpBar, just a taller offset for the bigger models and a
+  // wider bar for the Capital/Temple's larger footprint (structure combat
+  // pass §10).
+  private addStructHpBar(parent: THREE.Object3D, id: string, kind: 'capital' | 'site' | 'farm'): { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number } {
+    const barW = kind === 'farm' ? 0.9 : 1.15, barH = 0.15;
+    const yOffset = kind === 'farm' ? 0.85 : kind === 'capital' ? 3.4 : 2.6;
+    const group = new THREE.Group();
+    group.position.y = yOffset;
+
+    const bg = new THREE.Mesh(
+      new THREE.PlaneGeometry(barW + 0.06, barH + 0.06),
+      new THREE.MeshBasicMaterial({ color: 0x101014, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false }),
+    );
+    bg.renderOrder = 998;
+    group.add(bg);
+
+    const fg = new THREE.Mesh(
+      new THREE.PlaneGeometry(barW, barH),
+      new THREE.MeshBasicMaterial({ color: 0x44cc44, transparent: true, depthTest: false, depthWrite: false }),
+    );
+    fg.position.z = 0.001;
+    fg.renderOrder = 999;
+    group.add(fg);
+
+    parent.add(group);
+    const bar = { group, fg, barW, yOffset };
+    this.structHpBars.set(id, bar);
+    return bar;
+  }
+
+  // `forceVisible` covers "currently selected" and "recently hit" (structure
+  // combat pass §10) — otherwise the bar only shows once actually damaged,
+  // same rule as units, so a pristine board stays uncluttered.
+  private updateStructHpBar(id: string, hp: number, maxHp: number, forceVisible: boolean): void {
+    const bar = this.structHpBars.get(id);
+    if (!bar) return;
+    bar.group.visible = forceVisible || hp < maxHp;
+    const ratio = Math.max(0, Math.min(1, hp / maxHp));
+    bar.fg.scale.x = Math.max(0.0001, ratio);
+    bar.fg.position.x = (-bar.barW * (1 - ratio)) / 2;
+    const c = ratio > 0.5 ? 0x44cc44 : ratio > 0.25 ? 0xcccc44 : 0xcc4444;
+    (bar.fg.material as THREE.MeshBasicMaterial).color.setHex(c);
+  }
+
   // Spawn a hit explosion wherever a unit lost HP since the last render — covers
   // your attacks, splash, revenge damage, AND enemy attacks, uniformly.
   private detectHits(state: GameState, playerId: number, visible: Set<string>, omniscient: boolean): void {
@@ -1418,6 +1546,33 @@ export class Renderer3D {
       this.lastUnitHp.set(unit.id, unit.hp);
     }
     for (const id of [...this.lastUnitHp.keys()]) if (!alive.has(id)) this.lastUnitHp.delete(id);
+
+    // Structure combat pass — same hit-detection treatment for Capital/
+    // Temple/Farm: a flash+spark burst on hit, and a brief red emissive
+    // flash on the model itself (destruction, if any, follows from the
+    // normal structure sync — a Farm vanishes, a Temple/Capital just sits
+    // there at 0/low HP until its state actually changes).
+    const structAlive = new Set<string>();
+    const structHits: { id: string; pos: HexCoord; dmg: number }[] = [];
+    const noteStruct = (id: string, pos: HexCoord, hp: number) => {
+      structAlive.add(id);
+      const prev = this.lastStructHp.get(id);
+      if (prev !== undefined && hp < prev && (omniscient || visible.has(hexKey(pos)))) {
+        structHits.push({ id, pos: { ...pos }, dmg: prev - hp });
+      }
+      this.lastStructHp.set(id, hp);
+    };
+    for (const capital of state.capitals) noteStruct(capital.id, capital.pos, capital.hp);
+    for (const site of state.strategicSites) {
+      if (site.state === 'temple' || site.state === 'upgradingTemple') noteStruct(site.id, site.pos, site.hp);
+    }
+    for (const farm of state.farms) if (farm.state === 'farm') noteStruct(farm.id, farm.pos, farm.hp);
+    for (const id of [...this.lastStructHp.keys()]) if (!structAlive.has(id)) this.lastStructHp.delete(id);
+    for (const h of structHits) {
+      this.startHitAnimation(h.pos, 0, h.dmg);
+      this.structFlashUntil.set(h.id, performance.now() + 260);
+    }
+
     // Split the explosions in time: the struck enemy first, your unit's hit-back after.
     hits.sort((a, b) => Number(a.mine) - Number(b.mine));
     hits.forEach((h, i) => this.startHitAnimation(h.pos, i * 260, h.dmg));
@@ -1811,6 +1966,24 @@ export class Renderer3D {
     // Billboard HP bars to face the camera.
     if (this.unitHpBars.size > 0) {
       for (const bar of this.unitHpBars.values()) bar.group.quaternion.copy(this.camera.quaternion);
+    }
+    if (this.structHpBars.size > 0) {
+      for (const bar of this.structHpBars.values()) bar.group.quaternion.copy(this.camera.quaternion);
+    }
+    // Structure hit-flash: a brief solid red emissive punch (structure combat
+    // pass §11), cleared once its timer lapses — restores the model's normal
+    // tint/emissive state (including the pulsing "pending found" tint above,
+    // which reapplies next frame if still active).
+    if (this.structFlashUntil.size > 0) {
+      for (const [id, until] of [...this.structFlashUntil]) {
+        const entry = this.structureMeshes.get(id);
+        if (now >= until) {
+          this.structFlashUntil.delete(id);
+          if (entry && !this.structureTintIds.has(id)) this.setStructureEmissive(entry.mesh, null);
+        } else if (entry) {
+          this.setStructureEmissive(entry.mesh, [0.8, 0.05, 0.05]);
+        }
+      }
     }
     // Pulse the "still to move" yellow tint: a subtle, uniform emissive breathe
     // on the tinted units' materials (~1.3s period). Kept low so it reads as a

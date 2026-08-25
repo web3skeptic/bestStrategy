@@ -92,7 +92,22 @@ export type FactionId = 'agrar' | 'temple';
 // Founding a virgin neutral site, or reconsecrating Ruins (destroyed via
 // Agrar combat — those have no level on record), is unchanged: always
 // produces Temple I.
-export const RULES_VERSION = 12;
+// v13 (structure combat + reconstruction-memory pass): v12's instant-
+// presence conquest is REVERTED — a Temple can only change hands by being
+// destroyed to Ruins first (ANY unit of EITHER faction may now attack/
+// destroy an active Temple, not just Agrar), then reconsecrated by a Temple
+// Acolyte — which is BACK (temple_acolyte re-added to TEMPLE_UNITS,
+// canStartFounding is founder-type-gated again, and only targets neutral/
+// ruined sites, never an active enemy Temple directly). New: reconstruction
+// memory — destroying a Temple stores its level/owner on the Ruins
+// (StrategicSite.previousTempleLevel/previousOwnerId); the SAME player
+// reconsecrating those Ruins is RESTORED directly to that previous level
+// for the same flat SITE_ESTABLISH_COST/1-round cost (no extra upgrade
+// needed), while a DIFFERENT player always gets Temple I regardless of the
+// previous level (see completeFounding). Also: Farm HP 12->18, DEF 4->5
+// (STRUCTURES.farm) — a healthy Farm should generally survive one ordinary
+// non-siege hit.
+export const RULES_VERSION = 13;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -166,27 +181,22 @@ export function unitYetToMove(unit: Unit): boolean {
 // base is a separate `Capital` entity (see below), not a StrategicSite state.
 export type StrategicSiteState =
   | 'neutral'         // unclaimed — foundable only by Temple
-  | 'foundingTemple'  // a Temple-faction unit founding a neutral/ruined site; 0 income/production until complete
-  | 'temple'          // completed Temple-faction structure (see templeLevel for I vs II) — also the target state while being CONQUERED (site stays fully active/owned throughout, see FoundingProgress)
+  | 'foundingTemple'  // Temple Acolyte founding/reconstructing a neutral/ruined site; 0 income/production until complete
+  | 'temple'          // completed Temple-faction structure (see templeLevel for I vs II)
   | 'upgradingTemple' // Temple I -> II upgrade in progress; still grants Temple I-level economy
-  | 'ruins';          // a destroyed temple (Agrar-only, via combat) — refoundable by Temple, always restarts at Temple I
+  | 'ruins';          // a destroyed temple (attackable by EITHER faction) — refoundable by Temple only; see previousTempleLevel/previousOwnerId for reconstruction memory
 
-// In-progress founding OR conquest, tracked with explicit round numbers
+// In-progress founding/reconstruction, tracked with explicit round numbers
 // rather than a loose "turn count" (§6 of the brief): resolves at the START
-// of the acting player's NEXT round, giving the opponent the rest of the
-// current round to respond. v12 — ANY Temple-faction unit can start this
-// (no more Acolyte-only restriction), and it now also covers conquering an
-// ACTIVE enemy Temple directly (fromState 'temple') — no destruction
-// required first; see canStartFounding/completeFounding in game.ts.
+// of the founding player's NEXT round, giving the opponent the rest of the
+// current round to respond. v13 — only a Temple Acolyte can start this
+// (the Acolyte is back), and only on a neutral/ruined site — never on an
+// active enemy Temple (that must be destroyed first — see attackStructure).
 export interface FoundingProgress {
   playerId: number;
-  unitId: string;               // the unit performing the founding/conquest
+  unitId: string;               // the Acolyte performing the founding/reconstruction
   targetState: 'temple';
-  // What to revert `state`/`ownerId` to if interrupted (§9 — no half-built
-  // garbage states). 'temple' means an active enemy Temple being conquered
-  // — its state/ownerId/templeLevel were never touched in the first place
-  // (see startFounding), so failure is a true no-op there.
-  fromState: 'neutral' | 'ruins' | 'temple';
+  fromState: 'neutral' | 'ruins'; // what to revert to if founding fails (§9 — no half-built garbage states)
   startedRound: number;
   completesRound: number;       // startedRound + 1 — see resolveFoundingForPlayer in game.ts
 }
@@ -220,16 +230,26 @@ export interface StrategicSite {
   /**
    * v11 — Temple's economic level once founded: 1 (Temple I, +1 income) or
    * 2 (Temple II, +2 income/+1 production). Null while neutral/ruins/
-   * founding. Set to 1 the instant founding completes, and to 1 again
-   * (while `state` is 'upgradingTemple') during an in-progress upgrade —
-   * the Temple II bonus only applies once the upgrade actually resolves.
-   * Cleared to null whenever the site becomes Ruins — investment is NEVER
-   * preserved through a Ruins state, not even for the original owner
-   * re-founding their own former site (deliberate — see RULES_VERSION v11
-   * note: "Temple owns points... destroying economic infrastructure
-   * destroys its accumulated investment instead of transferring it").
+   * founding. Set to 1 the instant founding completes (unless restored —
+   * see previousTempleLevel below), and to 1 again (while `state` is
+   * 'upgradingTemple') during an in-progress upgrade — the Temple II bonus
+   * only applies once the upgrade actually resolves. Cleared to null
+   * whenever the site becomes Ruins.
    */
   templeLevel: 1 | 2 | null;
+  /**
+   * v13 reconstruction memory — set from `templeLevel`/`ownerId` the instant
+   * a Temple is destroyed into Ruins (see attackStructure), and consumed
+   * (cleared back to null) the instant a founding attempt on this site
+   * completes (see completeFounding). If the player completing founding
+   * equals `previousOwnerId`, the Temple is RESTORED directly to
+   * `previousTempleLevel` instead of resetting to Temple I — "the original
+   * owner is repairing sacred infrastructure, not rebuilding a whole
+   * civilization investment from scratch." Null on a virgin site that has
+   * never been destroyed, or once consumed.
+   */
+  previousTempleLevel: 1 | 2 | null;
+  previousOwnerId: number | null;
 }
 
 // Phase 10 correction — a Farm is Agrar's economy engine, built directly by
