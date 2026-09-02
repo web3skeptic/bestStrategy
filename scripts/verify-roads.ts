@@ -9,7 +9,7 @@
 import {
   createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, getRoadAt, getValidRoadHexes,
   getEffectiveSpeed, selectUnit, moveUnit, getPlayerCapital, getStructureAt,
-  createUnit, canStartFarm, startFarm,
+  createUnit, canStartFarm, startFarm, canPillageRoad, pillageRoad,
 } from '../src/game';
 import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, AGRAR_FARM_COST } from '../src/factions';
 import { hexNeighbors, hexEqual, hexKey, hexDistance } from '../src/hex';
@@ -218,8 +218,8 @@ console.log('\n=== Movement bonus applies to Agrar units ONLY (§26) ===');
   check('a Temple unit standing on the SAME road gets NO bonus — treats it as normal terrain (§26)', getEffectiveSpeed(state, templeWarrior) === templeBaseSpeed);
 }
 
-// ── Pillage (§25) ──
-console.log('\n=== Pillage (§25) ===');
+// ── Pillage (§25; v14 — a real action, not automatic-on-move) ──
+console.log('\n=== Pillage (§25, v14) ===');
 {
   const state = setup();
   const builder = clearRoadArea(state, 0);
@@ -236,11 +236,21 @@ console.log('\n=== Pillage (§25) ===');
   selectUnit(state, templeWarrior.id);
   const moved = moveUnit(state, roadPos);
   check('the enemy unit successfully moves onto the road', moved.moved && hexEqual(templeWarrior.pos, roadPos));
-  check('the road is destroyed on arrival (auto-pillage)', !getRoadAt(state, roadPos));
+  check('v14 — merely ending a move on it does NOT destroy the road', !!getRoadAt(state, roadPos));
+  check('v14 — merely ending a move on it does NOT mark it pillaged', !state.pillagedRoadHexes.has(`${roadPos.q},${roadPos.r}`));
+
+  // It takes a deliberate, separate action — and a fully unused activation
+  // (the unit already spent its move, but hasn't attacked, so it still has one).
+  check('the enemy unit CAN pillage it as a separate action', canPillageRoad(state, templeWarrior));
+  const pillaged = pillageRoad(state, templeWarrior.id);
+  check('pillageRoad succeeds', pillaged);
+  check('the road is now destroyed', !getRoadAt(state, roadPos));
   check('the hex is now marked as pillaged (cheaper to rebuild)', state.pillagedRoadHexes.has(`${roadPos.q},${roadPos.r}`));
+  check('pillaging consumed the unit\'s whole activation', templeWarrior.hasMoved && templeWarrior.hasAttacked);
 }
 {
-  // An owner's OWN unit walking across its own road never pillages it.
+  // An owner's OWN unit walking across its own road never pillages it, and
+  // can't use the pillage action on it either.
   const state = setup();
   const builder = clearRoadArea(state, 0);
   const roadPos = getValidRoadHexes(state, builder)[0]!;
@@ -255,6 +265,23 @@ console.log('\n=== Pillage (§25) ===');
   const moved = moveUnit(state, roadPos);
   check('the owner\'s own unit successfully moves onto its own road', moved.moved && hexEqual(agrarWarrior.pos, roadPos));
   check('the owner\'s own unit does NOT pillage its own road', !!getRoadAt(state, roadPos));
+  check('the owner cannot use pillage-road on their own Road', !canPillageRoad(state, agrarWarrior));
+}
+{
+  // A unit that has already fully acted this turn cannot pillage.
+  const state = setup();
+  const builder = clearRoadArea(state, 0);
+  const roadPos = getValidRoadHexes(state, builder)[0]!;
+  buildRoad(state, builder.id, roadPos);
+  builder.pos = { q: state.mapRadius * 5, r: state.mapRadius * 5 };
+
+  const templeWarrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  templeWarrior.pos = { ...roadPos };
+  templeWarrior.hasMoved = true; templeWarrior.hasAttacked = true; // already fully acted
+  state.currentPlayerIndex = 1;
+  check('an already-acted unit cannot pillage', !canPillageRoad(state, templeWarrior));
+  check('pillageRoad rejects it too', !pillageRoad(state, templeWarrior.id));
+  check('the road survives', !!getRoadAt(state, roadPos));
 }
 {
   // Rebuilding a pillaged hex is cheaper than building fresh.
@@ -265,11 +292,10 @@ console.log('\n=== Pillage (§25) ===');
   builder.pos = { q: state.mapRadius * 5, r: state.mapRadius * 5 }; // clear the hex
 
   const templeWarrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
-  templeWarrior.pos = { ...hexNeighbors(roadPos)[0]! };
+  templeWarrior.pos = { ...roadPos };
   templeWarrior.hasMoved = false; templeWarrior.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  selectUnit(state, templeWarrior.id);
-  moveUnit(state, roadPos);
+  pillageRoad(state, templeWarrior.id);
   check('setup: road is pillaged', !getRoadAt(state, roadPos));
 
   // Move the Temple unit off, then rebuild with the Agrar Builder standing

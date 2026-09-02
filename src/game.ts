@@ -1,6 +1,6 @@
 import {
   GameState, Unit, UnitStats, UnitType, Player, HexCoord,
-  StrategicSite, StrategicSiteState, FoundingProgress, Capital, Farm, Road, TrainingOrder,
+  StrategicSite, StrategicSiteState, FoundingProgress, FertileSite, Capital, Farm, Road, TrainingOrder,
   UNIT_COSTS, HILL_DEFENSE_BONUS, HILL_VISION_BONUS, HILL_RANGE_BONUS,
   SUPPORT_RANGE, RANGE_BOOST_RADIUS,
   TechId, TechNode, TECH_NODES, PlayerTech,
@@ -16,7 +16,8 @@ import { calculateDamage, getTypeMultiplier, UnitClass } from './combat';
 import {
   FACTION_UNITS, FactionUnitDef, EARLY_UNLOCKED_SLOTS, STRUCTURES, SITE_ESTABLISH_COST,
   BASE_INCOME_PER_ROUND, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
+  FERTILE_SITE_INCOME,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
@@ -442,7 +443,17 @@ export function getCurrentPlayerVisible(state: GameState): Set<string> {
 
 // ── Terrain generation ──
 
-function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[]): { hills: Set<string>; walls: Set<string>; forests: Set<string> } {
+// §24 (v14 map-fairness pass) — Capitals never spawn boxed in by mountains:
+// no hill or wall may land within this radius of EITHER Capital, guaranteed
+// (not probabilistic) — see the capitalExclusion set below. This alone
+// already gives every Capital all 6 of its immediate neighbours passable
+// (exceeding §28's "at least 5 of 6" ask), since radius 2 fully contains
+// radius 1. Deliberately symmetric around BOTH Capitals regardless of which
+// (still-secret) faction ends up there — see §29, terrain must never be
+// generated differently based on a hidden pick.
+const CAPITAL_MOUNTAIN_EXCLUSION_RADIUS = 2;
+
+function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[], capitalPositions: HexCoord[] = []): { hills: Set<string>; walls: Set<string>; forests: Set<string> } {
   const hills = new Set<string>();
   const walls = new Set<string>();
   const forests = new Set<string>();
@@ -458,6 +469,18 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
       reservedBuffer.add(hexKey(n));
     }
   }
+  // Hard mountain-free zone around every Capital — hills/walls can never be
+  // placed here at all (checked alongside `reserved` everywhere below), not
+  // just avoided as growth seeds like the softer `reservedBuffer`.
+  const capitalExclusion = new Set<string>();
+  for (const cap of capitalPositions) {
+    for (let dq = -CAPITAL_MOUNTAIN_EXCLUSION_RADIUS; dq <= CAPITAL_MOUNTAIN_EXCLUSION_RADIUS; dq++) {
+      for (let dr = Math.max(-CAPITAL_MOUNTAIN_EXCLUSION_RADIUS, -dq - CAPITAL_MOUNTAIN_EXCLUSION_RADIUS); dr <= Math.min(CAPITAL_MOUNTAIN_EXCLUSION_RADIUS, -dq + CAPITAL_MOUNTAIN_EXCLUSION_RADIUS); dr++) {
+        capitalExclusion.add(hexKey({ q: cap.q + dq, r: cap.r + dr }));
+      }
+    }
+  }
+  const noMountain = (key: string): boolean => reserved.has(key) || capitalExclusion.has(key);
 
   const used = new Set<string>();
 
@@ -468,13 +491,13 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
       const idx = Math.floor(Math.random() * queue.length);
       const hex = queue.splice(idx, 1)[0]!;
       const key = hexKey(hex);
-      if (used.has(key) || reserved.has(key) || !allKeys.has(key)) continue;
+      if (used.has(key) || noMountain(key) || !allKeys.has(key)) continue;
       target.add(key);
       used.add(key);
       placed++;
       for (const n of hexNeighbors(hex)) {
         const nk = hexKey(n);
-        if (!used.has(nk) && !reserved.has(nk) && allKeys.has(nk) && Math.random() < growProb) {
+        if (!used.has(nk) && !noMountain(nk) && allKeys.has(nk) && Math.random() < growProb) {
           queue.push(n);
         }
       }
@@ -484,14 +507,14 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
   const wallSeeds = 3 + Math.floor(Math.random() * 3);
   for (let i = 0; i < wallSeeds; i++) {
     const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
-    if (reservedBuffer.has(hexKey(seed))) continue;
+    if (reservedBuffer.has(hexKey(seed)) || capitalExclusion.has(hexKey(seed))) continue;
     growCluster(seed, walls, 3 + Math.floor(Math.random() * 4), 0.55);
   }
 
   const hillSeeds = 4 + Math.floor(Math.random() * 4);
   for (let i = 0; i < hillSeeds; i++) {
     const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
-    if (reservedBuffer.has(hexKey(seed)) || used.has(hexKey(seed))) continue;
+    if (reservedBuffer.has(hexKey(seed)) || capitalExclusion.has(hexKey(seed)) || used.has(hexKey(seed))) continue;
     growCluster(seed, hills, 3 + Math.floor(Math.random() * 5), 0.6);
   }
 
@@ -499,7 +522,7 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
     const [q, r] = wk.split(',').map(Number);
     for (const n of hexNeighbors({ q: q!, r: r! })) {
       const nk = hexKey(n);
-      if (!used.has(nk) && !reserved.has(nk) && allKeys.has(nk) && Math.random() < 0.35) {
+      if (!used.has(nk) && !noMountain(nk) && allKeys.has(nk) && Math.random() < 0.35) {
         hills.add(nk);
         used.add(nk);
       }
@@ -532,6 +555,38 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
 
   return { hills, walls, forests };
 }
+
+// §25/§28 (v14 map-fairness pass) — a best-effort openness check: flood-fill
+// from a Capital through non-wall tiles, capped at `radius` hex steps, and
+// compare how much of that whole disk (minus walls) was actually reachable.
+// A healthy start has multiple routes out, so nearly the entire nearby
+// non-wall area should be reachable; a big chunk cut off means a wall ring
+// has boxed the Capital into a narrow corridor (or worse). This is a proxy,
+// not a full graph-theoretic chokepoint analyzer — see generateTerrain's
+// retry loop in createGameState, which just regenerates on failure rather
+// than trying to fix a bad layout in place.
+function capitalHasOpenApproach(capital: HexCoord, walls: Set<string>, mapRadius: number, radius = 4, minFraction = 0.7): boolean {
+  const within = hexesWithinRadius(capital, radius, mapRadius);
+  const totalNonWall = within.filter(h => !walls.has(hexKey(h))).length;
+  if (totalNonWall === 0) return true; // degenerate map — never block on it
+  const visited = new Set<string>([hexKey(capital)]);
+  const queue: { hex: HexCoord; dist: number }[] = [{ hex: capital, dist: 0 }];
+  let reached = 0;
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur.dist > 0) reached++;
+    if (cur.dist >= radius) continue;
+    for (const n of hexNeighbors(cur.hex)) {
+      const nk = hexKey(n);
+      if (visited.has(nk) || hexDistance({ q: 0, r: 0 }, n) > mapRadius || walls.has(nk)) continue;
+      visited.add(nk);
+      queue.push({ hex: n, dist: cur.dist + 1 });
+    }
+  }
+  return reached >= totalNonWall * minFraction;
+}
+
+const TERRAIN_GEN_ATTEMPTS = 12; // bounded retry if a Capital ends up boxed in
 
 // ── Support boosts ──
 
@@ -758,6 +813,10 @@ export function getPlayerIncome(state: GameState, playerId: number): number {
     if (site.state !== 'temple' && site.state !== 'upgradingTemple') continue;
     if (site.templeLevel) income += TEMPLE_LEVEL_INCOME[site.templeLevel];
   }
+  // v14 — only ever non-empty in a 1v1 Agrar mirror (see
+  // resolveMatchupObjectives); a flat +FERTILE_SITE_INCOME per controlled
+  // site, nothing else, so this is the ONLY place Fertile Sites touch income.
+  income += state.fertileSites.filter(f => f.ownerId === playerId).length * FERTILE_SITE_INCOME;
   return income;
 }
 
@@ -903,7 +962,29 @@ function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): 
     for (const a of pool) {
       const b: HexCoord = { q: -a.q, r: -a.r }; // antipodal — always on-map, always 2*mapRadius away
       const starts = [a, b];
-      const neutrals = spread(numNeutral, starts, MIN_TEMPLE_SEPARATION, false);
+      // §21 (v14 map-fairness pass) — 180° ROTATIONAL symmetry for the
+      // neutral objectives too, not just spread-maximization: place the
+      // first via the existing best-candidate algorithm, then force its
+      // exact antipodal counterpart as the second (numNeutral is always 2
+      // in a 1v1 match — see neutralSiteCountForPlayers). Since the two
+      // Capitals are themselves already an exact 180° pair (a/b above),
+      // rotating the whole board 180° maps player A's Capital+objective
+      // onto player B's, guaranteeing equal geographic access for both —
+      // not just "far enough apart" as the old spread-only heuristic gave.
+      // Falls back to the general spread algorithm if the naive rotation
+      // happens to collide with something (never hangs/crashes).
+      let neutrals: HexCoord[] | null = null;
+      if (numNeutral === 2) {
+        const first = spread(1, starts, MIN_TEMPLE_SEPARATION, false);
+        if (first) {
+          const n0 = first[0]!;
+          const n1: HexCoord = { q: -n0.q, r: -n0.r };
+          const secondValid = hexDistance({ q: 0, r: 0 }, n1) <= mapRadius
+            && !hexEqual(n1, n0) && minDistTo(n1, [...starts, n0]) >= MIN_TEMPLE_SEPARATION;
+          if (secondValid) neutrals = [n0, n1];
+        }
+      }
+      if (!neutrals) neutrals = spread(numNeutral, starts, MIN_TEMPLE_SEPARATION, false);
       if (!neutrals) continue;
       const unitPositions = assignUnits(starts, neutrals);
       if (!unitPositions) continue;
@@ -1004,7 +1085,20 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   // each Capital stay clear/passable for the player's first recruits.
   const allSitePositions = [...layout.starts, ...layout.neutrals];
   const allUnitPositions = layout.unitPositions.flat();
-  const { hills, walls, forests } = generateTerrain(mapRadius, allSitePositions, allUnitPositions);
+  // §25/§28 (v14 map-fairness pass) — regenerate terrain (bounded attempts)
+  // if either Capital ends up with a choked/boxed-in approach. The hard
+  // mountain-free zone (generateTerrain's capitalExclusion) already
+  // guarantees an open IMMEDIATE neighbourhood every time; this retry only
+  // guards against a wall ring forming a bit further out.
+  let hills: Set<string>, walls: Set<string>, forests: Set<string>;
+  let terrainAttempt = 0;
+  do {
+    ({ hills, walls, forests } = generateTerrain(mapRadius, allSitePositions, allUnitPositions, layout.starts));
+    terrainAttempt++;
+  } while (
+    terrainAttempt < TERRAIN_GEN_ATTEMPTS
+    && !layout.starts.every(cap => capitalHasOpenApproach(cap, walls, mapRadius))
+  );
 
   // §3 — a match starts with the Capital only: no neutral Warrior/Archer/
   // Founder, no Founding Round. Faction choice happens immediately (see
@@ -1017,7 +1111,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const firstPlayer = Math.floor(Math.random() * numPlayers);
 
   const state: GameState = {
-    players, units, strategicSites, capitals, farms: [], hills, walls, forests, explored,
+    players, units, strategicSites, fertileSites: [], capitals, farms: [], hills, walls, forests, explored,
     currentPlayerIndex: firstPlayer, firstPlayerIndex: firstPlayer,
     phase: 'playing', mapRadius,
     winner: null,
@@ -1027,7 +1121,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     spawnedSiteIds: new Set(),
     playerTech,
     teleportBuildings: [],
-    buildHexes: [],
+    buildHexes: [], buildKind: null,
     trainingQueue: [],
     roads: [],
     pillagedRoadHexes: new Set(),
@@ -1079,7 +1173,31 @@ export function chooseFaction(state: GameState, playerId: number, faction: Facti
   if (player.faction !== null) return player.faction === faction;
 
   player.faction = faction;
+  // The instant BOTH factions are now known (this call may be the second/
+  // final one), resolve the matchup-specific neutral objective layer —
+  // never before, so the opponent can never infer a still-secret pick from
+  // which objective type appears on the board (§13, v14).
+  if (!isAwaitingFactionReveal(state)) resolveMatchupObjectives(state);
   return true;
+}
+
+// v14 — 1v1 ONLY: if both revealed factions are Agrar, the 2 neutral
+// objective positions already generated at map-gen time (as ordinary
+// StrategicSites, since faction wasn't known yet) become Fertile Sites
+// instead — reusing the exact same ids/positions (and therefore the same
+// placement/fairness/spread logic already applied to them) rather than
+// generating a second, independent layout. Every other matchup (Temple vs
+// Temple, Agrar vs Temple) leaves strategicSites untouched and
+// fertileSites empty. 3+ player games are out of scope for this — the
+// "matchup" concept only applies to a clean 1v1 — and simply keep the
+// default Temple sacred sites.
+function resolveMatchupObjectives(state: GameState): void {
+  if (state.players.length !== 2) return;
+  const [a, b] = state.players;
+  if (a!.faction === 'agrar' && b!.faction === 'agrar') {
+    state.fertileSites = state.strategicSites.map(site => ({ id: site.id, pos: { ...site.pos }, ownerId: null }));
+    state.strategicSites = [];
+  }
 }
 
 // Display-only label for a Founder-type unit, reflecting its owner's
@@ -1276,15 +1394,16 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
 // bunker, it can never leapfrog to some far corner of the map, and building
 // a new Farm immediately expands the territory for the next one. It must
 // also be: on the map, empty/passable terrain, not a sacred site/Capital/
-// structure, not occupied by a unit. Adjacent to the Capital OR another
-// Farm is fine — no minimum spacing between Farms (removed; it made
-// legitimate-looking adjacent tiles reject for a rule players found
-// confusing rather than meaningful).
+// Fertile Site/structure, not occupied by a unit, and not directly adjacent
+// to another Farm (`distance >= FARM_MIN_SPACING` — exactly 2 apart is
+// legal, touching is not). Adjacent to the Capital itself is fine (tight
+// bunkering).
 export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return [];
   const capital = state.capitals.find(c => c.playerId === player.id);
   if (!capital) return [];
+  const allOwn = allFarmsOf(state, player.id);
   const territory = getAgrarTerritory(state, player.id);
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
@@ -1292,10 +1411,12 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
     const key = hexKey(hex);
     if (state.hills.has(key) || state.walls.has(key)) continue;
     if (getStrategicSiteAt(state, hex)) continue;
+    if (state.fertileSites.some(f => hexEqual(f.pos, hex))) continue;
     if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
     if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
     if (getUnitAt(state, hex)) continue;
     if (!territory.has(key)) continue; // must land inside existing Agrar Territory
+    if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue; // not adjacent to another Farm
     result.push(hex);
   }
   return result;
@@ -1415,6 +1536,45 @@ export function isSiteCultivationBlocked(state: GameState, pos: HexCoord, temple
     if (getAgrarCultivation(state, p.id).has(key)) return true;
   }
   return false;
+}
+
+// ── Fertile Sites (v14 — Agrar-vs-Agrar central objective) ──
+//
+// Only ever non-empty in a 1v1 Agrar mirror (see resolveMatchupObjectives).
+// A pure occupation objective: no HP, no founding delay, no level — stand
+// on it with ANY Agrar unit (combat or Builder) and spend a full,
+// completely unused activation to claim it, no Energy cost. Since only one
+// unit can ever occupy a hex, a site's current owner is automatically safe
+// from reclaim for as long as their own unit physically sits there — a
+// rival can only reclaim it once that unit moves away (or dies), then walks
+// on and spends their own activation, per §8 of the design brief.
+export function canClaimFertileSite(state: GameState, unit: Unit): FertileSite | null {
+  if (isMatchSetupRestricted(state)) return null;
+  if (unit.playerId !== getCurrentPlayer(state).id) return null;
+  if (unit.hasMoved || unit.hasAttacked) return null; // needs a fully unused activation
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player || player.faction !== 'agrar') return null; // Agrar only
+  const site = state.fertileSites.find(f => hexEqual(f.pos, unit.pos));
+  if (!site) return null;
+  if (site.ownerId === unit.playerId) return null; // already yours — nothing to claim
+  return site;
+}
+
+// Claim resolves INSTANTLY (no multi-round founding process, unlike Temple/
+// Farm) — spending the activation IS the whole cost. Deliberately minimal:
+// only `ownerId` changes. No HP, no Command/production/territory/
+// cultivation/DEF/heal/Road-speed effect, and it never counts toward
+// MAX_ACTIVE_FARMS — see getPlayerIncome for its one and only effect
+// (+FERTILE_SITE_INCOME per controlled site).
+export function claimFertileSite(state: GameState, unitId: string): boolean {
+  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+  if (!unit) return false;
+  const site = canClaimFertileSite(state, unit);
+  if (!site) return false;
+  site.ownerId = unit.playerId;
+  unit.hasMoved = true;
+  unit.hasAttacked = true;
+  return true;
 }
 
 // ── Temple upgrade (v11 Temple conquest + upgrade system) ──
@@ -1542,15 +1702,38 @@ export function buildRoad(state: GameState, unitId: string, pos: HexCoord): bool
   return true;
 }
 
-// A unit that ends its move on a road it does NOT own tramples it — the
-// road is destroyed (moved to pillagedRoadHexes, cheaper to rebuild than a
-// fresh one). Called from moveUnit right after the position is finalized
-// (including any auto-teleport landing).
-function pillageRoadIfEnemy(state: GameState, unit: Unit): void {
+// v14 — pillaging a Road is a real, deliberate action now, not an automatic
+// side effect of merely moving through it: an enemy unit standing on an
+// Agrar Road no longer destroys it just by arriving/ending its move there
+// (that used to give Temple's superior mobility a free, no-cost way to
+// cripple Agrar's infrastructure in passing). The occupied road segment is
+// already effectively unusable to its owner while an enemy stands on it —
+// Agrar's own units simply can't move onto/through an occupied hex at all,
+// same as any other unit collision — but the Road itself survives unless
+// the occupier spends its action to actually destroy it (see
+// canPillageRoad/pillageRoad below), giving them a real choice between
+// acting normally and dedicating the turn to demolition. Same gate as
+// attack-structure (may have already moved this turn — pillaging IS this
+// unit's "attack" for the turn — just needs the action itself unused).
+export function canPillageRoad(state: GameState, unit: Unit): boolean {
+  if (isMatchSetupRestricted(state)) return false;
+  if (unit.playerId !== getCurrentPlayer(state).id) return false;
+  if (unit.hasAttacked) return false;
+  if (unit.stats.cantShootAfterMove && unit.hasMoved) return false;
   const road = getRoadAt(state, unit.pos);
-  if (!road || road.ownerId === unit.playerId) return;
+  if (!road) return false;
+  return road.ownerId !== unit.playerId; // never your own Road
+}
+
+export function pillageRoad(state: GameState, unitId: string): boolean {
+  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+  if (!unit || !canPillageRoad(state, unit)) return false;
+  const road = getRoadAt(state, unit.pos)!;
   state.roads = state.roads.filter(r => r !== road);
   state.pillagedRoadHexes.add(hexKey(road.pos));
+  unit.hasMoved = true;
+  unit.hasAttacked = true;
+  return true;
 }
 
 // ── Tech research (single-slot, multi-round — tech-tree pacing pass) ──
@@ -1929,9 +2112,6 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
       }
     }
   }
-
-  // §23-25 — trampling an enemy-owned road pillages it.
-  pillageRoadIfEnemy(state, unit);
 
   revealForPlayer(state, unit.playerId, unit.pos, unit.stats.vision);
   updateHighlights(state);

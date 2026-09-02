@@ -1,5 +1,5 @@
 import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST } from './factions';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, FERTILE_SITE_INCOME } from './factions';
 import { hexEqual, hexKey, hexDistance } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -56,6 +56,11 @@ import {
   canBuildRoad,
   buildRoad,
   getValidRoadHexes,
+  canPillageRoad,
+  pillageRoad,
+  getRoadAt,
+  canClaimFertileSite,
+  claimFertileSite,
   isAwaitingFactionReveal,
   chooseFaction,
   founderDisplayName,
@@ -1032,6 +1037,26 @@ function foundBlockReason(state: GameState, unit: Unit): string | null {
   return null;
 }
 
+// v14 — WHY a unit standing on an enemy-owned Road can't pillage it right
+// now. Only shown at all while actually standing on one (see the caller) —
+// this isn't a general-purpose action like Found/Build Farm.
+function pillageRoadBlockReason(state: GameState, unit: Unit): string | null {
+  if (unit.hasAttacked) return 'already acted this round';
+  return null;
+}
+
+// v14 — WHY an Agrar unit standing on a Fertile Site can't claim it right
+// now (1v1 Agrar-mirror only — fertileSites is empty in every other
+// matchup, so this never shows there). Only shown while actually standing
+// on one — see the caller.
+function fertileSiteBlockReason(state: GameState, unit: Unit): string | null {
+  const site = state.fertileSites.find(f => hexEqual(f.pos, unit.pos));
+  if (!site) return null; // caller already checked this — defensive only
+  if (site.ownerId === unit.playerId) return 'you already control this site';
+  if (unit.hasMoved || unit.hasAttacked) return 'already acted — needs a fully unused activation';
+  return null;
+}
+
 // ── Render & UI ──
 
 function render(): void {
@@ -1331,6 +1356,26 @@ function updateUI(): void {
         captureBtn.title = reason ?? '';
         captureBtn.classList.remove('active');
         captureBtn.textContent = reason ? `⚒ Consecrate/Restore — ${reason}` : `⚒ Consecrate Temple I (⚡${SITE_ESTABLISH_COST})`;
+      } else if (player.faction === 'agrar' && state.fertileSites.some(f => hexEqual(f.pos, unit.pos))) {
+        // v14 — Claim Fertile Site takes priority over Build Road for a
+        // Builder standing exactly on one (1v1 Agrar mirror only — any
+        // Agrar unit, not just the Builder, can claim). Always shown while
+        // standing on one, disabled-with-reason rather than hidden.
+        const reason = fertileSiteBlockReason(state, unit);
+        captureBtn.style.display = 'block';
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.classList.remove('active');
+        captureBtn.textContent = reason ? `🌾 Claim Fertile Site — ${reason}` : '🌾 Claim Fertile Site (consumes full activation)';
+      } else if (getRoadAt(state, unit.pos) && getRoadAt(state, unit.pos)!.ownerId !== unit.playerId) {
+        // v14 — Pillage Road: ANY unit (not just Agrar/Builder) standing on
+        // an enemy-owned Road. Always shown while standing on one.
+        const reason = pillageRoadBlockReason(state, unit);
+        captureBtn.style.display = 'block';
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.classList.remove('active');
+        captureBtn.textContent = reason ? `⛏ Pillage Road — ${reason}` : '⛏ Pillage Road (destroys it)';
       } else if (isAgrarBuilder) {
         // §39-40 (phase 11 correction) — Build Road is ALWAYS shown for an
         // Agrar Builder, never hidden behind a hidden precondition; disabled
@@ -1712,6 +1757,7 @@ let buildingTeleport: BuildTeleportState | null = null;
 function enterBuildTeleport(templeId: string): void {
   buildingTeleport = { templeId, phase: 1, firstPos: null };
   state.buildHexes = getValidTeleportHexes(state, templeId);
+  state.buildKind = 'teleport';
   render();
 }
 
@@ -1720,6 +1766,7 @@ function enterBuildTeleport(templeId: string): void {
 function clearBuildTeleport(): void {
   buildingTeleport = null;
   state.buildHexes = [];
+  state.buildKind = null;
 }
 
 // User-initiated cancel: clear state and re-render.
@@ -1750,6 +1797,7 @@ function enterBuildFarm(unitId: string): void {
   const unit = state.units.find(u => u.id === unitId);
   buildingFarm = { unitId };
   state.buildHexes = unit ? getValidFarmHexes(state, unit) : [];
+  state.buildKind = 'farm';
   render();
 }
 
@@ -1757,6 +1805,7 @@ function enterBuildFarm(unitId: string): void {
 function clearBuildFarm(): void {
   buildingFarm = null;
   state.buildHexes = [];
+  state.buildKind = null;
 }
 
 function cancelBuildFarm(): void {
@@ -1805,6 +1854,7 @@ function enterBuildRoad(unitId: string): void {
   const unit = state.units.find(u => u.id === unitId);
   buildingRoad = { unitId };
   state.buildHexes = unit ? getValidRoadHexes(state, unit) : [];
+  state.buildKind = 'road';
   render();
 }
 
@@ -1812,6 +1862,7 @@ function enterBuildRoad(unitId: string): void {
 function clearBuildRoad(): void {
   buildingRoad = null;
   state.buildHexes = [];
+  state.buildKind = null;
 }
 
 function cancelBuildRoad(): void {
@@ -2169,6 +2220,20 @@ function doFound(): void {
     });
     return;
   }
+  // v14 — same priority order as the button's own display logic: Claim
+  // Fertile Site (if standing on one) beats Build Road for a Builder.
+  if (canClaimFertileSite(state, unit)) {
+    sendOrCall({ type: 'action', action: 'claim-fertile-site', params: { unitId: unit.id } }, () => {
+      if (claimFertileSite(state, unit.id)) logCombat(`Claimed a Fertile Site at (${unit.pos.q},${unit.pos.r})`);
+    });
+    return;
+  }
+  if (canPillageRoad(state, unit)) {
+    sendOrCall({ type: 'action', action: 'pillage-road', params: { unitId: unit.id } }, () => {
+      if (pillageRoad(state, unit.id)) logCombat(`Pillaged a Road at (${unit.pos.q},${unit.pos.r})`);
+    });
+    return;
+  }
   if (getValidRoadHexes(state, unit).some(h => canBuildRoad(state, unit, h))) {
     enterBuildRoad(unit.id);
   }
@@ -2310,8 +2375,11 @@ function handleHexClick(clientX: number, clientY: number): void {
       const moveResult = moveUnit(state, hex);
       if (moveResult.moved) {
         const site = getStrategicSiteAt(state, hex);
+        const fertileSite = state.fertileSites.find(f => hexEqual(f.pos, hex));
         if (movingUnit?.type === 'founder' && site && (site.state === 'neutral' || site.state === 'ruins')) {
           logCombat(`Moved onto a foundable site at (${hex.q},${hex.r}) — Found available!`);
+        } else if (fertileSite && movingUnit && fertileSite.ownerId !== movingUnit.playerId) {
+          logCombat(`Moved onto a Fertile Site at (${hex.q},${hex.r}) — Claim available!`);
         } else {
           logCombat(`Moved to (${hex.q}, ${hex.r})`);
         }
@@ -2353,6 +2421,18 @@ function handleHexClick(clientX: number, clientY: number): void {
   if (myStructureHere) {
     sendOrCall({ type: 'action_select_temple', templeId: structureId! }, () => selectSite(state, structureId!));
     return;
+  }
+
+  // v14 §11 — Fertile Sites aren't a recruit-eligible "owned structure" (no
+  // selectSite support), so surface their status as a toast on click instead
+  // of silently falling through to deselect.
+  if (!unit && !structureRef) {
+    const fertileSite = state.fertileSites.find(f => hexEqual(f.pos, hex));
+    if (fertileSite) {
+      const owner = fertileSite.ownerId !== null ? state.players.find(p => p.id === fertileSite.ownerId)?.name : null;
+      const status = owner ? `Controlled by ${owner}` : 'Unclaimed';
+      showToast(`Fertile Site — ${status} — Income when controlled: +${FERTILE_SITE_INCOME}⚡/round`);
+    }
   }
 
   // Deselect

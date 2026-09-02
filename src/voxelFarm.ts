@@ -159,3 +159,77 @@ export function buildFarm(teamColor: number, damageStage: 0 | 1 | 2 = 0): THREE.
   g.scale.setScalar(FARM_SCALE);
   return g;
 }
+
+// ── Fertile Site (v14 — Agrar-vs-Agrar central objective) ──
+//
+// A visually larger, richer relative of the ordinary Farm — denser golden
+// crop rows plus a windmill landmark instead of a hut, so it reads as a
+// special contested objective rather than just another player-built Farm.
+// `ownerColor` is null while neutral/unclaimed (grey mill, no team tint).
+const FERTILE_CROP_GOLD = 0xd9b23a;
+const MILL_WALL = 0xb7a98a;
+const MILL_ROOF = 0x6b4a2e;
+const BLADE = 0xe8ddc8;
+const NEUTRAL_TRIM = 0x8a8a8a;
+const FERTILE_SCALE = 1.3; // noticeably bigger than an ordinary Farm (FARM_SCALE 1.15)
+
+function cyl(rTop: number, rBot: number, h: number, seg: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, seg), material);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+export function buildFertileSite(ownerColor: number | null): THREE.Group {
+  const g = new THREE.Group();
+  const soilMat = mat(SOIL);
+  const cropMat = mat(FERTILE_CROP_GOLD, 0.8);
+  const trimColor = ownerColor ?? NEUTRAL_TRIM;
+  const trimMat = new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.6, metalness: 0.1 });
+
+  // Larger hex-prism plot than an ordinary Farm.
+  const plotR = 0.92;
+  g.add(hexPlot(plotR, 0.08, soilMat, 0.04));
+
+  // Denser golden crop rows, filling most of the plot.
+  const rows = 4, cols = 5;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = (c - (cols - 1) / 2) * 0.30;
+      const z = (r - (rows - 1) / 2) * 0.30 - 0.05;
+      if (Math.hypot(x, z) > plotR * 0.82) continue; // keep within the hex footprint
+      g.add(cropCluster(cropMat, x, z, true));
+    }
+  }
+
+  // Windmill landmark — a tower + 4 blades, owner-tinted trim ring.
+  const millX = 0.5, millZ = 0.5;
+  const towerMat = mat(MILL_WALL, 0.8);
+  g.add(cyl(0.14, 0.2, 0.5, 8, towerMat, millX, 0.25, millZ));
+  g.add(cyl(0.16, 0.16, 0.04, 8, trimMat, millX, 0.42, millZ)); // owner-tinted trim band
+  const roofMat = mat(MILL_ROOF, 0.7);
+  g.add(cone(0.17, 0.16, roofMat, millX, 0.58, millZ));
+
+  const bladeMat = mat(BLADE, 0.6);
+  const bladeHub = new THREE.Group();
+  bladeHub.position.set(millX, 0.52, millZ + 0.18);
+  for (let i = 0; i < 4; i++) {
+    const blade = block(0.05, 0.32, 0.02, bladeMat, 0, 0.16, 0);
+    blade.rotation.z = (i * Math.PI) / 2;
+    bladeHub.add(blade);
+  }
+  g.add(bladeHub);
+
+  // Golden banner posts at two opposite hex corners — richer than a Farm's
+  // plain fence, and doubles as the "who controls this" ownership tell
+  // alongside the windmill trim.
+  const bannerMat = trimMat;
+  for (const [x, z] of [hexCorners(plotR + 0.05)[0]!, hexCorners(plotR + 0.05)[3]!]) {
+    g.add(block(0.05, 0.22, 0.05, mat(FENCE, 0.9), x, 0.11, z));
+    g.add(block(0.14, 0.1, 0.02, bannerMat, x, 0.2, z));
+  }
+
+  g.scale.setScalar(FERTILE_SCALE);
+  return g;
+}

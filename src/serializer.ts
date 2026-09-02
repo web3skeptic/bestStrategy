@@ -7,6 +7,7 @@ export interface SerializedGameState {
   players: GameState['players'];
   units: GameState['units'];
   strategicSites: GameState['strategicSites'];
+  fertileSites: GameState['fertileSites'];
   capitals: GameState['capitals'];
   farms: GameState['farms'];
   trainingQueue: GameState['trainingQueue'];

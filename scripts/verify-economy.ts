@@ -20,7 +20,7 @@ import {
   createUnit,
 } from '../src/game';
 import {
-  BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS,
+  BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_MIN_SPACING,
   AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, SITE_ESTABLISH_COST,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS, STRUCTURES,
 } from '../src/factions';
@@ -218,10 +218,9 @@ console.log('\n=== Agrar Farms: construction (§3) ===');
 console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
 {
   // A Farm CAN be directly adjacent to the Capital (encourages tight
-  // bunkering) — there is no minimum Farm-to-Farm spacing either (removed —
-  // it rejected legitimate-looking adjacent tiles for a rule players found
-  // confusing rather than meaningful); only landing exactly ON another
-  // structure's own hex is excluded.
+  // bunkering) — only the Farm-to-Farm minimum spacing (§14, v14 — simple
+  // readable rule: distance >= FARM_MIN_SPACING, exactly 2 apart is legal,
+  // touching is not) still excludes hexes.
   const state = setup();
   clearFarmArea(state, 0);
   const capital = state.capitals.find(c => c.playerId === 0)!;
@@ -233,8 +232,8 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   check('no candidate hex lands on the Capital itself', !hexesFromCapitalEdge.some(h => hexEqual(h, capital.pos)));
   check('a Farm CAN be built directly adjacent to the Capital', hexesFromCapitalEdge.some(h => hexDistance(h, capital.pos) === 1), `got ${JSON.stringify(hexesFromCapitalEdge)}`);
 
-  // Build one Farm, then verify a hex directly adjacent to it is STILL a
-  // valid candidate (no spacing rule) as long as it's inside territory.
+  // Build one Farm, then verify a hex directly adjacent to it (distance 1)
+  // is excluded, but one at exactly FARM_MIN_SPACING (2) is still fine.
   builder.pos = { q: 2, r: 0 };
   builder.hasMoved = false; builder.hasAttacked = false;
   const first = getValidFarmHexes(state, builder)[0]!;
@@ -244,8 +243,8 @@ console.log('\n=== Agrar Farms: placement rules (bunker/chain correction) ===');
   builder2.pos = { ...hexNeighbors(first)[0]! };
   builder2.hasMoved = false; builder2.hasAttacked = false;
   const hexesAfter = getValidFarmHexes(state, builder2);
-  check('a hex directly adjacent to an existing Farm is a valid candidate (no min spacing)', hexesAfter.some(h => hexDistance(h, first) === 1), `got ${JSON.stringify(hexesAfter)}`);
-  check('the existing Farm\'s own hex is still excluded (can\'t overlap)', !hexesAfter.some(h => hexEqual(h, first)));
+  check('a hex directly adjacent (distance 1) to an existing Farm is excluded', !hexesAfter.some(h => hexDistance(h, first) === 1), `got ${JSON.stringify(hexesAfter)}`);
+  check(`a hex exactly FARM_MIN_SPACING (${FARM_MIN_SPACING}) from the Farm is still legal`, hexesAfter.some(h => hexDistance(h, first) === FARM_MIN_SPACING), `got ${JSON.stringify(hexesAfter)}`);
 }
 {
   // A Farm can NOT be started far from the Capital or any existing Farm,

@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
 import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory, getAgrarCultivation } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
 import { buildTemple } from './voxelTemple';
-import { buildFarm } from './voxelFarm';
+import { buildFarm, buildFertileSite } from './voxelFarm';
 import { buildUnitModel } from './voxelUnits';
 import { getSharedFaceTexture } from './voxelWarrior';
 
@@ -1146,7 +1146,7 @@ export class Renderer3D {
     }
 
     let i = 0;
-    const place = (hex: HexCoord, color: number, opacity: number) => {
+    const place = (hex: HexCoord, color: number, opacity: number, pulse = false) => {
       let mesh = this.highlightPool[i];
       if (!mesh) {
         mesh = new THREE.Mesh(this.highlightGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4 }));
@@ -1163,6 +1163,12 @@ export class Renderer3D {
       mat.color.setHex(color);
       mat.opacity = opacity;
       mesh.visible = true;
+      // Farm-UX pass (§15/§18) — Farm build-placement hexes pulse continuously
+      // (driven every animation frame in advanceAnimations) instead of sitting
+      // at one flat opacity like every other highlight kind, so legal Farm
+      // cells are unmistakably distinct from ordinary movement/build tints.
+      mesh.userData.pulse = pulse;
+      if (pulse) mesh.userData.pulseBaseOpacity = opacity;
       i++;
     };
 
@@ -1175,7 +1181,9 @@ export class Renderer3D {
       // exact legal-target set combat validation uses, never re-derived here.
       if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
       else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
-      else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4);
+      else if (buildSet.has(key) && state.buildKind === 'farm') place(hex, 0x2ee65a, 0.55, true); // pulsating agricultural green — see place()
+      else if (buildSet.has(key) && state.buildKind === 'road') place(hex, 0xd9944a, 0.45); // distinct road-specific tan/orange, static
+      else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4); // teleport / fallback
       else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
       else if (roadSet.has(key)) place(hex, 0xb98c50, 0.3);
       else if (zocSet.has(key)) place(hex, 0xff9a2a, 0.22);
@@ -1210,7 +1218,7 @@ export class Renderer3D {
     // occludes those flat tints, which is exactly why we tint the model itself here).
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
 
-    interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; }
+    interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; }
     const structures: StructureVisual[] = [];
     for (const capital of state.capitals as Capital[]) {
       const owner = state.players.find(p => p.id === capital.playerId);
@@ -1250,6 +1258,21 @@ export class Renderer3D {
       });
     }
 
+    // Fertile Sites (v14, Agrar-vs-Agrar only — empty array otherwise): a
+    // pure occupation objective, so unlike everything else here it has no
+    // HP/maxHp at all (hp:0 skips the HP-bar block below, matching its
+    // "no combat, presence-only" design).
+    for (const site of state.fertileSites as FertileSite[]) {
+      const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
+      structures.push({
+        id: site.id, pos: site.pos, kind: 'fertile',
+        tier: this.structureVisualTier('founding'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
+        canPendingFound: false,
+        hp: 0, maxHp: 0,
+      });
+    }
+
     // Farms are the only structure that can vanish outright (destroyed, not
     // Ruins) — prune any mesh whose id no longer appears in the live state.
     const liveIds = new Set(structures.map(s => s.id));
@@ -1275,7 +1298,9 @@ export class Renderer3D {
       let rebuilt = false;
       if (!entry || entry.color !== st.colorNum || entry.level !== st.tier || (st.kind === 'farm' && entry.stage !== stage)) {
         if (entry) { this.structureGroup.remove(entry.mesh); this.disposeObject(entry.mesh); }
-        const mesh = st.kind === 'farm' ? buildFarm(st.colorNum, stage as 0 | 1 | 2) : buildTemple(st.colorNum, st.tier);
+        const mesh = st.kind === 'farm' ? buildFarm(st.colorNum, stage as 0 | 1 | 2)
+          : st.kind === 'fertile' ? buildFertileSite(st.colorNum === this.P.colors.neutral ? null : st.colorNum)
+          : buildTemple(st.colorNum, st.tier);
         const { x, z } = hexToWorld(st.pos);
         mesh.position.set(x, 0, z);
         this.structureGroup.add(mesh);
@@ -1491,7 +1516,7 @@ export class Renderer3D {
   // language as addHpBar, just a taller offset for the bigger models and a
   // wider bar for the Capital/Temple's larger footprint (structure combat
   // pass §10).
-  private addStructHpBar(parent: THREE.Object3D, id: string, kind: 'capital' | 'site' | 'farm'): { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number } {
+  private addStructHpBar(parent: THREE.Object3D, id: string, kind: 'capital' | 'site' | 'farm' | 'fertile'): { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number } {
     const barW = kind === 'farm' ? 0.9 : 1.15, barH = 0.15;
     const yOffset = kind === 'farm' ? 0.85 : kind === 'capital' ? 3.4 : 2.6;
     const group = new THREE.Group();
@@ -1929,6 +1954,16 @@ export class Renderer3D {
     const now = performance.now();
     this.updateTileFades(now);
     this.updateStructFades(now);
+    // Farm build-placement pulse (§15/§18 Farm-UX pass) — a fast, strong
+    // opacity breathe on every legal-Farm-hex highlight, well above the
+    // usual ~1.3s/subtle pulses elsewhere on the board so it reads as its
+    // own distinct mode, not a variant of the ordinary move/attack tints.
+    const pulseOsc = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(now * 0.008));
+    for (const mesh of this.highlightPool) {
+      if (!mesh.visible || !mesh.userData.pulse) continue;
+      const base = (mesh.userData.pulseBaseOpacity as number) ?? 0.5;
+      (mesh.material as THREE.MeshBasicMaterial).opacity = base * pulseOsc;
+    }
     // Smoothly rotate each unit toward its facing target (set by moves/attacks).
     if (this.unitFacing.size > 0) {
       const dt = Math.min((now - this.lastFacingNow) / 1000, 0.1);

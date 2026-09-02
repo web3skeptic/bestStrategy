@@ -107,7 +107,21 @@ export type FactionId = 'agrar' | 'temple';
 // previous level (see completeFounding). Also: Farm HP 12->18, DEF 4->5
 // (STRUCTURES.farm) — a healthy Farm should generally survive one ordinary
 // non-siege hit.
-export const RULES_VERSION = 13;
+// v14 (balance + map + UX pass): Temple Raider commandCost 1->2 (a speed-3,
+// ZOC-projecting cavalry piece shouldn't field twice the bodies of Agrar's
+// Knight under the same population cap — Energy cost/stats unchanged). Farm
+// min-spacing is BACK as a simple, readable rule (FARM_MIN_SPACING=2 —
+// exactly 2 apart is legal, directly adjacent is not; briefly removed
+// entirely, that was overcorrecting). New: GameState.fertileSites — in a 1v1
+// Agrar-vs-Agrar match ONLY, the 2 neutral objective positions become
+// Fertile Sites (occupy + spend an activation to claim, +1 income each,
+// no HP/level/production/Command/territory effect) instead of Temple sacred
+// sites, which would otherwise be permanently useless to both players — see
+// resolveMatchupObjectives, canClaimFertileSite/claimFertileSite in game.ts.
+// Road pillage is no longer automatic-on-move-through — an enemy unit must
+// spend a full activation on the "pillage-road" action to actually destroy
+// a Road segment (see canPillageRoad/pillageRoad in game.ts).
+export const RULES_VERSION = 14;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -250,6 +264,22 @@ export interface StrategicSite {
    */
   previousTempleLevel: 1 | 2 | null;
   previousOwnerId: number | null;
+}
+
+// v14 (Agrar-mirror central objective) — 1v1 ONLY: when both players reveal
+// as Agrar, the 2 neutral objective positions that would otherwise be
+// Temple sacred sites become Fertile Sites instead (see resolveMatchup
+// Objectives in game.ts, called the instant both factions are revealed —
+// they're empty/inert in every other matchup so nothing here ever runs).
+// Deliberately NOT a StrategicSite: no HP, no founding delay, no level, no
+// production/Command/territory/cultivation effect — a pure "stand on it and
+// spend your activation" occupation objective, contested by presence alone
+// (a rival can only reclaim it once your unit isn't physically standing on
+// it any more — see canClaimFertileSite/claimFertileSite in game.ts).
+export interface FertileSite {
+  id: string;
+  pos: HexCoord;
+  ownerId: number | null; // null = neutral/unclaimed
 }
 
 // Phase 10 correction — a Farm is Agrar's economy engine, built directly by
@@ -472,6 +502,7 @@ export interface GameState {
   players: Player[];
   units: Unit[];
   strategicSites: StrategicSite[];
+  fertileSites: FertileSite[]; // v14 — only non-empty in a 1v1 Agrar-vs-Agrar match, see resolveMatchupObjectives
   capitals: Capital[];
   farms: Farm[];
   hills: Set<string>;       // hex keys of hill tiles
@@ -525,6 +556,8 @@ export interface GameState {
   teleportBuildings: TeleportBuilding[];
   /** @uiOnly hexes highlighted during build-placement mode */
   buildHexes: HexCoord[];
+  /** @uiOnly which build-placement mode buildHexes belongs to right now — v14 Farm-UX pass, so the renderer can give each mode its own distinct look (Farm = pulsating, Road = static) instead of one shared highlight color. Null outside any build mode. */
+  buildKind: 'farm' | 'road' | 'teleport' | null;
   // §5, §19-22 (phase 6 Command system, reworked phase 11) — recruiting
   // queues a TrainingOrder instead of creating the unit instantly: it
   // occupies one of the recruiting player's limited production slots AND

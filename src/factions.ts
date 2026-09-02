@@ -72,7 +72,12 @@ export const TEMPLE_UNITS: FactionUnitDef[] = [
   { id: 'temple_warrior',   faction: 'temple', slot: 'warrior',  displayName: 'Warrior',   earlyUnlock: true,  unitClass: 'warrior', cost: 1, hp: 13, attack: 10, defense: 4, speed: 2, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'voxelWarrior',     placeholderAsset: false },
   { id: 'temple_archer',    faction: 'temple', slot: 'archer',   displayName: 'Archer',    earlyUnlock: true,  unitClass: 'archer',  cost: 2, hp: 12, attack: 11, defense: 3, speed: 2, range: 2, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'archer_standing',  placeholderAsset: false },
   { id: 'temple_spearsman', faction: 'temple', slot: 'spearsman', displayName: 'Spearsman', earlyUnlock: true,  unitClass: 'pike',    cost: 2, hp: 14, attack: 10, defense: 5, speed: 2, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'spearsman_standing', placeholderAsset: false },
-  { id: 'temple_raider',    faction: 'temple', slot: 'horserider', displayName: 'Raider',  earlyUnlock: true,  unitClass: 'cavalry', cost: 3, hp: 14, attack: 13, defense: 4, speed: 3, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
+  // Balance pass — Raider Command 1->2: a speed-3, ZOC-projecting cavalry
+  // piece with strong attack and encirclement value shouldn't also field
+  // twice as many bodies under the same population cap as Agrar's Knight
+  // (Command 2). Energy cost/stats unchanged — Temple keeps the cheaper,
+  // faster, lighter cavalry, just not doubled cavalry count too.
+  { id: 'temple_raider',    faction: 'temple', slot: 'horserider', displayName: 'Raider',  earlyUnlock: true,  unitClass: 'cavalry', cost: 3, hp: 14, attack: 13, defense: 4, speed: 3, range: 1, vision: 3, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
   { id: 'temple_mobile_siege', faction: 'temple', slot: 'catapult', displayName: 'Mobile Siege', earlyUnlock: false, unitClass: 'siege', cost: 4, hp: 15, attack: 12, defense: 3, speed: 2, range: 3, vision: 4, commandCost: 2, isSupport: false, isSiege: true, projectsZOC: false, assetReference: 'catapult_standing', placeholderAsset: false },
   { id: 'temple_champion',  faction: 'temple', slot: 'heavyknight', displayName: 'Champion', earlyUnlock: false, unitClass: 'heavy',  cost: 6, hp: 18, attack: 17, defense: 5, speed: 3, range: 1, vision: 3, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'heavyknight_standing', placeholderAsset: false },
   // hp bumped 13/12/12 -> 15 (brief §38 listed values): the brief's own §34
@@ -155,15 +160,16 @@ export const SITE_ESTABLISH_COST = 6;
 // land INSIDE existing AGRAR_TERRITORY_RADIUS infrastructure reach — the
 // network only grows as a connected bunker, it can't leapfrog across the
 // map, and completing a new Farm itself immediately EXPANDS that reach for
-// the next one. Adjacent to the CAPITAL or another Farm is fine — there is
-// no minimum Farm-to-Farm spacing (removed — it rejected legitimate-looking
-// adjacent tiles for a rule players found confusing rather than meaningful).
-// A Farm costing 6⚡ against +1⚡/round income is a deliberate 6-round
-// payback — a meaningful long-term investment, not something bought
-// casually alongside a full army.
+// the next one. Adjacent to the CAPITAL is fine (tight bunkering), but a new
+// Farm may never land directly adjacent to another Farm — simple readable
+// rule: `hexDistance(existingFarm, newHex) >= FARM_MIN_SPACING`, i.e. exactly
+// 2 apart is legal, 1 apart (touching) is not. A Farm costing 6⚡ against
+// +1⚡/round income is a deliberate 6-round payback — a meaningful
+// long-term investment, not something bought casually alongside a full army.
 export const AGRAR_FARM_COST = 6;
 export const AGRAR_FARM_INCOME = 1;
 export const MAX_ACTIVE_FARMS = 4;
+export const FARM_MIN_SPACING = 2; // Farms may not be directly adjacent; exactly 2 apart is legal
 // Infrastructure reach ONLY (Farm/Road placement) — see getAgrarTerritory.
 // Grants NO combat bonus (removed in the economy/pacing balance pass §9 —
 // Agrar's edge is structural: higher HP/DEF, Roads, ZOC, Farms, area denial;
@@ -174,6 +180,15 @@ export const AGRAR_TERRITORY_RADIUS = 2; // around the Capital, and around each 
 // SMALLER and farm-only (no Capital projection) so a Farm can't block
 // founding from two hexes away — see getAgrarCultivation.
 export const CULTIVATION_RADIUS = 1; // an active Farm's own hex + its 6 neighbours — Capital projects none of this
+
+// v14 — Agrar-vs-Agrar central objective (see resolveMatchupObjectives in
+// game.ts). Deliberately minimal: +1 income per controlled site, nothing
+// else (no Command, no production, no territory/cultivation, no DEF, no
+// healing, no Road speed) — a contested map-control reward, not a second
+// Farm network. FERTILE_SITE_COUNT mirrors the normal 1-neutral-site-per-
+// player count used for Temple sacred sites in every other matchup.
+export const FERTILE_SITE_INCOME = 1;
+export const FERTILE_SITE_COUNT = 2;
 
 // v11 (Temple conquest + upgrade system) — replaces the old Devotion I/II
 // purchase ladder with a simple two-stage build/upgrade, matching Agrar's

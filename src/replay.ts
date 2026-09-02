@@ -5,7 +5,7 @@
 import { Renderer } from './renderer';
 import {
   GameState, Unit, UnitType, UnitStats, StrategicSite, StrategicSiteState, FoundingProgress, TempleUpgradeProgress,
-  Capital, Farm, Player, PlayerTech,
+  FertileSite, Capital, Farm, Player, PlayerTech,
   TeleportBuilding, HexCoord, TechId, FactionId, RULES_VERSION,
 } from './types';
 import { generateHexMap, hexKey } from './hex';
@@ -39,6 +39,7 @@ interface SnapshotFarm {
   founding: { playerId: number; unitId: string; startedRound: number; completesRound: number } | null;
   hp: number; maxHp: number; defense: number;
 }
+interface SnapshotFertileSite { id: string; pos: HexCoord; ownerId: number | null; }
 interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
 }
@@ -57,6 +58,7 @@ interface ApiSnapshot {
     terrain: Record<string, string>;
     capitals: SnapshotCapital[];
     strategicSites: SnapshotSite[];
+    fertileSites?: SnapshotFertileSite[];
     farms: SnapshotFarm[];
     teleportBuildings: SnapshotTeleport[];
     roads: SnapshotRoad[];
@@ -130,6 +132,10 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
     previousTempleLevel: site.previousTempleLevel ?? null, previousOwnerId: site.previousOwnerId ?? null,
   }));
 
+  const fertileSites: FertileSite[] = (s.map.fertileSites ?? []).map(f => ({
+    id: f.id, pos: f.pos, ownerId: f.ownerId,
+  }));
+
   const farms: Farm[] = (s.map.farms ?? []).map(f => ({
     id: f.id, pos: f.pos, ownerId: f.ownerId, state: f.state, founding: f.founding,
     hp: f.hp, maxHp: f.maxHp, defense: f.defense,
@@ -184,7 +190,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   }
 
   return {
-    players, units, strategicSites, capitals, farms,
+    players, units, strategicSites, fertileSites, capitals, farms,
     trainingQueue: (s.trainingQueue ?? []).map(o => ({ ...o, unitType: o.unitType as UnitType })),
     roads: (s.map.roads ?? []).map(r => ({ pos: r.pos, ownerId: r.ownerId })),
     pillagedRoadHexes: new Set(s.map.pillagedRoadHexes ?? []),
@@ -204,7 +210,7 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
     spawnedSiteIds: new Set<string>(),
     playerTech,
     teleportBuildings,
-    buildHexes: [],
+    buildHexes: [], buildKind: null,
   };
 }
 

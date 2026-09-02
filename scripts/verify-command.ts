@@ -111,6 +111,25 @@ console.log('\n=== Population cap tiers (§6) ===');
   check('territory never raises the cap (only tech does)', COMMAND_TIERS.commandII > COMMAND_TIERS.commandI && COMMAND_TIERS.commandI > COMMAND_TIERS.start);
 }
 
+// ── Raider Command cost caps army size correctly (v14 balance pass) ──
+console.log('\n=== Raider Command cost caps at 3, not 6, under Command 6 (v14) ===');
+{
+  const state = setup();
+  state.currentPlayerIndex = 1; // Temple
+  const cap = getPopulationCap(state, 1);
+  check('starting population cap is COMMAND_TIERS.start (6)', cap === COMMAND_TIERS.start, `got ${cap}`);
+  const capId = capitalId(state, 1);
+  for (let i = 0; i < 3; i++) {
+    state.currentPlayerIndex = 1;
+    const ok = spawnUnit(state, capId, 'horserider');
+    check(`Raider ${i + 1}/3 recruits successfully`, ok);
+    advanceOneRound(state); // deploy it, freeing the production slot for the next
+  }
+  check('population count is exactly 6 after 3 Raiders (commandCost 2 each)', getPopulationCount(state, 1) === 6, `got ${getPopulationCount(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  check('a 4th Raider does NOT fit at Command 6 — cap is 3 Raiders, not 6', !canAfford(state, 'horserider'));
+}
+
 // ── commandCost-weighted population spend (§19) ──
 console.log('\n=== Population cost is commandCost-weighted, not flat 1-per-unit ===');
 {

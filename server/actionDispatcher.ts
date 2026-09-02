@@ -33,7 +33,8 @@ import {
   chooseFaction, isAwaitingFactionReveal,
   getOwnedStructures,
   startFarm, canStartFarm, getValidFarmHexes, startTempleUpgrade,
-  canBuildRoad, buildRoad, getValidRoadHexes,
+  canBuildRoad, buildRoad, getValidRoadHexes, canPillageRoad, pillageRoad,
+  canClaimFertileSite, claimFertileSite,
 } from '../src/game';
 import {
   TECH_NODES, UNIT_COSTS,
@@ -43,10 +44,11 @@ import {
 } from '../src/types';
 import {
   SITE_ESTABLISH_COST, STRUCTURES, FACTION_UNITS, STARTING_ENERGY,
-  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS,
+  AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
   ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
+  FERTILE_SITE_INCOME, FERTILE_SITE_COUNT,
 } from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
 
@@ -64,6 +66,8 @@ export type UnifiedActionName =
   | 'build-farm'
   | 'upgrade-temple'
   | 'build-road'
+  | 'pillage-road'
+  | 'claim-fertile-site'
   | 'end-turn'
   | 'resign'
   | 'choose-faction';
@@ -81,7 +85,9 @@ export type LegalAction =
   | { type: 'attack-structure'; targetPos: HexCoord }
   | { type: 'found'; siteId: string; targetState: 'temple' }
   | { type: 'build-road'; targetPos: HexCoord }
-  | { type: 'build-farm'; targetPos: HexCoord };
+  | { type: 'build-farm'; targetPos: HexCoord }
+  | { type: 'pillage-road' }
+  | { type: 'claim-fertile-site'; siteId: string };
 
 export type LegalMovesPerPlayer = Record<string /* unitId */, LegalAction[]>;
 
@@ -170,6 +176,13 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   // Founding action (§7, Temple-only).
   const foundingCheck = canStartFounding(state, unit);
   if (foundingCheck) actions.push({ type: 'found', siteId: foundingCheck.site.id, targetState: foundingCheck.targetState });
+
+  // Pillage Road (v14) — any unit standing on an enemy-owned Road.
+  if (canPillageRoad(state, unit)) actions.push({ type: 'pillage-road' });
+
+  // Claim Fertile Site (v14, Agrar-vs-Agrar only — empty array otherwise).
+  const fertileCheck = canClaimFertileSite(state, unit);
+  if (fertileCheck) actions.push({ type: 'claim-fertile-site', siteId: fertileCheck.id });
 
   // Build Road / Build Farm actions (§23-25 / §6-9, Agrar-only) — every
   // legal target hex, same pattern for both (the client/UI presents the
@@ -325,7 +338,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         cost: AGRAR_FARM_COST,
         incomePerFarm: AGRAR_FARM_INCOME,
         maxActiveFarms: MAX_ACTIVE_FARMS,
-        placement: 'A new Farm must be a direct hex NEIGHBOR of the Builder\'s current position (the Builder\'s own movement matters) AND land INSIDE existing Agrar Territory (see territory.agrarTerritory below) — the network only grows as a connected bunker, it can never leapfrog across the map, and completing a new Farm immediately expands the territory for the next one. It must be empty/passable terrain, not a sacred site/Capital/structure/unit. Directly adjacent to the Capital OR another Farm is fine — there is no minimum spacing between Farms — see the "build-farm" action.',
+        placement: `A new Farm must be a direct hex NEIGHBOR of the Builder's current position (the Builder's own movement matters) AND land INSIDE existing Agrar Territory (see territory.agrarTerritory below) — the network only grows as a connected bunker, it can never leapfrog across the map, and completing a new Farm immediately expands the territory for the next one. It must be empty/passable terrain, not a sacred site/Fertile Site/Capital/structure/unit, and never within ${FARM_MIN_SPACING} hexes of another Farm (exactly ${FARM_MIN_SPACING} apart is legal, directly adjacent is not). Directly adjacent to the Capital is fine — see the "build-farm" action.`,
         constructionInterruption: 'A Farm still under construction fails outright (removed, no refund) if by the time it resolves the Builder has been killed, is no longer adjacent to (or standing on) the construction hex, or an enemy now occupies the hex.',
       },
       templeUpgrade: {
@@ -336,6 +349,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         productionBonusAtLevel2: TEMPLE_II_PRODUCTION_BONUS,
       },
       investmentPersistence: 'v13 reconstruction memory — a destroyed Temple\'s Ruins remember its templeLevel/ownerId (see structures.temple). The SAME player reconsecrating those Ruins is RESTORED directly to that level, for the same flat establishCost/1-round cost as a fresh founding — no re-upgrade needed. A DIFFERENT player reconsecrating the same Ruins always gets Temple I regardless of the previous level, then must pay the usual upgrade cost/time again to reach II (see strategicSites.templeLevels). Farms have no equivalent — a destroyed Farm is just gone (see structures.farm).',
+      fertileSiteIncome: `v14, 1v1 Agrar-vs-Agrar ONLY — see fertileSites below. +${FERTILE_SITE_INCOME}⚡ per controlled site, up to ${FERTILE_SITE_COUNT} sites (+${FERTILE_SITE_INCOME * FERTILE_SITE_COUNT}⚡ total), ON TOP of the normal BASE_INCOME_PER_ROUND + 4-Farms ceiling — deliberately raises the Agrar-mirror ceiling above the normal-development max as a contested map-control reward. Never applies in Agrar-vs-Temple or Temple-vs-Temple (fertileSites is always empty there).`,
     },
     territory: {
       note: 'Economy/pacing balance pass — split into two distinct, smaller-purpose radii (was one unified concept). NEITHER grants a combat bonus of any kind — Agrar\'s edge is structural (higher HP/DEF baselines, Roads, ZOC, Farms, area denial), not an invisible defensive aura. Both are derived fresh from live Capital/Farm positions every time, never stored on GameState.',
@@ -365,9 +379,26 @@ export function buildRulesPayload(): Record<string, unknown> {
       costPerHex: ROAD_COST_PER_HEX,
       movementBonus: { amount: ROAD_MOVEMENT_BONUS, note: 'Applies to Agrar units ONLY (only Agrar can build a Road in the first place). A Temple unit moving over an Agrar Road receives no bonus — it treats the tile as normal terrain.' },
       pillage: {
-        note: 'Any unit that ends its move on a road it does NOT own destroys it on arrival — no separate action needed, it just happens as a side effect of "move". A pillaged hex is cheaper to rebuild than to build fresh.',
+        note: 'v14 — pillaging is a real, deliberate action now, NOT an automatic side effect of movement. An enemy unit merely ending its move on an Agrar Road no longer destroys it. To actually destroy it, that unit must use the separate "pillage-road" action — { unitId } — while standing on it, with an unused activation; this consumes the unit\'s whole activation (same as founding/build-farm/build-road). A pillaged hex is cheaper to rebuild than to build fresh.',
         rebuildCost: ROAD_PILLAGE_REBUILD_COST,
       },
+    },
+    fertileSites: {
+      note: 'v14 — 1v1 Agrar-vs-Agrar ONLY (see matchupObjectives below): the map\'s 2 neutral objective positions become Fertile Sites instead of Temple sacred sites, since Agrar can never use a Temple anyway. A pure occupation objective — no HP, no founding delay, no level. Empty in every other matchup.',
+      income: FERTILE_SITE_INCOME,
+      count: FERTILE_SITE_COUNT,
+      claimRules: [
+        'Any Agrar unit (combat unit or Builder — faction check only, no type restriction) standing on a Fertile Site, with a fully unused activation, may claim it via the "claim-fertile-site" action — { unitId }. No Energy cost.',
+        'Claiming resolves INSTANTLY — unlike Temple founding/Farm construction there is no multi-round delay. It consumes the unit\'s whole activation and sets ownerId immediately.',
+        'Since only one unit can ever occupy a hex, the current owner is automatically safe from reclaim for as long as their own unit physically stands there. A rival Agrar player can only reclaim it once that unit moves away (or dies) — then walks onto the now-unoccupied site and spends their own activation to flip ownership.',
+        'Deliberately minimal: does NOT raise Command, does NOT add a production slot, does NOT extend Agrar Territory or Cultivated Influence, grants no DEF/healing/Road-speed bonus, and does NOT count toward MAX_ACTIVE_FARMS. Its only effect is +income (see economy note above) — see economy.fertileSiteIncome.',
+      ],
+    },
+    matchupObjectives: {
+      note: '1v1 ONLY (3+ player games always keep the default Temple sacred sites — the "matchup" concept doesn\'t generalize). Resolved the instant BOTH players\' factions are revealed (never before, so neither player can infer a still-secret pick from which objective type appears) — see resolveMatchupObjectives in game.ts, called from choose-faction.',
+      agrarVsAgrar: { templeSites: 0, fertileSites: FERTILE_SITE_COUNT },
+      templeVsTemple: { templeSites: 2, fertileSites: 0 },
+      agrarVsTemple: { templeSites: 2, fertileSites: 0 },
     },
     zoneOfControl: {
       note: 'Phase 8, §26. Warrior/pike/cavalry/heavy-class units (see units[].unitClass) project a zone of control onto their 6 adjacent hexes — archer/siege/support/Builder don\'t. Shared rule, not faction-specific.',
@@ -430,6 +461,8 @@ export function buildRulesPayload(): Record<string, unknown> {
         'build-farm — { unitId, pos } the Builder starts building a Farm at a valid adjacent hex (same restriction) — Agrar only, see economy.agrarFarms above. Completes next round like founding.',
         'upgrade-temple — { templeId (owned Temple I id) } start the 6⚡/1-round upgrade to Temple II on that site (same restriction) — Temple faction only, see strategicSites.templeLevels above.',
         'build-road — { unitId, pos } the Builder builds a road at a valid adjacent hex (same restriction) — Agrar faction only, see roads above. Resolves immediately (unlike build-farm).',
+        'pillage-road — { unitId } destroy the enemy-owned Road the unit is standing on (same restriction — unused activation) — see roads.pillage above. ANY faction/unit type, not just Agrar.',
+        'claim-fertile-site — { unitId } claim the Fertile Site the unit is standing on (same restriction) — Agrar only, resolves instantly, see fertileSites above. Only ever legal in a 1v1 Agrar-vs-Agrar match.',
         'research — research a tech (same restriction). A tech node with a `faction` set (see techTree) may only be researched by a player of that faction.',
         'end-turn — end the current player\'s turn (blocked only during the pre-game faction-reveal pause)',
         'resign — concede the game, opponent wins (always available)',
@@ -669,6 +702,24 @@ export function executeAction(
         const ok = buildRoad(state, unitId, pos);
         if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a road at (${pos.q},${pos.r}) (not a Builder, not Agrar, not adjacent to the Builder, not adjacent to the Capital/a Farm/an existing Road, tile occupied, already acted, or insufficient aura)`);
         log.push(`Player ${playerSlot} built a road at (${pos.q},${pos.r}) with unit ${unitId}`);
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'pillage-road': {
+        const { unitId } = params as { unitId?: string };
+        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId for road pillage');
+        const ok = pillageRoad(state, unitId);
+        if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot pillage a road here (not standing on an enemy-owned Road, or already acted this turn)`);
+        log.push(`Player ${playerSlot} pillaged a Road with unit ${unitId}`);
+        return { ok: true, action, log, broadcastToBoth: true };
+      }
+
+      case 'claim-fertile-site': {
+        const { unitId } = params as { unitId?: string };
+        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId for Fertile Site claim');
+        const ok = claimFertileSite(state, unitId);
+        if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot claim a Fertile Site here (not Agrar, not standing on one, already owns it, or already acted this turn)`);
+        log.push(`Player ${playerSlot} claimed a Fertile Site with unit ${unitId}`);
         return { ok: true, action, log, broadcastToBoth: true };
       }
 

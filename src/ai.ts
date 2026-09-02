@@ -14,7 +14,8 @@ import {
   researchTech, canResearch,
   getTeleportAt,
   canStartFarm, startFarm, getValidFarmHexes, canStartTempleUpgrade, startTempleUpgrade,
-  canBuildRoad, buildRoad, getValidRoadHexes,
+  canBuildRoad, buildRoad, getValidRoadHexes, canPillageRoad, pillageRoad,
+  canClaimFertileSite, claimFertileSite,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
   calculateEncirclement, isForestUnitRevealed, endTurn,
@@ -209,6 +210,16 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number): HexCoo
     if (!defended) return s.pos;
   }
 
+  // v14 — a not-already-mine Fertile Site is a real objective (Agrar
+  // mirror only; state.fertileSites is empty in every other matchup, so
+  // this is a no-op there). Contested map control, not free — walking a
+  // unit toward it is how the AI ever bothers claiming one at all.
+  const player = state.players.find(p => p.id === aiPlayerId);
+  if (player?.faction === 'agrar') {
+    const openFertile = state.fertileSites.find(f => f.ownerId !== aiPlayerId);
+    if (openFertile) return openFertile.pos;
+  }
+
   // 2. Besiege: nearest enemy structure — destroying the Capital wins the game
   // (§11), and any City/Temple along the way is a legitimate combat target too.
   const enemyStructures = state.players
@@ -260,6 +271,25 @@ function actCombatUnit(state: GameState, unit: Unit, aiPlayerId: number, hard: b
     startFounding(state, unit.id);
     actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI begins founding a ${founding.targetState} at (${unit.pos.q},${unit.pos.r})` });
     return; // founding spends the whole activation
+  }
+
+  // v14 — claim a Fertile Site the unit happens to be standing on (Agrar
+  // mirror only; canClaimFertileSite is always null in every other matchup).
+  if (canClaimFertileSite(state, unit)) {
+    observe(state, 'claim-fertile-site', { unitId: unit.id });
+    claimFertileSite(state, unit.id);
+    actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `${hard ? 'Hard ' : ''}AI claims a Fertile Site at (${unit.pos.q},${unit.pos.r})` });
+    return; // claiming spends the whole activation
+  }
+
+  // v14 — pillage an enemy Road the unit happens to be standing on, rather
+  // than leave it for a later, separate move (hard AI only — a simple
+  // opportunistic check, not a dedicated demolition planner).
+  if (hard && canPillageRoad(state, unit)) {
+    observe(state, 'pillage-road', { unitId: unit.id });
+    pillageRoad(state, unit.id);
+    actions.push({ type: 'upgrade', pos: { ...unit.pos }, description: `Hard AI pillages a Road at (${unit.pos.q},${unit.pos.r})` });
+    return; // pillaging spends the whole activation
   }
 
   // Agrar's Builder grows its Farm network first — that's the faction's

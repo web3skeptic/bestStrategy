@@ -141,6 +141,12 @@ console.log('\n=== Same slot, distinct faction flavor ===');
   const templeRaider = TEMPLE_UNITS.find(u => u.slot === 'horserider')!;
   check('Agrar Knight costs more than Temple Raider (tanky vs cheap-mobility asymmetry)', agrarKnight.cost > templeRaider.cost, `agrar=${agrarKnight.cost} temple=${templeRaider.cost}`);
   check('Temple Raider is faster than Agrar Knight', templeRaider.speed > agrarKnight.speed, `agrar=${agrarKnight.speed} temple=${templeRaider.speed}`);
+  // v14 balance pass — Raider Command 1->2: a speed-3, ZOC-projecting
+  // cavalry piece with strong attack shouldn't also field twice the bodies
+  // of Agrar's Knight (Command 2) under the same population cap. Energy
+  // cost/stats stay cheaper/lighter than the Knight — only Command matches.
+  check('Temple Raider commandCost is 2 (matches Agrar Knight)', templeRaider.commandCost === 2, `got ${templeRaider.commandCost}`);
+  check('Temple Raider is still cheaper in Energy than Agrar Knight', templeRaider.cost < agrarKnight.cost);
 }
 {
   const agrarHK = AGRAR_UNITS.find(u => u.slot === 'heavyknight')!;
