@@ -182,20 +182,20 @@ console.log('\n=== Ownership (§7) ===');
   check('walking onto a site never auto-changes its owner', site.ownerId === null && site.state === 'neutral');
 }
 {
-  // v13 — the Acolyte is back; only a founder-type unit can found/reconstruct.
+  // v15 — the Acolyte is gone; ANY Temple unit can found/reconstruct.
   const state = setup();
   const site = state.strategicSites[0]!;
   const warrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
   warrior.pos = { ...site.pos };
   warrior.hasMoved = false; warrior.hasAttacked = false;
   state.currentPlayerIndex = 1;
-  check('a non-Acolyte unit cannot found (e.g. warrior — v13)', canStartFounding(state, warrior) === null);
+  check('a non-founder-type unit CAN found (e.g. warrior — v15, no dedicated founder unit)', canStartFounding(state, warrior) !== null);
 }
 {
   const state = setup();
   const { founder } = primeFounding(state, 0);
   const templeCheck = canStartFounding(state, founder);
-  check('Temple Acolyte targets Temple', templeCheck?.targetState === 'temple', `got ${templeCheck?.targetState}`);
+  check('a Temple unit standing on a valid site targets Temple', templeCheck?.targetState === 'temple', `got ${templeCheck?.targetState}`);
 }
 
 // ── Capital combat + victory (§4-5, §11) ──

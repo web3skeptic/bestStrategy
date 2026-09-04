@@ -89,11 +89,11 @@ export const TEMPLE_UNITS: FactionUnitDef[] = [
   { id: 'temple_priest',    faction: 'temple', slot: 'healer',   displayName: 'Priest',    earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 7,  defense: 2, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: true,  isSiege: false, projectsZOC: false, assetReference: 'healer_standing',  placeholderAsset: false },
   { id: 'temple_war_support', faction: 'temple', slot: 'damageBooster', displayName: 'Chanter', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 7, defense: 2, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'damagebooster_standing', placeholderAsset: false },
   { id: 'temple_rng_support', faction: 'temple', slot: 'rangeBooster', displayName: 'Oracle', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 7, defense: 2, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'rangebooster_standing', placeholderAsset: false },
-  // v13 — the Acolyte is BACK (v12's brief removal reverted): founding a
-  // neutral/ruined site, or reconsecrating Ruins after a Temple is
-  // destroyed, is once again gated to this dedicated founder-slot unit —
-  // see isFounderUnit/canStartFounding in game.ts.
-  { id: 'temple_acolyte',   faction: 'temple', slot: 'founder',  displayName: 'Acolyte',   earlyUnlock: true,  unitClass: 'support', cost: 2, hp: 12, attack: 5, defense: 3, speed: 2, range: 1, vision: 3, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'warrior_standing', placeholderAsset: false },
+  // The Acolyte is gone for good — a dedicated founder-slot unit was a
+  // recurring point of confusion (players standing a regular combat unit on
+  // a Temple site and finding no action at all, with no clue they needed a
+  // different unit). ANY Temple unit may now Consecrate/Restore a site —
+  // see canStartFounding in game.ts, which no longer gates on unit type.
 ];
 
 export const FACTION_UNITS: Record<FactionId, FactionUnitDef[]> = {

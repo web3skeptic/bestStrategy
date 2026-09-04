@@ -121,7 +121,18 @@ export type FactionId = 'agrar' | 'temple';
 // Road pillage is no longer automatic-on-move-through — an enemy unit must
 // spend a full activation on the "pillage-road" action to actually destroy
 // a Road segment (see canPillageRoad/pillageRoad in game.ts).
-export const RULES_VERSION = 14;
+// v15 (Acolyte removed, for good): temple_acolyte is REMOVED from
+// TEMPLE_UNITS entirely, again — Temple has no founder-slot unit at all.
+// Unlike v12's removal, this does NOT also restore instant-presence
+// conquest of an ACTIVE enemy Temple — v13's "destroy to Ruins first, ANY
+// unit of either faction may attack it" stands unchanged. The only thing
+// that changes is WHO may perform the founding/reconsecration step once a
+// site IS neutral/Ruins: canStartFounding no longer gates on unit type at
+// all, so any Temple unit with a fully unused activation standing on one
+// may Consecrate/Restore it — not just a dedicated founder-type unit. Fixes
+// a recurring point of confusion where a regular combat unit standing on a
+// capturable Temple showed no action and no explanation why.
+export const RULES_VERSION = 15;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see

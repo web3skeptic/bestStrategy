@@ -1016,13 +1016,14 @@ function roadBlockReason(state: GameState, unit: Unit): string | null {
   return null;
 }
 
-// v13 — WHY a Temple Acolyte can't found/reconsecrate right now, mirroring
+// WHY a Temple unit can't found/reconsecrate right now, mirroring
 // farmBlockReason/roadBlockReason: the Found button used to just vanish
 // with zero explanation whenever canStartFounding returned null, which is
 // exactly what made "can't conquer a Temple" look broken (an active enemy
 // Temple must be destroyed to Ruins FIRST — standing on it never works,
-// and even a valid Ruins/neutral site needs the Acolyte's fully unused
-// activation, so arriving and founding are always two separate turns).
+// and even a valid Ruins/neutral site needs the unit's fully unused
+// activation, so arriving and founding are always two separate turns). Any
+// Temple unit may found — there's no dedicated founder-type unit anymore.
 function foundBlockReason(state: GameState, unit: Unit): string | null {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return 'not your unit';
@@ -1032,7 +1033,7 @@ function foundBlockReason(state: GameState, unit: Unit): string | null {
     return site.ownerId === player.id ? 'you already own this Temple' : 'destroy it first — attack it down to Ruins, then reconsecrate';
   }
   if (site.state === 'foundingTemple' || site.founding) return 'already being founded/reconstructed';
-  if (unit.hasMoved || unit.hasAttacked) return 'Acolyte has already acted — wait until your next round';
+  if (unit.hasMoved || unit.hasAttacked) return 'this unit has already acted — wait until your next round';
   const enemyOnSite = state.units.some(u => u.hp > 0 && u.id !== unit.id && u.playerId !== unit.playerId && hexEqual(u.pos, site.pos));
   if (enemyOnSite) return 'an enemy unit is on this site';
   if (player.aura < SITE_ESTABLISH_COST) return `not enough Energy (need ⚡${SITE_ESTABLISH_COST})`;
@@ -1334,7 +1335,6 @@ function updateUI(): void {
 
       const foundable = canStartFounding(state, unit);
       const isAgrarBuilder = unit.type === 'founder' && player.faction === 'agrar';
-      const isTempleAcolyte = unit.type === 'founder' && player.faction === 'temple';
       if (foundable) {
         // v13 §17 — an Acolyte on Ruins this player previously owned sees
         // "Restore Temple <level>" (returns directly to that level); Ruins
@@ -1348,11 +1348,13 @@ function updateUI(): void {
         captureBtn.disabled = false;
         captureBtn.title = '';
         captureBtn.textContent = `⚒ ${label} (⚡${SITE_ESTABLISH_COST}) — 1 round`;
-      } else if (isTempleAcolyte) {
-        // Always shown for a Temple Acolyte, never silently hidden — a
-        // disabled button with a clear reason beats a vanished button with
-        // none (that gap is exactly what made "can't conquer a Temple"
-        // look broken — see foundBlockReason).
+      } else if (player.faction === 'temple' && getStrategicSiteAt(state, unit.pos)) {
+        // The Acolyte is gone — ANY Temple unit standing on a Temple/Ruins/
+        // neutral site can see this. Always shown while standing on one
+        // (matches the Fertile Site/Pillage Road pattern below), never
+        // silently hidden — a disabled button with a clear reason beats a
+        // vanished button with none (that gap is exactly what made "can't
+        // conquer a Temple" look broken — see foundBlockReason).
         const reason = foundBlockReason(state, unit);
         captureBtn.style.display = 'block';
         captureBtn.disabled = !!reason;
@@ -2379,7 +2381,8 @@ function handleHexClick(clientX: number, clientY: number): void {
       if (moveResult.moved) {
         const site = getStrategicSiteAt(state, hex);
         const fertileSite = state.fertileSites.find(f => hexEqual(f.pos, hex));
-        if (movingUnit?.type === 'founder' && site && (site.state === 'neutral' || site.state === 'ruins')) {
+        const movingPlayer = movingUnit ? state.players.find(p => p.id === movingUnit.playerId) : undefined;
+        if (movingPlayer?.faction === 'temple' && site && (site.state === 'neutral' || site.state === 'ruins')) {
           logCombat(`Moved onto a foundable site at (${hex.q},${hex.r}) — Found available!`);
         } else if (fertileSite && movingUnit && fertileSite.ownerId !== movingUnit.playerId) {
           logCombat(`Moved onto a Fertile Site at (${hex.q},${hex.r}) — Claim available!`);

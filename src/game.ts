@@ -1331,16 +1331,18 @@ export function getStrategicSiteAt(state: GameState, pos: HexCoord): StrategicSi
   return state.strategicSites.find(s => hexEqual(s.pos, pos));
 }
 
-// ── Strategic site founding + reconstruction (v13 — Temple-only) ──
+// ── Strategic site founding + reconstruction (v13 destroy-first model +
+//    v15 no-Acolyte-gate — Temple-only) ──
 //
-// Back to the destroy-then-rebuild model (v12's direct-conquest-by-presence
-// is GONE): a neutral/ruined site becomes a Temple ONLY through a one-round
-// founding process performed by an Acolyte (unit type 'founder' — the
-// Acolyte is back, v13), never by merely standing on an ACTIVE enemy
-// Temple. Any combat unit of EITHER faction may attack an active Temple
-// (see attackStructure) — Agrar is no longer the sole destroyer. Phase 10
-// correction still holds: Agrar NEVER founds/reconstructs a site — "Agrar
-// controls area (Farms), Temple controls points (Temples)".
+// Destroy-then-rebuild model (v12's direct-conquest-by-presence is GONE): a
+// neutral/ruined site becomes a Temple ONLY through a one-round founding
+// process, never by merely standing on an ACTIVE enemy Temple. v15 removed
+// the Acolyte and its founder-type gate — ANY Temple unit may perform this,
+// not a dedicated unit. Any combat unit of EITHER faction may attack an
+// active Temple (see attackStructure) — Agrar is no longer the sole
+// destroyer. Phase 10 correction still holds: Agrar NEVER founds/
+// reconstructs a site — "Agrar controls area (Farms), Temple controls
+// points (Temples)".
 //
 // v13 reconstruction memory: destroying a Temple stores its
 // previousTempleLevel/previousOwnerId on the Ruins (see attackStructure).
@@ -1351,21 +1353,19 @@ export function getStrategicSiteAt(state: GameState, pos: HexCoord): StrategicSi
 // consecrating the same Ruins always gets Temple I regardless of the
 // previous level, then must pay the usual upgrade cost/time to reach II.
 
-function isFounderUnit(unit: Unit): boolean {
-  return unit.type === 'founder';
-}
-
 export interface FoundingCheck {
   site: StrategicSite;
   targetState: 'temple';
 }
 
 // §7 — everything that must hold true to START founding/reconstruction.
+// The Acolyte unit is gone entirely — ANY Temple unit that steps onto a
+// neutral/Ruins site with a fully unused activation may consecrate/restore
+// it, exactly like any other Temple action. No dedicated founder-type gate.
 export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | null {
   if (isMatchSetupRestricted(state)) return null;
   if (unit.playerId !== getCurrentPlayer(state).id) return null;
   if (unit.hasMoved || unit.hasAttacked) return null; // needs a fully unused activation
-  if (!isFounderUnit(unit)) return null; // only the Acolyte
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || !player.faction) return null;
   if (player.faction !== 'temple') return null; // §28 — Agrar never founds/reconstructs a site
@@ -2143,8 +2143,8 @@ function updateHighlights(state: GameState): void {
       if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) enemyStructures.push(capital.pos);
     }
     // v13 — ANY unit of either faction may attack an active Temple; the
-    // only way to change its ownership is destroy it to Ruins, then have a
-    // Temple Acolyte reconsecrate it (see canStartFounding).
+    // only way to change its ownership is destroy it to Ruins, then have
+    // any Temple unit reconsecrate it (see canStartFounding).
     for (const site of state.strategicSites) {
       if ((site.state === 'temple' || site.state === 'upgradingTemple') && site.ownerId !== unit.playerId
         && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
@@ -2411,7 +2411,7 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
   if (!ref) return null;
   if (structureOwnerId(ref) === attacker.playerId) return null;
   // v13 — ANY unit of either faction may attack/destroy a Temple; taking it
-  // over afterward still requires a Temple Acolyte reconsecrating the Ruins
+  // over afterward still requires any Temple unit reconsecrating the Ruins
   // (canStartFounding) — standing on or merely attacking it never changes
   // ownership by itself.
 
