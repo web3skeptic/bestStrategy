@@ -451,7 +451,21 @@ export function getCurrentPlayerVisible(state: GameState): Set<string> {
 // radius 1. Deliberately symmetric around BOTH Capitals regardless of which
 // (still-secret) faction ends up there — see §29, terrain must never be
 // generated differently based on a hidden pick.
+// Map-fairness follow-up — this same hard exclusion now ALSO applies to every
+// neutral/Temple site, not just Capitals: the site's own hex + buffer kept
+// walls/hills from SEEDING there, but nothing stopped a growCluster() from an
+// unrelated seed elsewhere from spreading right up to and around it, walling
+// a Temple in just as thoroughly as an unprotected Capital could be — the
+// exact "mountains block the way to the temples" report this fixes.
 const CAPITAL_MOUNTAIN_EXCLUSION_RADIUS = 2;
+
+// Mountain-placement follow-up — no connected chain of Wall (impassable
+// mountain) tiles may exceed this many hexes; longer chains get trimmed down
+// to hills instead (see the wall-generation pass in generateTerrain). Local
+// clusters near a Capital/Temple already can't touch it at all (the
+// exclusion radius above), but nothing previously stopped a long-enough
+// unbroken range from fully bisecting the map further out.
+const MAX_CONTIGUOUS_WALLS = 3;
 
 function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[], capitalPositions: HexCoord[] = []): { hills: Set<string>; walls: Set<string>; forests: Set<string> } {
   const hills = new Set<string>();
@@ -469,14 +483,15 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
       reservedBuffer.add(hexKey(n));
     }
   }
-  // Hard mountain-free zone around every Capital — hills/walls can never be
-  // placed here at all (checked alongside `reserved` everywhere below), not
-  // just avoided as growth seeds like the softer `reservedBuffer`.
+  // Hard mountain-free zone around every Capital AND every neutral/Temple
+  // site — hills/walls can never be placed here at all (checked alongside
+  // `reserved` everywhere below), not just avoided as growth seeds like the
+  // softer `reservedBuffer`.
   const capitalExclusion = new Set<string>();
-  for (const cap of capitalPositions) {
+  for (const anchor of [...capitalPositions, ...templePositions]) {
     for (let dq = -CAPITAL_MOUNTAIN_EXCLUSION_RADIUS; dq <= CAPITAL_MOUNTAIN_EXCLUSION_RADIUS; dq++) {
       for (let dr = Math.max(-CAPITAL_MOUNTAIN_EXCLUSION_RADIUS, -dq - CAPITAL_MOUNTAIN_EXCLUSION_RADIUS); dr <= Math.min(CAPITAL_MOUNTAIN_EXCLUSION_RADIUS, -dq + CAPITAL_MOUNTAIN_EXCLUSION_RADIUS); dr++) {
-        capitalExclusion.add(hexKey({ q: cap.q + dq, r: cap.r + dr }));
+        capitalExclusion.add(hexKey({ q: anchor.q + dq, r: anchor.r + dr }));
       }
     }
   }
@@ -509,6 +524,39 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
     const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
     if (reservedBuffer.has(hexKey(seed)) || capitalExclusion.has(hexKey(seed))) continue;
     growCluster(seed, walls, 3 + Math.floor(Math.random() * 4), 0.55);
+  }
+
+  // Mountain-placement follow-up — a single cluster can already reach 6
+  // tiles, and two independently-seeded clusters can happen to grow right up
+  // against each other, chaining into one unbroken wall long enough to fully
+  // bisect the map (impassable — unlike hills — so this is a real dead end,
+  // not just a detour). Cap every connected wall component at
+  // MAX_CONTIGUOUS_WALLS: anything past that many tiles (in placement order,
+  // so the "core" of each cluster survives) demotes to a hill instead —
+  // still a mountain range visually/tactically, just no longer a wall no one
+  // can ever cross.
+  {
+    const visited = new Set<string>();
+    for (const startKey of [...walls]) {
+      if (visited.has(startKey)) continue;
+      const [sq, sr] = startKey.split(',').map(Number);
+      const component: string[] = [];
+      const queue: HexCoord[] = [{ q: sq!, r: sr! }];
+      visited.add(startKey);
+      while (queue.length > 0) {
+        const hex = queue.shift()!;
+        component.push(hexKey(hex));
+        for (const n of hexNeighbors(hex)) {
+          const nk = hexKey(n);
+          if (walls.has(nk) && !visited.has(nk)) { visited.add(nk); queue.push(n); }
+        }
+      }
+      for (let i = MAX_CONTIGUOUS_WALLS; i < component.length; i++) {
+        const key = component[i]!;
+        walls.delete(key);
+        hills.add(key);
+      }
+    }
   }
 
   const hillSeeds = 4 + Math.floor(Math.random() * 4);
@@ -557,7 +605,9 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
 }
 
 // §25/§28 (v14 map-fairness pass) — a best-effort openness check: flood-fill
-// from a Capital through non-wall tiles, capped at `radius` hex steps, and
+// from a Capital (or, per the mountain-placement follow-up, a neutral/Temple
+// site — the check itself is generic, it just walks `walls`) through
+// non-wall tiles, capped at `radius` hex steps, and
 // compare how much of that whole disk (minus walls) was actually reachable.
 // A healthy start has multiple routes out, so nearly the entire nearby
 // non-wall area should be reachable; a big chunk cut off means a wall ring
@@ -964,36 +1014,27 @@ function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): 
       const starts = [a, b];
       // §21 (v14 map-fairness pass) — 180° ROTATIONAL symmetry for the
       // neutral objectives too, not just spread-maximization: place the
-      // first via a "closest to the map's true centre" pick (not spread()'s
-      // usual "farthest from every reference" — for two ANTIPODAL Capitals,
-      // maximizing distance from both actually pushes the site out toward
-      // the ring's perpendicular point, i.e. off to the SIDE, not toward the
-      // middle a contested objective should read as), then force its exact
-      // antipodal counterpart as the second (numNeutral is always 2 in a 1v1
-      // match — see neutralSiteCountForPlayers). Since the two Capitals are
-      // themselves already an exact 180° pair (a/b above), rotating the
-      // whole board 180° maps player A's Capital+objective onto player B's,
-      // guaranteeing equal geographic access for both. Falls back to the
-      // general spread algorithm if the naive rotation happens to collide
-      // with something (never hangs/crashes).
+      // first via the existing best-candidate algorithm, then force its
+      // exact antipodal counterpart as the second (numNeutral is always 2
+      // in a 1v1 match — see neutralSiteCountForPlayers). Since the two
+      // Capitals are themselves already an exact 180° pair (a/b above),
+      // rotating the whole board 180° maps player A's Capital+objective
+      // onto player B's, guaranteeing equal geographic access for both —
+      // not just "far enough apart" as the old spread-only heuristic gave.
+      // Falls back to the general spread algorithm if the naive rotation
+      // happens to collide with something (never hangs/crashes).
+      // NOTE — this deliberately does NOT bias toward the map centre: for a
+      // Temple-involved matchup these sites stay Temples, and Temples read
+      // right sitting out along the shared perpendicular "mid-line" between
+      // the two Capitals, not dead-center. The one matchup that DOES want a
+      // dead-center objective — Agrar vs Agrar's Fertile Sites — gets its
+      // own separate, dead-center reposition in resolveMatchupObjectives,
+      // entirely after this generic (matchup-blind) placement runs.
       let neutrals: HexCoord[] | null = null;
       if (numNeutral === 2) {
-        // A candidate's antipode sits 2x as far from the centre as the
-        // candidate itself (hexDistance(p, -p) = 2*hexDistance(origin, p)),
-        // so anything closer to the centre than half of MIN_TEMPLE_SEPARATION
-        // can never mirror validly (its own antipode would land too close to
-        // it) — exclude those up front instead of randomly landing on one and
-        // silently falling back to the far-side spread() algorithm below.
-        const minCenterDist = Math.ceil(MIN_TEMPLE_SEPARATION / 2);
-        const centerEligible = all.filter(hex =>
-          !starts.some(t => hexEqual(t, hex))
-          && minDistTo(hex, starts) >= MIN_TEMPLE_SEPARATION
-          && hexDistance({ q: 0, r: 0 }, hex) >= minCenterDist);
-        if (centerEligible.length > 0) {
-          const byCenterDist = [...centerEligible].sort((p, q) =>
-            hexDistance({ q: 0, r: 0 }, p) - hexDistance({ q: 0, r: 0 }, q));
-          const centerPool = shuffle(byCenterDist.slice(0, Math.min(TEMPLE_SPREAD_CANDIDATES, byCenterDist.length)));
-          const n0 = centerPool[0]!;
+        const first = spread(1, starts, MIN_TEMPLE_SEPARATION, false);
+        if (first) {
+          const n0 = first[0]!;
           const n1: HexCoord = { q: -n0.q, r: -n0.r };
           const secondValid = hexDistance({ q: 0, r: 0 }, n1) <= mapRadius
             && !hexEqual(n1, n0) && minDistTo(n1, [...starts, n0]) >= MIN_TEMPLE_SEPARATION;
@@ -1102,10 +1143,12 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   const allSitePositions = [...layout.starts, ...layout.neutrals];
   const allUnitPositions = layout.unitPositions.flat();
   // §25/§28 (v14 map-fairness pass) — regenerate terrain (bounded attempts)
-  // if either Capital ends up with a choked/boxed-in approach. The hard
-  // mountain-free zone (generateTerrain's capitalExclusion) already
-  // guarantees an open IMMEDIATE neighbourhood every time; this retry only
-  // guards against a wall ring forming a bit further out.
+  // if either Capital OR neutral/Temple site ends up with a choked/boxed-in
+  // approach. The hard mountain-free zone (generateTerrain's capitalExclusion,
+  // now covering both) already guarantees an open IMMEDIATE neighbourhood
+  // every time; this retry catches a wall ring forming a bit further out —
+  // a Temple surrounded a few tiles further back reads just as "blocked" to
+  // the player as a boxed-in Capital would.
   let hills: Set<string>, walls: Set<string>, forests: Set<string>;
   let terrainAttempt = 0;
   do {
@@ -1113,7 +1156,7 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
     terrainAttempt++;
   } while (
     terrainAttempt < TERRAIN_GEN_ATTEMPTS
-    && !layout.starts.every(cap => capitalHasOpenApproach(cap, walls, mapRadius))
+    && !allSitePositions.every(site => capitalHasOpenApproach(site, walls, mapRadius))
   );
 
   // §3 — a match starts with the Capital only: no neutral Warrior/Archer/
@@ -1197,13 +1240,57 @@ export function chooseFaction(state: GameState, playerId: number, faction: Facti
   return true;
 }
 
+// Reposition the (already-generated, off-to-the-side) neutral site pair to
+// sit as close to the map's true centre as the fixed terrain allows, for the
+// Agrar-vs-Agrar Fertile Site conversion only — see resolveMatchupObjectives.
+// Terrain/Capitals already exist by this point, so (unlike placeSites, which
+// runs before terrain generation) this must actively avoid hills/walls/
+// Capitals itself. Keeps the exact antipodal-pair symmetry the original
+// placement had. Falls back to the original positions in the vanishingly
+// unlikely case no valid central pair exists (never hangs/crashes).
+function centralFertileSitePositions(state: GameState, fallback: HexCoord[]): HexCoord[] {
+  const capitals = state.capitals.map(c => c.pos);
+  const blocked = (hex: HexCoord): boolean =>
+    state.hills.has(hexKey(hex)) || state.walls.has(hexKey(hex)) || capitals.some(c => hexEqual(c, hex));
+  // Same "never boxed in" guarantee generateTerrain's capitalExclusion gives
+  // Capitals/Temples at map-gen time — this runs after terrain already
+  // exists, so it has to check the existing tiles instead of excluding a
+  // zone from seeding, but the bar is the same: every immediate neighbour
+  // clear, not just the site's own hex.
+  const openNeighborhood = (hex: HexCoord): boolean => hexNeighbors(hex).every(n => !blocked(n));
+  const minDistToSet = (hex: HexCoord, refs: HexCoord[]): number =>
+    refs.length ? Math.min(...refs.map(r => hexDistance(r, hex))) : Infinity;
+  // Same reasoning as placeSites' centring pick: a candidate's antipode sits
+  // 2x as far from the centre as the candidate itself, so anything closer
+  // than half of MIN_TEMPLE_SEPARATION can never mirror validly.
+  const minCenterDist = Math.ceil(MIN_TEMPLE_SEPARATION / 2);
+  const all = generateHexMap(state.mapRadius);
+  const eligible = all.filter(hex =>
+    !blocked(hex)
+    && openNeighborhood(hex)
+    && minDistToSet(hex, capitals) >= MIN_TEMPLE_SEPARATION
+    && hexDistance({ q: 0, r: 0 }, hex) >= minCenterDist);
+  const byCenterDist = [...eligible].sort((p, q) =>
+    hexDistance({ q: 0, r: 0 }, p) - hexDistance({ q: 0, r: 0 }, q));
+  for (const n0 of byCenterDist) {
+    const n1: HexCoord = { q: -n0.q, r: -n0.r };
+    if (hexEqual(n1, n0) || blocked(n1) || !openNeighborhood(n1)) continue;
+    if (hexDistance({ q: 0, r: 0 }, n1) > state.mapRadius) continue;
+    if (minDistToSet(n1, [...capitals, n0]) < MIN_TEMPLE_SEPARATION) continue;
+    return [n0, n1];
+  }
+  return fallback;
+}
+
 // v14 — 1v1 ONLY: if both revealed factions are Agrar, the 2 neutral
-// objective positions already generated at map-gen time (as ordinary
-// StrategicSites, since faction wasn't known yet) become Fertile Sites
-// instead — reusing the exact same ids/positions (and therefore the same
-// placement/fairness/spread logic already applied to them) rather than
-// generating a second, independent layout. Every other matchup (Temple vs
-// Temple, Agrar vs Temple) leaves strategicSites untouched and
+// objective positions become Fertile Sites instead — but re-centered (see
+// centralFertileSitePositions above): the ordinary Temple placement
+// deliberately sits off to the side along the Capitals' shared mid-line
+// (good for a Temple, read as a point to fight over near one edge), whereas
+// a Fertile Site is a single shared farmland prize both Agrar players should
+// have equal, central reach to — dead in the middle reads right for that
+// but not for a Temple. Every other matchup (Temple vs Temple, Agrar vs
+// Temple) leaves strategicSites untouched (still off to the side) and
 // fertileSites empty. 3+ player games are out of scope for this — the
 // "matchup" concept only applies to a clean 1v1 — and simply keep the
 // default Temple sacred sites.
@@ -1211,7 +1298,11 @@ function resolveMatchupObjectives(state: GameState): void {
   if (state.players.length !== 2) return;
   const [a, b] = state.players;
   if (a!.faction === 'agrar' && b!.faction === 'agrar') {
-    state.fertileSites = state.strategicSites.map(site => ({ id: site.id, pos: { ...site.pos }, ownerId: null }));
+    const originalPositions = state.strategicSites.map(s => ({ ...s.pos }));
+    const centered = centralFertileSitePositions(state, originalPositions);
+    state.fertileSites = state.strategicSites.map((site, i) => ({
+      id: site.id, pos: { ...(centered[i] ?? site.pos) }, ownerId: null,
+    }));
     state.strategicSites = [];
   }
 }
