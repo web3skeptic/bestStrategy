@@ -1599,8 +1599,15 @@ export class Renderer3D {
     }
 
     // Split the explosions in time: the struck enemy first, your unit's hit-back after.
+    // Capped, not linear — an AI turn resolves (and calls render()) only once at
+    // the end, so a busy turn can land dozens of hits in a single detectHits()
+    // pass; an uncapped `i * 260ms` stagger turned that into a barrage that took
+    // over a minute to finish playing out, reading as a stuck/"permanent"
+    // explosion loop. Past MAX_HIT_STAGGER hits, the rest fire together with the
+    // last wave instead of the delay growing without bound.
+    const MAX_HIT_STAGGER = 4;
     hits.sort((a, b) => Number(a.mine) - Number(b.mine));
-    hits.forEach((h, i) => this.startHitAnimation(h.pos, i * 260, h.dmg));
+    hits.forEach((h, i) => this.startHitAnimation(h.pos, Math.min(i, MAX_HIT_STAGGER) * 260, h.dmg));
     // Splash/AoE: when one attack damages 2+ enemy units, add an expanding ground
     // ring centred on the hardest-hit tile so the area effect reads clearly.
     const enemyHits = hits.filter(h => !h.mine);
