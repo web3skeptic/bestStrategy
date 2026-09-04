@@ -964,20 +964,36 @@ function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): 
       const starts = [a, b];
       // §21 (v14 map-fairness pass) — 180° ROTATIONAL symmetry for the
       // neutral objectives too, not just spread-maximization: place the
-      // first via the existing best-candidate algorithm, then force its
-      // exact antipodal counterpart as the second (numNeutral is always 2
-      // in a 1v1 match — see neutralSiteCountForPlayers). Since the two
-      // Capitals are themselves already an exact 180° pair (a/b above),
-      // rotating the whole board 180° maps player A's Capital+objective
-      // onto player B's, guaranteeing equal geographic access for both —
-      // not just "far enough apart" as the old spread-only heuristic gave.
-      // Falls back to the general spread algorithm if the naive rotation
-      // happens to collide with something (never hangs/crashes).
+      // first via a "closest to the map's true centre" pick (not spread()'s
+      // usual "farthest from every reference" — for two ANTIPODAL Capitals,
+      // maximizing distance from both actually pushes the site out toward
+      // the ring's perpendicular point, i.e. off to the SIDE, not toward the
+      // middle a contested objective should read as), then force its exact
+      // antipodal counterpart as the second (numNeutral is always 2 in a 1v1
+      // match — see neutralSiteCountForPlayers). Since the two Capitals are
+      // themselves already an exact 180° pair (a/b above), rotating the
+      // whole board 180° maps player A's Capital+objective onto player B's,
+      // guaranteeing equal geographic access for both. Falls back to the
+      // general spread algorithm if the naive rotation happens to collide
+      // with something (never hangs/crashes).
       let neutrals: HexCoord[] | null = null;
       if (numNeutral === 2) {
-        const first = spread(1, starts, MIN_TEMPLE_SEPARATION, false);
-        if (first) {
-          const n0 = first[0]!;
+        // A candidate's antipode sits 2x as far from the centre as the
+        // candidate itself (hexDistance(p, -p) = 2*hexDistance(origin, p)),
+        // so anything closer to the centre than half of MIN_TEMPLE_SEPARATION
+        // can never mirror validly (its own antipode would land too close to
+        // it) — exclude those up front instead of randomly landing on one and
+        // silently falling back to the far-side spread() algorithm below.
+        const minCenterDist = Math.ceil(MIN_TEMPLE_SEPARATION / 2);
+        const centerEligible = all.filter(hex =>
+          !starts.some(t => hexEqual(t, hex))
+          && minDistTo(hex, starts) >= MIN_TEMPLE_SEPARATION
+          && hexDistance({ q: 0, r: 0 }, hex) >= minCenterDist);
+        if (centerEligible.length > 0) {
+          const byCenterDist = [...centerEligible].sort((p, q) =>
+            hexDistance({ q: 0, r: 0 }, p) - hexDistance({ q: 0, r: 0 }, q));
+          const centerPool = shuffle(byCenterDist.slice(0, Math.min(TEMPLE_SPREAD_CANDIDATES, byCenterDist.length)));
+          const n0 = centerPool[0]!;
           const n1: HexCoord = { q: -n0.q, r: -n0.r };
           const secondValid = hexDistance({ q: 0, r: 0 }, n1) <= mapRadius
             && !hexEqual(n1, n0) && minDistTo(n1, [...starts, n0]) >= MIN_TEMPLE_SEPARATION;
@@ -1669,6 +1685,7 @@ export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
     if (state.walls.has(key)) continue; // no roads over impassable mountains
     if (getRoadAt(state, hex)) continue; // already a road here
     if (getStrategicSiteAt(state, hex)) continue; // no roads under a site
+    if (state.fertileSites.some(f => hexEqual(f.pos, hex))) continue; // no roads under a Fertile Site
     if (state.capitals.some(c => hexEqual(c.pos, hex))) continue; // no roads under a Capital
     if (state.farms.some(f => hexEqual(f.pos, hex))) continue; // no roads under a Farm (founding or active)
     if (getUnitAt(state, hex)) continue;

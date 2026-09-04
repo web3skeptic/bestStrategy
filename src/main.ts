@@ -1,5 +1,5 @@
 import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, FERTILE_SITE_INCOME } from './factions';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, FERTILE_SITE_INCOME, FARM_MIN_SPACING } from './factions';
 import { hexEqual, hexKey, hexDistance } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
@@ -995,12 +995,15 @@ function farmHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord): stri
   const key = hexKey(hex);
   if (state.hills.has(key) || state.walls.has(key)) return 'invalid terrain';
   if (getStrategicSiteAt(state, hex)) return 'a sacred site is here';
+  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) return 'a Fertile Site is here';
   if (state.capitals.some(c => hexEqual(c.pos, hex))) return 'a structure is already here';
   if (state.farms.some(f => hexEqual(f.pos, hex))) return 'a structure is already here';
   const occupant = getUnitAt(state, hex);
   if (occupant) return occupant.playerId === unit.playerId ? 'occupied by your own unit' : 'an enemy unit is here';
   const player = state.players.find(p => p.id === unit.playerId)!;
   if (!getAgrarTerritory(state, player.id).has(key)) return 'outside Agrar infrastructure territory';
+  const ownFarms = state.farms.filter(f => f.ownerId === player.id);
+  if (!ownFarms.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) return `too close to another Farm (need ${FARM_MIN_SPACING}+ hexes apart)`;
   return null;
 }
 
