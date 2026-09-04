@@ -464,8 +464,43 @@ const CAPITAL_MOUNTAIN_EXCLUSION_RADIUS = 2;
 // to hills instead (see the wall-generation pass in generateTerrain). Local
 // clusters near a Capital/Temple already can't touch it at all (the
 // exclusion radius above), but nothing previously stopped a long-enough
-// unbroken range from fully bisecting the map further out.
+// unbroken range from fully bisecting the map further out. Hills/Forests are
+// passable (never a hard blocker the way Walls are), but the same unbroken-
+// chain problem still degraded play — a big enough Hill blob could crowd out
+// the map centre (pushing Fertile Site placement off-center) or a big Forest
+// blob could hide a large chunk of the board — so they get the same cap.
 const MAX_CONTIGUOUS_WALLS = 3;
+const MAX_CONTIGUOUS_HILLS = 3;
+const MAX_CONTIGUOUS_FORESTS = 3;
+
+// Shared by the Wall/Hill/Forest generation passes below: keeps only the
+// first `maxSize` tiles (in placement/BFS order, so each cluster's "core"
+// survives) of every connected component in `cells`, deleting the rest
+// in-place. `onOverflow`, if given, is called once per deleted tile (e.g.
+// so Walls can demote their overflow into Hills instead of vanishing).
+function capContiguousComponents(cells: Set<string>, maxSize: number, onOverflow?: (key: string) => void): void {
+  const visited = new Set<string>();
+  for (const startKey of [...cells]) {
+    if (visited.has(startKey)) continue;
+    const [sq, sr] = startKey.split(',').map(Number);
+    const component: string[] = [];
+    const queue: HexCoord[] = [{ q: sq!, r: sr! }];
+    visited.add(startKey);
+    while (queue.length > 0) {
+      const hex = queue.shift()!;
+      component.push(hexKey(hex));
+      for (const n of hexNeighbors(hex)) {
+        const nk = hexKey(n);
+        if (cells.has(nk) && !visited.has(nk)) { visited.add(nk); queue.push(n); }
+      }
+    }
+    for (let i = maxSize; i < component.length; i++) {
+      const key = component[i]!;
+      cells.delete(key);
+      onOverflow?.(key);
+    }
+  }
+}
 
 function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[], capitalPositions: HexCoord[] = []): { hills: Set<string>; walls: Set<string>; forests: Set<string> } {
   const hills = new Set<string>();
@@ -535,29 +570,7 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
   // so the "core" of each cluster survives) demotes to a hill instead —
   // still a mountain range visually/tactically, just no longer a wall no one
   // can ever cross.
-  {
-    const visited = new Set<string>();
-    for (const startKey of [...walls]) {
-      if (visited.has(startKey)) continue;
-      const [sq, sr] = startKey.split(',').map(Number);
-      const component: string[] = [];
-      const queue: HexCoord[] = [{ q: sq!, r: sr! }];
-      visited.add(startKey);
-      while (queue.length > 0) {
-        const hex = queue.shift()!;
-        component.push(hexKey(hex));
-        for (const n of hexNeighbors(hex)) {
-          const nk = hexKey(n);
-          if (walls.has(nk) && !visited.has(nk)) { visited.add(nk); queue.push(n); }
-        }
-      }
-      for (let i = MAX_CONTIGUOUS_WALLS; i < component.length; i++) {
-        const key = component[i]!;
-        walls.delete(key);
-        hills.add(key);
-      }
-    }
-  }
+  capContiguousComponents(walls, MAX_CONTIGUOUS_WALLS, key => hills.add(key));
 
   const hillSeeds = 4 + Math.floor(Math.random() * 4);
   for (let i = 0; i < hillSeeds; i++) {
@@ -576,6 +589,14 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
       }
     }
   }
+
+  // Same reasoning as the wall cap above — Hills are passable (never a hard
+  // blocker), but an unbroken blob could still crowd out a large chunk of the
+  // board (including, per a live report, the map's own centre, pushing the
+  // Agrar-vs-Agrar Fertile Site placement off toward the edge since fewer
+  // open central candidates survive). No demotion target below Hills — the
+  // overflow just reverts to plain, open terrain.
+  capContiguousComponents(hills, MAX_CONTIGUOUS_HILLS);
 
   const forestSeeds = 5 + Math.floor(Math.random() * 4);
   for (let i = 0; i < forestSeeds; i++) {
@@ -600,6 +621,10 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
       }
     }
   }
+
+  // Forests are passable too, but an unbroken blob could still hide/deny a
+  // large chunk of the board — same cap, same reasoning as Hills above.
+  capContiguousComponents(forests, MAX_CONTIGUOUS_FORESTS);
 
   return { hills, walls, forests };
 }
