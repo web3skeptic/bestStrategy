@@ -292,12 +292,62 @@ export interface SearchOutcome {
   timedOut: boolean;
 }
 
+// ── AI 2.0 Phase 5 — move ordering + transposition table ───────────────────
+//
+// Only once Phase 4 was measured and working in real play (per the brief's
+// own §100 gate) — see the free-kill/reachability/time-budget checks in
+// scripts/verify-ai-search-engine.ts and the Hard/Expert integration this
+// builds on.
+//
+// The TT's hash-inclusion list is deliberately narrow: this search's action
+// space (generateCandidateActions, Phase 3) only ever changes unit
+// position/HP/activation flags and structure HP via move/attack/
+// moveAttack/attackStructure/endActivation — it never recruits, researches,
+// builds, or founds anything. So the hash only needs to cover exactly that:
+// every living unit's id/pos/hp/hasMoved/hasAttacked, every Capital's and
+// StrategicSite's id/hp/state, and whose turn it is at this node (the same
+// board position with a different mover is a different node). Farms,
+// Roads, tech, and aura are intentionally excluded — they can't change
+// within this search tree, so including them would only slow hashing down
+// for zero extra correctness.
+type TTFlag = 'exact' | 'lower' | 'upper';
+interface TTEntry { depth: number; score: number; flag: TTFlag; bestActionKey: string | null }
+
+function hashState(state: GameState): string {
+  const parts: string[] = [String(state.currentPlayerIndex)];
+  for (const u of [...state.units].filter(u => u.hp > 0).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) {
+    parts.push(`u${u.id}:${u.pos.q},${u.pos.r}:${u.hp}:${u.hasMoved ? 1 : 0}${u.hasAttacked ? 1 : 0}`);
+  }
+  for (const c of [...state.capitals].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) {
+    parts.push(`c${c.id}:${c.hp}`);
+  }
+  for (const s of [...state.strategicSites].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) {
+    parts.push(`s${s.id}:${s.hp}:${s.state}`);
+  }
+  return parts.join('|');
+}
+
 interface SearchCtx {
   aiPlayerId: number;
   difficulty: AiDifficulty;
   deadline: number;
   nodeBudget: number;
   nodes: number;
+  tt: Map<string, TTEntry>;
+}
+
+// Whichever candidate's key matches the TT's remembered best move (if any)
+// goes first — the classic "try the previously-best line first" ordering
+// that makes alpha-beta's pruning actually bite instead of exploring
+// candidates in whatever arbitrary order they were generated.
+function orderByTT(candidates: AiAction[], bestActionKey: string | null): AiAction[] {
+  if (!bestActionKey) return candidates;
+  const idx = candidates.findIndex(a => actionKey(a) === bestActionKey);
+  if (idx <= 0) return candidates;
+  const reordered = candidates.slice();
+  const [best] = reordered.splice(idx, 1);
+  reordered.unshift(best!);
+  return reordered;
 }
 
 // Independent of wall-clock — a slow machine (or a GC pause) could blow the
@@ -354,43 +404,72 @@ function minimax(
     return evaluateState(state, ctx.aiPlayerId);
   }
 
+  const origAlpha = alpha;
+  const origBeta = beta;
+  const hash = hashState(state);
+  const cached = ctx.tt.get(hash);
+  let ttBestKey: string | null = null;
+  if (cached && cached.depth >= plyLeft) {
+    if (cached.flag === 'exact') return cached.score;
+    if (cached.flag === 'lower' && cached.score > alpha) alpha = cached.score;
+    else if (cached.flag === 'upper' && cached.score < beta) beta = cached.score;
+    if (alpha >= beta) return cached.score;
+  }
+  if (cached) ttBestKey = cached.bestActionKey;
+
+  const store = (value: number, bestActionKey: string | null): void => {
+    if (cached && cached.depth > plyLeft) return; // never overwrite a deeper, more trustworthy entry
+    const flag: TTFlag = value <= origAlpha ? 'upper' : value >= origBeta ? 'lower' : 'exact';
+    ctx.tt.set(hash, { depth: plyLeft, score: value, flag, bestActionKey });
+  };
+
   if (mover === 'opponent') {
     const responders = respondersNear(state, ctx.aiPlayerId, lastActedPos, plyLeft >= 3 ? 3 : 2);
-    if (responders.length === 0) return evaluateState(state, ctx.aiPlayerId);
+    if (responders.length === 0) {
+      const v = evaluateState(state, ctx.aiPlayerId);
+      store(v, null);
+      return v;
+    }
     let value = Infinity;
+    let bestKey: string | null = null;
     outer: for (const u of responders) {
-      const candidates = narrowCandidates(state, u, u.playerId, ctx.difficulty, 3);
+      const candidates = orderByTT(narrowCandidates(state, u, u.playerId, ctx.difficulty, 3), ttBestKey);
       for (const action of candidates) {
         if (timeUp(ctx)) break outer;
         const { state: next, applied } = simulateAction(state, action);
         if (!applied) continue;
         const score = minimax(next, ctx, plyLeft - 1, alpha, beta, 'me', u.pos, myPendingUnits);
-        if (score < value) value = score;
+        if (score < value) { value = score; bestKey = actionKey(action); }
         if (value < beta) beta = value;
         if (beta <= alpha) break outer;
       }
     }
-    return value === Infinity ? evaluateState(state, ctx.aiPlayerId) : value;
+    const result = value === Infinity ? evaluateState(state, ctx.aiPlayerId) : value;
+    store(result, bestKey);
+    return result;
   }
 
   // mover === 'me' — one of the root player's own still-pending units
   // continues the same turn (the root unit's own decision is handled by the
   // caller, searchBestAction, not here).
-  if (myPendingUnits.length === 0) return evaluateState(state, ctx.aiPlayerId);
+  if (myPendingUnits.length === 0) { const v = evaluateState(state, ctx.aiPlayerId); store(v, null); return v; }
   const [unit, ...rest] = myPendingUnits;
   if (!unit || unit.hp <= 0) return minimax(state, ctx, plyLeft, alpha, beta, mover, lastActedPos, rest);
-  const candidates = narrowCandidates(state, unit, ctx.aiPlayerId, ctx.difficulty, 3);
+  const candidates = orderByTT(narrowCandidates(state, unit, ctx.aiPlayerId, ctx.difficulty, 3), ttBestKey);
   let value = -Infinity;
+  let bestKey: string | null = null;
   for (const action of candidates) {
     if (timeUp(ctx)) break;
     const { state: next, applied } = simulateAction(state, action);
     if (!applied) continue;
     const score = minimax(next, ctx, plyLeft - 1, alpha, beta, 'opponent', unit.pos, rest);
-    if (score > value) value = score;
+    if (score > value) { value = score; bestKey = actionKey(action); }
     if (value > alpha) alpha = value;
     if (beta <= alpha) break;
   }
-  return value === -Infinity ? evaluateState(state, ctx.aiPlayerId) : value;
+  const result = value === -Infinity ? evaluateState(state, ctx.aiPlayerId) : value;
+  store(result, bestKey);
+  return result;
 }
 
 // Root search: chooses the best action for THIS unit's activation by
@@ -434,19 +513,28 @@ export function searchBestAction(
   const startTime = Date.now();
   let best: SearchOutcome = { action: orderedRoots[0]!, score: -Infinity, depthReached: 0, nodesVisited: 0, timedOut: false };
 
+  // The TT persists across the WHOLE iterative-deepening session (every
+  // depth, and every branch of every depth's tree) — a shallower depth's
+  // entries still help order and prune the next, deeper pass, and real
+  // transpositions (the same resulting position reached via a different
+  // move order) get evaluated once, not once per path that reaches them.
+  const tt = new Map<string, TTEntry>();
+  let rootOrder = orderedRoots;
+
   for (let depth = 2; depth <= searchCfg.maxDepthPlies; depth += 2) {
     const ctx: SearchCtx = {
       aiPlayerId, difficulty,
       deadline: startTime + searchCfg.timeBudgetMs,
       nodeBudget: MAX_SEARCH_NODES,
       nodes: 0,
+      tt,
     };
-    let depthBestAction: AiAction = orderedRoots[0]!;
+    let depthBestAction: AiAction = rootOrder[0]!;
     let depthBestScore = -Infinity;
     let alpha = -Infinity;
     const beta = Infinity;
     let completed = true;
-    for (const action of orderedRoots) {
+    for (const action of rootOrder) {
       if (timeUp(ctx)) { completed = false; break; }
       const { state: next, applied } = simulateAction(state, action);
       if (!applied) continue;
@@ -457,6 +545,10 @@ export function searchBestAction(
     if (timeUp(ctx)) completed = false;
     if (completed) {
       best = { action: depthBestAction, score: depthBestScore, depthReached: depth, nodesVisited: ctx.nodes, timedOut: false };
+      // Next (deeper) iteration tries this depth's winner first — the
+      // principal variation is very likely still strong one ply deeper, and
+      // trying it first is what lets alpha-beta prune the rest hard.
+      rootOrder = orderByTT(rootOrder, actionKey(depthBestAction));
     } else {
       best.timedOut = true;
       break;
