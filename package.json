@@ -26,7 +26,8 @@
     "test:ai-search-engine": "tsx scripts/verify-ai-search-engine.ts",
     "test:ai-search-tt": "tsx scripts/verify-ai-search-tt.ts",
     "test:ai-search-quiescence": "tsx scripts/verify-ai-search-quiescence.ts",
-    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence",
+    "test:ai-benchmarks": "tsx scripts/verify-ai-benchmarks.ts",
+    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence && npm run test:ai-benchmarks",
     "build:root": "vite build"
   },
   "keywords": [],
