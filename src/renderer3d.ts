@@ -749,11 +749,20 @@ export class Renderer3D {
    * assumed y=0 — with any camera tilt, that silently resolves a click on
    * an elevated tile (or a unit standing on one) to the WRONG hex (the one
    * behind/beyond it from the camera's angle), which is exactly the
-   * "clicks don't reliably select the intended unit" symptom. Raycasting
-   * the tile geometry itself always lands on the surface actually drawn on
-   * screen, elevation included. Falls back to the flat-plane projection
-   * only if the ray somehow misses every tile (shouldn't happen once tiles
-   * are built, but keeps this defensive).
+   * "clicks don't reliably select the intended unit" symptom.
+   *
+   * Follow-up — a Farm/Temple/Capital (or a unit) is a TALL model rooted on
+   * a flat ground tile; from any tilted camera angle its visible silhouette
+   * leans toward the viewer, spilling over the screen-space area of the tile
+   * in FRONT of it. Raycasting only the flat tile mesh made a click on that
+   * visible silhouette pass straight through (structures/units aren't in the
+   * tested object list) and land on whatever tile was actually behind the
+   * cursor at y=0 — often a neighbour, not the one the structure/unit
+   * actually stands on. Now structures and units are raycast in the SAME
+   * pass as tiles, so THREE's nearest-hit-first ordering picks whichever the
+   * player is actually looking at, not just what's flat on the ground there.
+   * Falls back to the old flat-plane projection only if the ray somehow
+   * misses everything (shouldn't happen once tiles are built).
    */
   pickHex(clientX: number, clientY: number): HexCoord | null {
     const rect = this.canvas.getBoundingClientRect();
@@ -763,15 +772,14 @@ export class Renderer3D {
     );
     this.raycaster.setFromCamera(ndc, this.camera);
 
-    if (this.tileMeshes.size > 0) {
-      const hits = this.raycaster.intersectObjects([...this.tileMeshes.values()], true);
-      for (const hit of hits) {
-        let o: THREE.Object3D | null = hit.object;
-        while (o && o.userData.hexKey === undefined) o = o.parent;
-        if (o) {
-          const [qs, rs] = (o.userData.hexKey as string).split(',');
-          return { q: Number(qs), r: Number(rs) };
-        }
+    const targets: THREE.Object3D[] = [this.unitGroup, this.structureGroup, ...this.tileMeshes.values()];
+    const hits = this.raycaster.intersectObjects(targets, true);
+    for (const hit of hits) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o && o.userData.hexKey === undefined) o = o.parent;
+      if (o) {
+        const [qs, rs] = (o.userData.hexKey as string).split(',');
+        return { q: Number(qs), r: Number(rs) };
       }
     }
 
@@ -1297,6 +1305,7 @@ export class Renderer3D {
           : buildTemple(st.colorNum, st.tier);
         const { x, z } = hexToWorld(st.pos);
         mesh.position.set(x, 0, z);
+        mesh.userData.hexKey = key; // selection-reliability — see pickHex
         this.structureGroup.add(mesh);
         entry = { mesh, color: st.colorNum, level: st.tier, stage };
         this.structureMeshes.set(st.id, entry);
@@ -1417,6 +1426,7 @@ export class Renderer3D {
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.y = 0.07;
       mesh.userData.baseOpacity = ring.op;
+      mesh.raycast = () => {}; // decorative only — see pickHex's unit/structure raycast
       wrap.add(mesh);
       meshes.push(mesh);
     }
@@ -1444,6 +1454,7 @@ export class Renderer3D {
     fg.renderOrder = 999;
     group.add(fg);
 
+    group.traverse(o => { o.raycast = () => {}; }); // decorative only — see pickHex's unit/structure raycast
     parent.add(group);
     this.unitHpBars.set(unitId, { group, fg, barW });
   }
@@ -1531,6 +1542,7 @@ export class Renderer3D {
     fg.renderOrder = 999;
     group.add(fg);
 
+    group.traverse(o => { o.raycast = () => {}; }); // decorative only — see pickHex's unit/structure raycast
     parent.add(group);
     const bar = { group, fg, barW, yOffset };
     this.structHpBars.set(id, bar);
@@ -1669,6 +1681,7 @@ export class Renderer3D {
         if (t >= 1) this.moveAnims.delete(unit.id);
       }
       mesh.position.set(pos.x, elev, pos.z);
+      mesh.userData.hexKey = key; // selection-reliability — see pickHex
       mesh.visible = true;
     }
     // Remove meshes for units that died / went out of view.
