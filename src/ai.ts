@@ -1619,10 +1619,46 @@ function planRoadArteryPath(state: GameState, unit: Unit, destination: HexCoord)
 // pickObjective instead of replacing it — the underlying tactical logic
 // (kill-first, defend-threatened, besiege, hunt-weakest) still runs
 // regardless of plan, this just changes which objective gets first refusal.
+// Search (Hard/Expert's searchBestAction/searchBestActivation) never even
+// reads `plan` — its candidates are ranked purely by simulated
+// evaluateState outcomes — so a genuinely better tactical line ALWAYS wins
+// over whatever the macro-plan is biasing toward; `plan` only steers the
+// heuristic fallback/candidate generation, never overrides real search.
 export type AiPlan = 'DEFEND' | 'RAID_ECONOMY' | 'SIEGE' | 'TECH_UP' | 'EXPAND';
+
+// AI 2.0 §"macro-plan layer" — persistent but overridable. computeStrategicPlan
+// itself is a pure, stateless snapshot of the current position; recomputing
+// it fresh every single turn meant the plan could flip (e.g. EXPAND <->
+// TECH_UP) from one turn to the next as Energy/reservation state ticked
+// past a threshold, even with nothing strategically different happening —
+// undermining the entire point of committing to a direction long enough
+// for pickObjective's bias to actually accumulate any advantage. This
+// commits to whichever plan gets picked for PLAN_COMMITMENT_ROUNDS real
+// rounds at a time. A genuine emergency is checked FIRST, every call,
+// regardless of any active commitment — "overridable, not a hard order"
+// means reality always wins, and once the emergency passes the AI simply
+// resumes whatever commitment was already in flight rather than
+// re-rolling a brand new plan from scratch.
+const PLAN_COMMITMENT_ROUNDS = 3;
+interface PlanCommitment { plan: AiPlan; committedAtRound: number }
+// Keyed by (state, aiPlayerId) for the same reason garrison/reserve memory
+// are — one shared GameState between both AI seats in a 2-player game.
+const planMemory = new WeakMap<GameState, Map<number, PlanCommitment>>();
 
 export function chooseStrategicPlan(state: GameState, aiPlayerId: number): AiPlan {
   if (hasEmergency(state, aiPlayerId)) return 'DEFEND';
+  let byPlayer = planMemory.get(state);
+  if (!byPlayer) { byPlayer = new Map(); planMemory.set(state, byPlayer); }
+  const existing = byPlayer.get(aiPlayerId);
+  if (existing && state.turnNumber - existing.committedAtRound < PLAN_COMMITMENT_ROUNDS) {
+    return existing.plan;
+  }
+  const plan = computeStrategicPlan(state, aiPlayerId);
+  byPlayer.set(aiPlayerId, { plan, committedAtRound: state.turnNumber });
+  return plan;
+}
+
+function computeStrategicPlan(state: GameState, aiPlayerId: number): AiPlan {
   const player = state.players[aiPlayerId];
   const mine = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId);
   if (player?.faction === 'temple') {

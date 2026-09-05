@@ -163,13 +163,26 @@ import type { Unit } from './types';
 // call search many times (one per eligible unit, plus the activation-order
 // pre-pass), which could otherwise stack up to several times timeBudgetMs
 // on a busy board. See runTurn's turnSearchDeadline plumbing in ai.ts.
+//
+// Tuned down from an initial 1300/2600 after the macro-plan persistence
+// layer (chooseStrategicPlan committing to one plan for several rounds
+// instead of re-rolling every turn) turned out to keep noticeably MORE
+// units in sustained mutual contact for MANY consecutive turns during a
+// real fight — every one of those units legitimately qualifies for
+// search's tactical-content gate at once, so the shared per-turn budget
+// was reliably being fully spent turn after turn instead of just
+// occasionally, a real and measured (not hypothetical) live-server cost
+// increase. These values keep worst-case per-turn latency bounded to
+// roughly what a human would tolerate as "AI is thinking" even when that
+// sustained-combat pattern is the norm for a long stretch of a real game,
+// not just an occasional spike.
 export const SEARCH_CONFIG: Record<AiDifficulty, {
   enabled: boolean; candidateWidth: number; maxDepthPlies: number; timeBudgetMs: number; perTurnBudgetMs: number;
 }> = {
   easy:   { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
   normal: { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
-  hard:   { enabled: true, candidateWidth: 10, maxDepthPlies: 4, timeBudgetMs: 400, perTurnBudgetMs: 1300 },
-  expert: { enabled: true, candidateWidth: 16, maxDepthPlies: 6, timeBudgetMs: 1200, perTurnBudgetMs: 2600 },
+  hard:   { enabled: true, candidateWidth: 10, maxDepthPlies: 4, timeBudgetMs: 400, perTurnBudgetMs: 700 },
+  expert: { enabled: true, candidateWidth: 16, maxDepthPlies: 6, timeBudgetMs: 1200, perTurnBudgetMs: 1400 },
 };
 
 function actionKey(a: AiAction): string {
