@@ -135,6 +135,38 @@ console.log('\n=== anyEnemyHasLethalShot: detects guaranteed kills, respects fog
     !anyEnemyHasLethalShot(state, target2, 0));
 }
 
+// ── Regression: the Agrar Builder must not permanently block its own
+// Capital from ever deploying another recruit. Building Farms/Roads never
+// requires moving away from wherever the Builder is standing, so once it
+// deploys onto the Capital it had (before this fix) no reason to ever leave
+// — permanently occupying the one tile resolveTrainingForPlayer requires be
+// free, capping Agrar's population at whatever it queued in round 1 for the
+// rest of the game NO MATTER how much aura piled up. This was, by a wide
+// margin, the single biggest contributor found to Agrar-controlled-AI
+// consistently losing to Temple-controlled-AI. ──
+console.log('\n=== Agrar Builder must not permanently block Capital recruiting ===');
+{
+  const state = setup('agrar', 'agrar');
+  state.currentPlayerIndex = 0;
+  state.players[0]!.aura = 200; // never Energy-constrained — isolate the occupancy bug specifically
+  let rounds = 0;
+  while (rounds < 20) {
+    rounds++;
+    runAiTurn(state, 'hard', getCurrentPlayer(state).id);
+    endTurn(state);
+  }
+  const armySize = state.units.filter(u => u.hp > 0 && u.playerId === 0).length;
+  // The bug this guards against capped the army at EXACTLY 3 forever
+  // (founder + whatever 2 units were queued before the Capital tile got
+  // permanently blocked) no matter how many rounds passed or how much aura
+  // was available — so armySize > 3 is the precise "is this actually
+  // fixed" signal, not just "did it grow at all".
+  check('with unlimited Energy, Agrar\'s army grows past the old permanently-stuck-at-3 ceiling',
+    armySize > 3, `army size = ${armySize}`);
+  check('the training queue is not permanently jammed (empties out at some point)',
+    state.trainingQueue.filter(o => o.playerId === 0).length < 3);
+}
+
 // ── No cheating: all 4 difficulties only ever act through canonical engine mutators ──
 // (structural check — every AIAction is produced by moveUnit/attackUnit/spawnUnit/
 // etc., which already validate legality; this just confirms a full turn never

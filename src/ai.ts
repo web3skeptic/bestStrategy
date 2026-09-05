@@ -242,7 +242,13 @@ function pickWithRandomness<T>(ranked: T[], randomness: number): T | null {
 
 // ── Objective selection: defend threatened structures → besiege → hunt weakest enemy ──
 
-function weakestEnemyTarget(state: GameState, unit: Unit, aiPlayerId: number): HexCoord | null {
+// A stable identity for whatever pickObjective committed a unit to — lets
+// objectiveMemory re-resolve the CURRENT position of the same target next
+// turn (it may have moved) while still recognizing "this is the same thing
+// I was already going for", instead of only comparing raw coordinates.
+type TargetRef = { kind: 'unit'; id: string } | { kind: 'structure'; id: string };
+
+function weakestEnemyTarget(state: GameState, unit: Unit, aiPlayerId: number): { pos: HexCoord; ref: TargetRef } | null {
   const enemyPlayers = state.players.filter(p => p.id !== aiPlayerId && isPlayerAlive(state, p.id));
   if (enemyPlayers.length === 0) return null;
   // Strength = total unit HP + a premium per owned structure + remaining Capital
@@ -257,10 +263,43 @@ function weakestEnemyTarget(state: GameState, unit: Unit, aiPlayerId: number): H
   const revealed = state.units.filter(u =>
     u.hp > 0 && u.playerId === target.id && isForestUnitRevealed(state, u.pos, aiPlayerId));
   const nearestUnit = bestBy(revealed, u => -hexDistance(unit.pos, u.pos));
-  if (nearestUnit) return nearestUnit.pos;
+  if (nearestUnit) return { pos: nearestUnit.pos, ref: { kind: 'unit', id: nearestUnit.id } };
   const structures = getOwnedStructures(state, target.id);
   const nearestStructure = bestBy(structures, s => -hexDistance(unit.pos, s.pos));
-  return nearestStructure ? nearestStructure.pos : null;
+  return nearestStructure ? { pos: nearestStructure.pos, ref: { kind: 'structure', id: nearestStructure.id } } : null;
+}
+
+// ── Objective persistence ───────────────────────────────────────────────────
+// Simulation exposed a real problem this fixes: a slow (Agrar-speed) unit
+// takes several turns to reach any objective, but the besiege-vs-hunt pick
+// below is sensitive to enemy movement — as visible units reshuffle, "the
+// nearest enemy structure" or "the weakest enemy's nearest unit" can flip to
+// a DIFFERENT target every single turn. A fast unit still reaches its target
+// before that matters; a slow one never arrives anywhere, visibly oscillating
+// between a handful of hexes turn after turn instead of committing. Keyed by
+// the exact GameState object (a WeakMap, so different game instances/AI-vs-AI
+// simulations never share or leak memory into each other, and it's dropped
+// automatically once a finished game's state is no longer referenced).
+const objectiveMemory = new WeakMap<GameState, Map<string, TargetRef>>();
+
+function getObjectiveMemory(state: GameState): Map<string, TargetRef> {
+  let m = objectiveMemory.get(state);
+  if (!m) { m = new Map(); objectiveMemory.set(state, m); }
+  return m;
+}
+
+// Re-resolve a remembered target's CURRENT position — null if it's dead/gone,
+// which is exactly the signal to drop the commitment and pick a fresh one.
+function resolveTargetRef(state: GameState, ref: TargetRef): HexCoord | null {
+  if (ref.kind === 'unit') {
+    const u = state.units.find(x => x.id === ref.id && x.hp > 0);
+    return u ? u.pos : null;
+  }
+  for (const p of state.players) {
+    const s = getOwnedStructures(state, p.id).find(s => s.id === ref.id);
+    if (s) return s.pos;
+  }
+  return null;
 }
 
 // `plan` (Hard+ only, see chooseStrategicPlan) gives one objective type
@@ -276,39 +315,81 @@ function weakestEnemyTarget(state: GameState, unit: Unit, aiPlayerId: number): H
 // still counts as garrisoned, not just "already standing on the doorstep".
 const GARRISON_RADIUS = 3;
 const MIN_ARMY_TO_GARRISON = 2; // don't strand a brand-new 1-unit army on turtle duty
+// Below this many combat units, don't trickle a lone (or nearly-lone) unit
+// deep into enemy territory to be picked off piecemeal — rally near home
+// until there's enough mass to actually threaten something. Simulation
+// showed a single early unit routinely being sent clear across a 14-hex-
+// apart map alone; a real player masses up first. Generic (applies to any
+// faction/matchup) — this is decision-quality, not a per-faction special case.
+const MIN_ARMY_TO_ATTACK = 4;
+const RALLY_SLACK = 2; // how much further than GARRISON_RADIUS still counts as "near home"
+
+// A garrison assignment that only lasted for the ONE turn it was picked
+// turned out not to be enough — the "closest unit right now" can be a
+// different unit each turn as the army maneuvers, and whichever one wasn't
+// picked THIS turn just resumed its own (offense) objective memory and
+// drifted off again, so nothing ever actually settled into home defense.
+// Persisted the same way as objectiveMemory: once a unit is assigned
+// garrison duty it KEEPS that job (checked every turn, re-picked only if it
+// dies) instead of being re-evaluated from scratch each time.
+const garrisonMemory = new WeakMap<GameState, Set<string>>();
+function getGarrisonMemory(state: GameState): Set<string> {
+  let s = garrisonMemory.get(state);
+  if (!s) { s = new Set(); garrisonMemory.set(state, s); }
+  return s;
+}
 
 function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null): HexCoord | null {
-  const myStructures = getOwnedStructures(state, aiPlayerId);
+  // getOwnedStructures only ever returns the Capital + owned Temple sites —
+  // it never includes Farms. For Agrar that meant its ENTIRE economy was
+  // structurally invisible to the "defend a threatened structure" check
+  // below: a Temple Raider could walk up to and destroy an Agrar Farm
+  // completely unopposed, no matter how good the rest of the AI's defense
+  // logic was, simply because Farms were never in the list being checked.
+  const myStructures = [...getOwnedStructures(state, aiPlayerId), ...state.farms.filter(f => f.ownerId === aiPlayerId && f.state === 'farm')];
   const enemies = revealedEnemies(state, aiPlayerId);
 
   // 0. Keep a standing home guard — a genuinely competent player never
   // leaves the Capital with zero eyes/defenders on it, and reactive
   // "defend once threatened" (below) can't help if the threat was never
-  // seen coming in the first place (fog of war). Only the single CLOSEST
-  // available unit is redirected, and only while NOTHING is already posted
-  // nearby — this is a standing-garrison preference, not a lockdown.
+  // seen coming in the first place (fog of war). Exactly one unit is ever
+  // assigned (see garrisonMemory above) — this is a standing-garrison
+  // preference the rest of the army is entirely free of, not a lockdown.
   const capital = getPlayerCapital(state, aiPlayerId);
   const myArmySize = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type)).length;
   if (capital && myArmySize >= MIN_ARMY_TO_GARRISON) {
-    const guarded = state.units.some(u =>
-      u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type) && hexDistance(u.pos, capital.pos) <= GARRISON_RADIUS);
-    if (!guarded) {
+    const garrison = getGarrisonMemory(state);
+    const currentGuard = [...garrison].map(id => state.units.find(u => u.id === id && u.hp > 0)).find(u => !!u);
+    if (currentGuard) {
+      if (currentGuard.id === unit.id) return capital.pos;
+    } else {
+      garrison.clear(); // previous guard died — hand the job to a new unit
       const combatUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type));
       const closest = bestBy(combatUnits, u => -hexDistance(u.pos, capital.pos));
-      if (closest && closest.id === unit.id) return capital.pos;
+      if (closest) {
+        garrison.add(closest.id);
+        if (closest.id === unit.id) return capital.pos;
+      }
     }
   }
 
-  // 1. Defend an owned structure under imminent threat with no adjacent
-  // defender — "imminent" scaled to each enemy's actual mobility (see
-  // enemyCanReachNextTurn) rather than a flat radius, so a fast unit gets
-  // flagged from farther out than a slow one, giving proportionate warning.
+  // 1. Defend an owned structure under imminent threat — "imminent" scaled
+  // to each enemy's actual mobility (enemyCanReachNextTurn) rather than a
+  // flat radius, so a fast unit gets flagged from farther out than a slow
+  // one. "Defended" is now a rough STRENGTH comparison (cost-weighted HP of
+  // nearby defenders vs the threatening enemies), not just "at least one
+  // defender exists" — a lone unit posted next to 3 attackers used to count
+  // as "handled" and stop pulling in any help, which was never actually
+  // enough to hold. Keeps calling in reinforcements until roughly matched.
+  const faction = state.players[aiPlayerId]?.faction;
   for (const s of myStructures) {
-    const threatened = enemies.some(e => enemyCanReachNextTurn(state, e, s.pos));
-    if (!threatened) continue;
-    const defended = state.units.some(u =>
-      u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, s.pos) <= 1);
-    if (!defended) return s.pos;
+    const threats = enemies.filter(e => enemyCanReachNextTurn(state, e, s.pos));
+    if (threats.length === 0) continue;
+    const threatValue = threats.reduce((sum, e) => sum + getUnitCost(e.type, state.players[e.playerId]?.faction) * (e.hp / e.stats.maxHp), 0);
+    const defenderValue = state.units
+      .filter(u => u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, s.pos) <= 1)
+      .reduce((sum, u) => sum + getUnitCost(u.type, faction) * (u.hp / u.stats.maxHp), 0);
+    if (defenderValue < threatValue) return s.pos;
   }
 
   // v14 — a not-already-mine Fertile Site is a real objective (Agrar
@@ -329,8 +410,28 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
     if (farm) return farm.pos;
   }
 
-  // 2. Besiege: nearest enemy structure — destroying the Capital wins the game
-  // (§11), and any City/Temple along the way is a legitimate combat target too.
+  // Mass before attacking: below MIN_ARMY_TO_ATTACK combat units, don't
+  // trickle this one deep into enemy territory alone — rally back toward
+  // home instead, overriding even an already-remembered offensive target
+  // (an army that just took losses should regroup, not keep splintering).
+  // Already-close units are left alone (nothing to rally back FROM).
+  if (capital && myArmySize < MIN_ARMY_TO_ATTACK && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
+    return capital.pos;
+  }
+
+  // 2-3. Besiege the nearest enemy structure (destroying the Capital wins
+  // the game, §11) vs hunt the weakest enemy's units — but first, stick with
+  // whatever this unit already committed to last turn if it's still valid
+  // (see "Objective persistence" above). Only pick a FRESH target below if
+  // there's no memory yet, or the remembered one is dead/gone.
+  const memory = getObjectiveMemory(state);
+  const remembered = memory.get(unit.id);
+  if (remembered) {
+    const pos = resolveTargetRef(state, remembered);
+    if (pos) return pos;
+    memory.delete(unit.id); // target destroyed/vanished — fall through to pick a new one
+  }
+
   // SIEGE plan — a siege unit heads straight for the enemy Capital instead of
   // whichever enemy structure merely happens to be nearest.
   const enemyStructures = state.players
@@ -342,17 +443,32 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
       .map(p => getPlayerCapital(state, p.id))
       .filter((c): c is NonNullable<typeof c> => !!c);
     const enemyCapital = bestBy(enemyCapitals, c => -hexDistance(unit.pos, c.pos));
-    if (enemyCapital) return enemyCapital.pos;
+    if (enemyCapital) { memory.set(unit.id, { kind: 'structure', id: enemyCapital.id }); return enemyCapital.pos; }
   }
   const nearestStructure = bestBy(enemyStructures, s => -hexDistance(unit.pos, s.pos));
   const structureDist = nearestStructure ? hexDistance(unit.pos, nearestStructure.pos) : Infinity;
 
-  // 3. Hunt the weakest enemy's units.
   const enemyTarget = weakestEnemyTarget(state, unit, aiPlayerId);
-  const enemyDist = enemyTarget ? hexDistance(unit.pos, enemyTarget) : Infinity;
+  const enemyDist = enemyTarget ? hexDistance(unit.pos, enemyTarget.pos) : Infinity;
 
-  if (nearestStructure && structureDist <= enemyDist) return nearestStructure.pos;
-  if (enemyTarget) return enemyTarget;
+  // Destroying a Capital is the ONLY win condition (§11) — a scattered
+  // individual enemy unit merely being slightly closer than the enemy
+  // Capital isn't a good enough reason to give up on the actual objective.
+  // Simulation showed the army never committing to a real assault, instead
+  // splitting attention across whichever nearby enemy unit looked
+  // marginally closer turn to turn, while the faster opposing side had no
+  // such hesitation converging on OUR Capital. Require the individual
+  // target to be MEANINGFULLY closer, not just closer-or-equal, before
+  // preferring it over the structure.
+  const STRUCTURE_COMMIT_MARGIN = 3;
+  if (nearestStructure && structureDist <= enemyDist + STRUCTURE_COMMIT_MARGIN) {
+    memory.set(unit.id, { kind: 'structure', id: nearestStructure.id });
+    return nearestStructure.pos;
+  }
+  if (enemyTarget) {
+    memory.set(unit.id, enemyTarget.ref);
+    return enemyTarget.pos;
+  }
   return nearestStructure ? nearestStructure.pos : null;
 }
 
@@ -497,6 +613,28 @@ function actCombatUnit(
   if (advanced && unit.type === 'founder') {
     const player = state.players[aiPlayerId]!;
     if (player.faction === 'agrar') {
+      // If this Builder is standing ON its own recruiting structure (the
+      // Capital — Agrar's only production site) with a unit already queued
+      // to deploy there, step off FIRST. Simulation uncovered a severe bug
+      // here: building Farms/Roads never requires actually leaving the
+      // tile, so the Builder had no other reason to ever move — it would
+      // permanently occupy the Capital and block EVERY future recruit from
+      // ever deploying (resolveTrainingForPlayer requires the spawn tile
+      // free), leaving Agrar's army stuck at population 3 for the entire
+      // game regardless of how much aura it had.
+      const onOwnStructure = getOwnedStructures(state, aiPlayerId).some(s => hexEqual(s.pos, unit.pos));
+      const blockingDeployment = onOwnStructure && state.trainingQueue.some(o => o.playerId === aiPlayerId);
+      if (blockingDeployment && !unit.hasMoved && select(state, unit) && state.moveHexes.length > 0) {
+        const dest = bestBy(state.moveHexes, h => -hexDistance(h, unit.pos));
+        if (dest) {
+          observe(state, 'move', { unitId: unit.id, to: dest });
+          if (moveUnit(state, dest).moved) {
+            actions.push({ type: 'move', pos: { ...unit.pos }, description: `${difficultyLabel(difficulty)} Builder steps aside to let a recruit deploy` });
+            return;
+          }
+        }
+      }
+
       const farmHex = getValidFarmHexes(state, unit).find(h => canStartFarm(state, unit, h));
       if (farmHex) {
         observe(state, 'build-farm', { unitId: unit.id, pos: farmHex });
@@ -793,7 +931,11 @@ function hasEmergency(state: GameState, aiPlayerId: number): boolean {
   const capital = getPlayerCapital(state, aiPlayerId);
   if (capital && capital.hp / capital.maxHp < 0.5) return true;
   const enemies = revealedEnemies(state, aiPlayerId);
-  for (const s of getOwnedStructures(state, aiPlayerId)) {
+  // See pickObjective's myStructures comment — Farms must be included here
+  // too, or an Agrar economy under active raid would never count as an
+  // emergency worth breaking resource reservation for.
+  const structures = [...getOwnedStructures(state, aiPlayerId), ...state.farms.filter(f => f.ownerId === aiPlayerId && f.state === 'farm')];
+  for (const s of structures) {
     if (!enemies.some(e => enemyCanReachNextTurn(state, e, s.pos))) continue;
     const defended = state.units.some(u => u.hp > 0 && u.playerId === aiPlayerId && hexDistance(u.pos, s.pos) <= 1);
     if (!defended) return true;
