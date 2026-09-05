@@ -24,6 +24,64 @@ function setup(f0: 'agrar' | 'temple' = 'agrar', f1: 'agrar' | 'temple' = 'templ
   return state;
 }
 
+// Capital placement is randomized per game (and can land near the map
+// edge), which made hex-direction-based test geometry flaky depending on
+// which quadrant it happened to land in. Recentres playerId's Capital to
+// the exact map centre and clears a wide surrounding area (terrain +
+// anything else placed there) for fully deterministic test geometry —
+// same rationale/shape as the identical helper in verify-roads.ts/
+// verify-economy.ts.
+function forceCapitalCenter(state: GameState, playerId: number, radius = 6): void {
+  const capital = state.capitals.find(c => c.playerId === playerId)!;
+  capital.pos = { q: 0, r: 0 };
+  const far = state.mapRadius * 6;
+  let offset = 0;
+  // Every OTHER Capital is relocated far away unconditionally (not just if
+  // within `radius`) — an enemy Capital left at its original random spot
+  // could otherwise make "besiege the nearest enemy structure" pull a test
+  // unit in an unpredictable direction, unrelated to whatever this specific
+  // test is actually checking.
+  for (const c of state.capitals) if (c.playerId !== playerId) c.pos = { q: far, r: far + offset++ };
+  for (const s of state.strategicSites) if (hexDistance(s.pos, capital.pos) <= radius) s.pos = { q: far, r: far + offset++ };
+  for (const u of state.units) if (hexDistance(u.pos, capital.pos) <= radius) u.pos = { q: far, r: far + offset++ };
+  for (let dq = -radius; dq <= radius; dq++) {
+    for (let dr = Math.max(-radius, -dq - radius); dr <= Math.min(radius, -dq + radius); dr++) {
+      const key = `${capital.pos.q + dq},${capital.pos.r + dr}`;
+      state.hills.delete(key); state.walls.delete(key); state.forests.delete(key);
+    }
+  }
+}
+
+// Walks exactly `dist` hexes from `from`, in a single fixed axial direction
+// (whichever of the 6 actual hex-neighbour steps points most toward the map
+// centre) — NOT a naive (-sign(q), -sign(r)) diagonal, which isn't one of
+// the 6 valid unit vectors and silently produces a hex TWICE as far away as
+// `dist` would suggest (a diagonal (-1,-1) step is itself distance 2, not
+// 1). Using a real unit direction keeps `dist` an accurate, on-map hex
+// distance for every test below.
+const HEX_UNIT_DIRS = [{ q: 1, r: 0 }, { q: 1, r: -1 }, { q: 0, r: -1 }, { q: -1, r: 0 }, { q: -1, r: 1 }, { q: 0, r: 1 }];
+function towardCenterDirIndex(from: { q: number; r: number }): number {
+  let bestIdx = 0, bestDist = Infinity;
+  HEX_UNIT_DIRS.forEach((d, i) => {
+    const distToOrigin = hexDistance({ q: from.q + d.q, r: from.r + d.r }, { q: 0, r: 0 });
+    if (distToOrigin < bestDist) { bestDist = distToOrigin; bestIdx = i; }
+  });
+  return bestIdx;
+}
+function towardCenter(from: { q: number; r: number }, dist: number): { q: number; r: number } {
+  const d = HEX_UNIT_DIRS[towardCenterDirIndex(from)]!;
+  return { q: from.q + d.q * dist, r: from.r + d.r * dist };
+}
+// A hex `dist` away from `from`, deliberately in a DIFFERENT direction than
+// towardCenter would pick (rotated 120°) — used to keep a "threat" off the
+// direct home path in reserve-recall tests, so the AI isn't asked to
+// path straight through the very enemy it's supposedly avoiding (a real,
+// separate routing concern, not what these tests are checking).
+function offToTheSide(from: { q: number; r: number }, dist: number): { q: number; r: number } {
+  const d = HEX_UNIT_DIRS[(towardCenterDirIndex(from) + 2) % 6]!;
+  return { q: from.q + d.q * dist, r: from.r + d.r * dist };
+}
+
 // ── Difficulty config sanity ──
 console.log('\n=== Difficulty config sanity ===');
 {
@@ -174,16 +232,15 @@ console.log('\n=== Agrar Builder must not permanently block Capital recruiting =
 console.log('\n=== AI never leaves its Capital empty once an enemy is spotted ===');
 {
   const state = setup('agrar', 'temple');
+  forceCapitalCenter(state, 0);
   const cap = getPlayerCapital(state, 0)!;
   const techA = state.playerTech[0], techB = state.playerTech[1];
-  // Place a lone combat unit a few hexes from home, toward the map center
-  // (so it's guaranteed to stay on-board regardless of which edge the
-  // Capital landed near), plus a revealed enemy well out of immediate
-  // engagement range — nothing to fight right now, just a reason to worry.
-  const dir = { q: cap.pos.q === 0 ? 1 : -Math.sign(cap.pos.q), r: cap.pos.r === 0 ? 1 : -Math.sign(cap.pos.r) };
-  const farPos = { q: cap.pos.q + dir.q * 6, r: cap.pos.r + dir.r * 6 };
+  // Place a lone combat unit a few hexes from home, plus a revealed enemy
+  // well out of immediate engagement range — nothing to fight right now,
+  // just a reason to worry.
+  const farPos = towardCenter(cap.pos, 6);
   const lone = createUnit('warrior', 0, farPos, techA, 'agrar');
-  const enemy = createUnit('warrior', 1, { q: farPos.q, r: farPos.r + 3 }, techB, 'temple');
+  const enemy = createUnit('warrior', 1, offToTheSide(farPos, 3), techB, 'temple');
   state.units.push(lone, enemy);
   state.currentPlayerIndex = 0;
   const distBefore = hexDistance(farPos, cap.pos);
@@ -191,6 +248,82 @@ console.log('\n=== AI never leaves its Capital empty once an enemy is spotted ==
   const distAfter = hexDistance(lone.pos, cap.pos);
   check('the lone unit heads back toward (or stays no farther from) the empty Capital',
     distAfter <= distBefore, `before=${distBefore} after=${distAfter} finalPos=(${lone.pos.q},${lone.pos.r})`);
+}
+
+// ── AGRAR LOGISTICS PASS: mobile reserve + Road arteries (Hard/Expert only) ──
+
+console.log('\n=== Mobile reserve: a credible fast threat pulls an uncommitted unit back toward home ===');
+{
+  const state = setup('agrar', 'temple');
+  forceCapitalCenter(state, 0);
+  const cap = getPlayerCapital(state, 0)!;
+  const techA = state.playerTech[0], techB = state.playerTech[1];
+  // One guard already near home (becomes the garrison), one unit off on its
+  // own errand far away (the one we expect the reserve system to notice),
+  // and a fast Temple Raider-equivalent (horserider) revealed partway
+  // between them — close enough that only the CLOSE unit responding in
+  // time isn't good enough; the far one needs to matter too.
+  const nearGuard = createUnit('warrior', 0, towardCenter(cap.pos, 2), techA, 'agrar');
+  const farPos = towardCenter(cap.pos, 6);
+  const farUnit = createUnit('warrior', 0, farPos, techA, 'agrar');
+  // Off to the side, not directly on the farUnit->Capital line — this test
+  // is about whether the reserve system recalls the far unit at all, not
+  // about routing around a threat that happens to block the direct path.
+  const raider = createUnit('horserider', 1, offToTheSide(cap.pos, 4), techB, 'temple');
+  state.units.push(nearGuard, farUnit, raider);
+  state.currentPlayerIndex = 0;
+  const distBefore = hexDistance(farUnit.pos, cap.pos);
+  runAiTurn(state, 'hard', 0);
+  const distAfter = hexDistance(farUnit.pos, cap.pos);
+  check('the far, previously-uncommitted unit moves toward home rather than continuing to wander',
+    distAfter < distBefore, `before=${distBefore} after=${distAfter}`);
+}
+
+console.log('\n=== Mobile reserve: does NOT overreact to a distant, slow, easily-beaten threat ===');
+{
+  const state = setup('agrar', 'temple');
+  forceCapitalCenter(state, 0);
+  const cap = getPlayerCapital(state, 0)!;
+  const techA = state.playerTech[0], techB = state.playerTech[1];
+  const nearGuard = createUnit('warrior', 0, towardCenter(cap.pos, 2), techA, 'agrar');
+  const farPos = towardCenter(cap.pos, 6);
+  const farUnit = createUnit('warrior', 0, farPos, techA, 'agrar');
+  // A large-enough army that the (unrelated) "mass before attacking" rally
+  // rule doesn't independently pull the far unit home regardless of any
+  // specific enemy — this test needs to isolate the RESERVE system's own
+  // restraint, not that other rule's.
+  const filler1 = createUnit('spearsman', 0, towardCenter(cap.pos, 3), techA, 'agrar');
+  const filler2 = createUnit('spearsman', 0, towardCenter(cap.pos, 4), techA, 'agrar');
+  // A slow (speed 1, range 1 -> reach 2) Temple unit 6 hexes from the
+  // Capital — 3 turns to threaten, well past CREDIBLE_THREAT_TURNS. No
+  // reserve should be needed.
+  const slowEnemy = createUnit('warrior', 1, offToTheSide(cap.pos, 6), techB, 'temple');
+  state.units.push(nearGuard, farUnit, filler1, filler2, slowEnemy);
+  state.currentPlayerIndex = 0;
+  const distBefore = hexDistance(farUnit.pos, cap.pos);
+  runAiTurn(state, 'hard', 0);
+  const distAfter = hexDistance(farUnit.pos, cap.pos);
+  check('the far unit is NOT recalled just because an enemy exists somewhere far off and slow',
+    distAfter >= distBefore, `before=${distBefore} after=${distAfter}`);
+}
+
+console.log('\n=== Road arteries: Builder lays a multi-segment connected path, not one arbitrary hex ===');
+{
+  const state = setup('agrar', 'agrar');
+  for (const p of state.players) p.aura = 200;
+  let rounds = 0;
+  let sawMultiSegment = false;
+  while (rounds < 30 && state.phase === 'playing' && !sawMultiSegment) {
+    rounds++;
+    const seat = getCurrentPlayer(state).id;
+    const before = state.roads.filter(r => r.ownerId === 0).length;
+    runAiTurn(state, 'hard', seat);
+    const after = state.roads.filter(r => r.ownerId === 0).length;
+    if (after - before > 1) sawMultiSegment = true;
+    endTurn(state);
+  }
+  check('at least one Builder activation laid more than 1 Road segment at once',
+    sawMultiSegment, `rounds checked=${rounds}`);
 }
 
 // ── No cheating: all 4 difficulties only ever act through canonical engine mutators ──

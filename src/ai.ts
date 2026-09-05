@@ -8,7 +8,7 @@ import {
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
 import { calculateDamage } from './combat';
 import { serialize, deserialize } from './serializer';
-import { TEMPLE_UPGRADE_COST } from './factions';
+import { TEMPLE_UPGRADE_COST, ROAD_SEGMENTS_PER_ACTIVATION } from './factions';
 import {
   getCurrentPlayer, getUnitAt,
   spawnUnit, selectUnit, moveUnit, attackUnit, deselectAll,
@@ -18,10 +18,10 @@ import {
   researchTech, canResearch,
   getTeleportAt,
   canStartFarm, startFarm, getValidFarmHexes, canStartTempleUpgrade, startTempleUpgrade,
-  canBuildRoad, buildRoad, getValidRoadHexes, canPillageRoad, pillageRoad,
+  canBuildRoad, buildRoadPath, getValidRoadHexes, isLegalRoadTile, canPillageRoad, pillageRoad,
   canClaimFertileSite, claimFertileSite,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
-  getEffectiveRange, getEffectiveAttack, getEffectiveDefense,
+  getEffectiveRange, getEffectiveAttack, getEffectiveDefense, getEffectiveSpeed,
   calculateEncirclement, isForestUnitRevealed, endTurn,
   getUnitTypeMultiplier,
   getUnitCost,
@@ -347,6 +347,101 @@ function getGarrisonMemory(state: GameState, aiPlayerId: number): Set<string> {
   return s;
 }
 
+// ── Mobile defensive reserve ─────────────────────────────────────────────────
+// The garrison above only ever guarantees "the Capital itself isn't
+// literally empty" — it says nothing about whether that's actually enough
+// against a FAST enemy. The reserve is a second, proactive layer: instead of
+// waiting for a structure to already be in imminent reach (the reactive
+// "defend a threatened structure" step below), compare how many turns a
+// visible enemy needs to threaten the Capital against how many turns the
+// AI's currently-uncommitted forces (excluding whoever's already on
+// garrison/reserve duty) would need to get back — and if that gap is too
+// tight, hold one or two suitable units at a central, road-connected
+// position (see chooseReservePosition) instead of letting them roam. Sized
+// dynamically and released the instant the threat no longer justifies it —
+// recomputed fresh every call, nothing here is a permanent tag.
+const RESERVE_SAFETY_MARGIN = 1; // extra turns of buffer beyond a dead-even race
+const MAX_RESERVE_UNITS = 2;
+
+const reserveMemory = new WeakMap<GameState, Map<number, Set<string>>>();
+function getReserveMemory(state: GameState, aiPlayerId: number): Set<string> {
+  let byPlayer = reserveMemory.get(state);
+  if (!byPlayer) { byPlayer = new Map(); reserveMemory.set(state, byPlayer); }
+  let s = byPlayer.get(aiPlayerId);
+  if (!s) { s = new Set(); byPlayer.set(aiPlayerId, s); }
+  return s;
+}
+
+// Rough (not exact — §18 "does not need to be perfect") turns for an enemy
+// to reach a threatening position on `target`: distance divided by its own
+// move-then-hit reach (speed + effective range), same reach definition
+// enemyCanReachNextTurn already uses for the 1-turn case.
+function turnsToThreatenCapital(state: GameState, enemy: Unit, target: HexCoord): number {
+  const reach = Math.max(1, enemy.stats.speed + getEffectiveRange(state, enemy));
+  return Math.max(1, Math.ceil(hexDistance(enemy.pos, target) / reach));
+}
+
+// Same idea for one of our own units heading home — effective speed already
+// accounts for Roads (Agrar's actual lever here), so a good Road network
+// directly shortens this number.
+function turnsToIntercept(state: GameState, defender: Unit, target: HexCoord): number {
+  const speed = Math.max(1, getEffectiveSpeed(state, defender));
+  return Math.max(1, Math.ceil(hexDistance(defender.pos, target) / speed));
+}
+
+// Within how many of ITS OWN turns does an enemy count as a near-term
+// threat worth reserving against at all? An early attempt compared each
+// enemy's turnsToThreatenCapital against our OWN slowest available
+// responder's turnsToIntercept — but Agrar's units are frequently slow
+// (speed 1) by faction design, so that comparison made nearly ANY enemy
+// anywhere on the map "credible" (our worst-case responder is always slow
+// too), overreacting exactly the way §41 says not to. An absolute, fixed
+// horizon avoids that: only an enemy that could plausibly be threatening
+// SOON (not hypothetically, eventually) counts at all.
+const CREDIBLE_THREAT_TURNS = 2;
+
+// Which visible enemies are a near-term threat to the Capital, beyond how
+// many the standing garrison alone can already be expected to cover (one
+// threat per garrison member — that's its whole job)? Only the EXCESS over
+// garrison size justifies pulling extra, currently-uncommitted units into
+// reserve — this is deliberately about "several fast attackers at once"
+// (§24), not "does a single garrison member get outrun", which the
+// garrison step above already handles on its own. §34 — only ever looks at
+// revealedEnemies, the same fog-respecting filter used everywhere else.
+function findCredibleMobilityThreats(state: GameState, aiPlayerId: number, capitalPos: HexCoord): Unit[] {
+  return revealedEnemies(state, aiPlayerId)
+    .filter(e => !isSupport(e.type))
+    .filter(e => turnsToThreatenCapital(state, e, capitalPos) <= CREDIBLE_THREAT_TURNS);
+}
+
+// §23-24, §44 — reward a candidate that specifically counters the credible
+// threats, via the EXISTING type-matchup table (getUnitTypeMultiplier),
+// never a hardcoded "prefer Pikeman" rule — a Pikeman just naturally scores
+// higher here against a Raider/Champion-type threat because the counter
+// matrix already gives Pike a multiplier against Cavalry/Heavy.
+function reserveSuitability(state: GameState, candidate: Unit, aiPlayerId: number, threats: Unit[]): number {
+  const faction = state.players[aiPlayerId]?.faction;
+  let score = getUnitCost(candidate.type, faction);
+  for (const t of threats) score += (getUnitTypeMultiplier(candidate.type, t.type) - 1) * 10;
+  return score;
+}
+
+// §22, §26, §29 — a reserve unit should sit somewhere USEFUL, not simply
+// camp on the Capital: a central, Road-connected position it can reach
+// several threatened approaches from. Reuses the exact same destination
+// concept the Road-artery planner already computes (chooseRoadArteryDestination)
+// so the two systems inform each other, as intended — if that destination
+// is already close to home, or there's no Road network to use yet, just
+// fall back to the Capital itself.
+function chooseReservePosition(state: GameState, aiPlayerId: number, capitalPos: HexCoord): HexCoord {
+  const destination = chooseRoadArteryDestination(state, aiPlayerId, capitalPos);
+  if (hexDistance(destination, capitalPos) <= GARRISON_RADIUS) return capitalPos;
+  const myRoads = state.roads.filter(r => r.ownerId === aiPlayerId);
+  if (myRoads.length === 0) return capitalPos;
+  const junction = bestBy(myRoads, r => -(hexDistance(r.pos, capitalPos) + hexDistance(r.pos, destination)));
+  return junction ? junction.pos : capitalPos;
+}
+
 function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null): HexCoord | null {
   // getOwnedStructures only ever returns the Capital + owned Temple sites —
   // it never includes Farms. For Agrar that meant its ENTIRE economy was
@@ -387,14 +482,55 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
     if (garrison.has(unit.id)) return capital.pos;
     // A single guard is a fine deterrent while the Capital is untouched, but
     // once it's actually taking damage a lone defender has provably already
-    // failed to stop whatever's hitting it — escalate to two, or three once
-    // the plan has escalated all the way to a confirmed DEFEND emergency.
-    const desiredGuards = plan === 'DEFEND' ? 3 : capital.hp < capital.maxHp ? 2 : 1;
+    // failed to stop whatever's hitting it — escalate to two. Beyond that,
+    // the mobile reserve (step 0.5, Hard+) is the better-informed tool for
+    // "how many more do we actually need" — it counts real credible threats
+    // instead of blanket-escalating the garrison further, which would just
+    // lock down units the reserve system might not find necessary at all.
+    const desiredGuards = capital.hp < capital.maxHp ? 2 : 1;
     if (garrison.size < desiredGuards) {
       const closest = bestBy(combatUnitsAll.filter(u => !garrison.has(u.id)), u => -hexDistance(u.pos, capital.pos));
       if (closest) {
         garrison.add(closest.id);
         if (closest.id === unit.id) return capital.pos;
+      }
+    }
+  }
+
+  // 0.5. Mobile defensive reserve — proactive, not reactive (§21, §28): does
+  // the REST of the army (everyone not already on garrison duty) still have
+  // enough response time against a visible fast threat? If not, hold one or
+  // two suitable units at a central, Road-connected position instead of
+  // reacting only once a structure is already in imminent reach (step 1
+  // below still exists as a fallback). Dynamically sized and released the
+  // moment it's no longer justified — see findCredibleMobilityThreats.
+  // Hard/Expert only (`plan` is null below that tier, see
+  // chooseStrategicPlan/AI_DIFFICULTY.useStrategicPlanning) — Normal keeps
+  // its existing simpler "one guard, once threatened" behavior from the
+  // garrison step above; this is the more expensive, anticipatory layer.
+  if (plan !== null && capital && combatUnitsAll.length > 0) {
+    const garrison = getGarrisonMemory(state, aiPlayerId);
+    const reserve = getReserveMemory(state, aiPlayerId);
+    for (const id of [...reserve]) if (!state.units.some(u => u.id === id && u.hp > 0)) reserve.delete(id); // prune dead
+    const credibleThreats = findCredibleMobilityThreats(state, aiPlayerId, capital.pos);
+    // §24's own examples are explicit: even ONE credible raider warrants
+    // ONE reserve unit — the reserve isn't "redundant" with the garrison
+    // even then, since it typically holds a DIFFERENT position (a Road
+    // junction covering farms/approaches, see chooseReservePosition) rather
+    // than literally standing next to the same guard.
+    const desiredReserve = Math.min(credibleThreats.length, MAX_RESERVE_UNITS);
+    if (reserve.size > desiredReserve) {
+      // The threat receded — release the excess back to normal duty rather
+      // than leaving units permanently tagged for a reason that's gone.
+      for (const id of [...reserve].slice(desiredReserve)) reserve.delete(id);
+    }
+    if (reserve.has(unit.id)) return chooseReservePosition(state, aiPlayerId, capital.pos);
+    if (reserve.size < desiredReserve) {
+      const pool = combatUnitsAll.filter(u => !garrison.has(u.id) && !reserve.has(u.id));
+      const best = bestBy(pool, u => reserveSuitability(state, u, aiPlayerId, credibleThreats) - turnsToIntercept(state, u, capital.pos) * 2);
+      if (best) {
+        reserve.add(best.id);
+        if (best.id === unit.id) return chooseReservePosition(state, aiPlayerId, capital.pos);
       }
     }
   }
@@ -678,21 +814,25 @@ function actCombatUnit(
         }
       }
 
-      // A valid road hex is picked toward the actual frontier (nearest
-      // threat, or failing that wherever the army operates) instead of
-      // arbitrarily — see roadFrontierPoint. Under DEFEND (a real threat is
-      // already active, not just anticipated) interior lines matter more
-      // than one more Farm right now, so Road takes priority over Farm;
-      // otherwise Farm-first as before (the faction's core economy).
+      // A whole path is picked toward an actual strategic destination (see
+      // chooseRoadArteryDestination/planRoadArteryPath) and laid in one
+      // activation via buildRoadPath, instead of one arbitrary adjacent hex
+      // at a time. Under DEFEND (a real threat is already active, not just
+      // anticipated) interior lines matter more than one more Farm right
+      // now, so Road takes priority over Farm; otherwise Farm-first as
+      // before (the faction's core economy).
       const capitalPos = getPlayerCapital(state, aiPlayerId)?.pos;
       const buildRoadNow = (): boolean => {
-        const validRoads = getValidRoadHexes(state, unit).filter(h => canBuildRoad(state, unit, h));
-        if (validRoads.length === 0) return false;
-        const frontier = capitalPos ? roadFrontierPoint(state, aiPlayerId, capitalPos) : unit.pos;
-        const roadHex = bestBy(validRoads, h => -hexDistance(h, frontier)) ?? validRoads[0]!;
-        observe(state, 'build-road', { unitId: unit.id, pos: roadHex });
-        buildRoad(state, unit.id, roadHex);
-        actions.push({ type: 'upgrade', pos: { ...roadHex }, description: `${difficultyLabel(difficulty)} builds a road at (${roadHex.q},${roadHex.r})` });
+        if (getValidRoadHexes(state, unit).filter(h => canBuildRoad(state, unit, h)).length === 0) return false;
+        const destination = capitalPos ? chooseRoadArteryDestination(state, aiPlayerId, capitalPos) : unit.pos;
+        const path = planRoadArteryPath(state, unit, destination);
+        const built = buildRoadPath(state, unit.id, path);
+        if (built.length === 0) return false;
+        observe(state, 'build-road', { unitId: unit.id, pos: built[built.length - 1]! });
+        actions.push({
+          type: 'upgrade', pos: { ...built[0]! },
+          description: `${difficultyLabel(difficulty)} lays ${built.length} Road segment${built.length > 1 ? 's' : ''} toward (${destination.q},${destination.r})`,
+        });
         return true;
       };
       const buildFarmNow = (): boolean => {
@@ -1048,28 +1188,69 @@ function computeThreatMap(state: GameState, aiPlayerId: number): Map<string, num
   return map;
 }
 
-// Where should the Road network actually grow TOWARD? Building a Farm/Road
-// network is Agrar's only lever against being permanently outrun by a
-// faster faction — but a Builder picking "whichever adjacent hex happens to
-// be first" wastes that lever on a network that never reaches anywhere it
-// matters. Anticipate instead of react: the nearest revealed enemy is
-// exactly where a raid would come from, so extend toward it; absent any
-// visible enemy, extend toward wherever the AI's own army is actually
-// operating (so reinforcements get a road home later); absent even that
-// (very first turns), no directional preference yet.
-function roadFrontierPoint(state: GameState, aiPlayerId: number, capital: HexCoord): HexCoord {
+// Where should the Road network actually grow TOWARD? A Road only earns its
+// keep as part of a connected route somewhere useful — a Builder picking
+// "whichever adjacent hex happens to be legal" wastes that on a network
+// that never reaches anywhere it matters. Priority order, most concrete
+// signal first: a Farm already under imminent threat (defend it directly);
+// the nearest revealed enemy (anticipate — that's exactly where a raid
+// would come from); a Farm the network hasn't reached yet (grow the
+// economy's connectivity); a contested Fertile Site (Agrar mirror only);
+// and only with no signal at all, wherever the army is currently operating.
+function chooseRoadArteryDestination(state: GameState, aiPlayerId: number, capitalPos: HexCoord): HexCoord {
+  const myFarms = state.farms.filter(f => f.ownerId === aiPlayerId && f.state === 'farm');
   const enemies = revealedEnemies(state, aiPlayerId);
+
+  const threatenedFarm = bestBy(
+    myFarms.filter(f => enemies.some(e => enemyCanReachNextTurn(state, e, f.pos))),
+    f => -hexDistance(f.pos, capitalPos));
+  if (threatenedFarm) return threatenedFarm.pos;
+
   if (enemies.length > 0) {
-    const nearest = bestBy(enemies, e => -hexDistance(e.pos, capital));
+    const nearest = bestBy(enemies, e => -hexDistance(e.pos, capitalPos));
     if (nearest) return nearest.pos;
   }
+
+  const myRoads = state.roads.filter(r => r.ownerId === aiPlayerId);
+  const disconnectedFarm = bestBy(
+    myFarms.filter(f => !hexEqual(f.pos, capitalPos) && !myRoads.some(r => hexDistance(r.pos, f.pos) <= 1)),
+    f => hexDistance(f.pos, capitalPos));
+  if (disconnectedFarm) return disconnectedFarm.pos;
+
+  const openFertile = state.fertileSites.find(f => f.ownerId !== aiPlayerId);
+  if (openFertile) return openFertile.pos;
+
   const mine = state.units.filter(u =>
     u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type) && u.type !== 'founder');
   if (mine.length > 0) {
-    const farthest = bestBy(mine, u => hexDistance(u.pos, capital));
+    const farthest = bestBy(mine, u => hexDistance(u.pos, capitalPos));
     if (farthest) return farthest.pos;
   }
-  return capital;
+  return capitalPos;
+}
+
+// Greedy hill-climb toward `destination`, up to ROAD_SEGMENTS_PER_ACTIVATION
+// hexes: not a real pathfinder (§13 — "does not need to be a permanent
+// complex object"), just a per-turn plan good enough to make the Builder's
+// multi-segment action actually point somewhere. The first hex must be a
+// legal Road location for the Builder right now (getValidRoadHexes already
+// enforces "connects to existing infrastructure"); each hex after that only
+// needs to chain off the previous one and pass the same terrain/occupancy
+// rule (isLegalRoadTile) — exactly what buildRoadPath itself will re-verify.
+function planRoadArteryPath(state: GameState, unit: Unit, destination: HexCoord): HexCoord[] {
+  const first = bestBy(getValidRoadHexes(state, unit), h => -hexDistance(h, destination));
+  if (!first) return [];
+  const path = [first];
+  let current = first;
+  while (path.length < ROAD_SEGMENTS_PER_ACTIVATION && !hexEqual(current, destination)) {
+    const candidates = hexNeighbors(current).filter(h =>
+      isLegalRoadTile(state, h) && !path.some(p => hexEqual(p, h)));
+    const next = bestBy(candidates, h => -hexDistance(h, destination));
+    if (!next || hexDistance(next, destination) >= hexDistance(current, destination)) break; // no longer closing the gap
+    path.push(next);
+    current = next;
+  }
+  return path;
 }
 
 // ── Strategic plan (Hard+) ───────────────────────────────────────────────────
