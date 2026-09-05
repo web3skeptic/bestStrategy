@@ -656,6 +656,34 @@
     }
     .lobby-back:hover { color: #99b; }
 
+    /* AI difficulty picker — same dark-navy beveled-stone language as .lobby-btn,
+       one accent color per tier so the four options read apart at a glance. */
+    .difficulty-list { display: flex; flex-direction: column; gap: 10px; }
+    .difficulty-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      padding: 12px 16px;
+      border: 2px solid #446;
+      border-radius: 10px;
+      background: rgba(40,35,80,0.85);
+      cursor: pointer;
+      text-align: left;
+    }
+    .difficulty-btn:active { background: rgba(60,55,110,0.9); }
+    .difficulty-name { font-size: 16px; font-weight: bold; color: #ccf; }
+    .difficulty-sub  { font-size: 12px; color: #99b; }
+    .difficulty-desc { font-size: 11px; color: #778; }
+    .difficulty-easy   { border-color: #4a8f5c; }
+    .difficulty-easy   .difficulty-name { color: #8fe0a3; }
+    .difficulty-normal { border-color: #4a7f9f; }
+    .difficulty-normal .difficulty-name { color: #8fc8f0; }
+    .difficulty-hard   { border-color: #9f4a6a; }
+    .difficulty-hard   .difficulty-name { color: #f08fae; }
+    .difficulty-expert { border-color: #a98a3a; }
+    .difficulty-expert .difficulty-name { color: #f0d28f; }
+
     /* Menu button is styled as the plaque tab (.plaque-menu-tab) on the top edge. */
 
     /* ── Research button ── */
@@ -1350,8 +1378,7 @@
         <div class="menu-subtitle">Choose game mode</div>
         <div class="menu-buttons">
           <button class="menu-btn menu-continue" id="menuContinue">▶ Continue game</button>
-          <button class="menu-btn" id="menuVsAI">⚔ vs AI</button>
-          <button class="menu-btn" id="menuVsHardAI">💀 vs Hard AI</button>
+          <button class="menu-btn" id="menuVsAI">🤖 vs AI</button>
           <button class="menu-btn" id="menu2P">👥 2 Players</button>
           <button class="menu-btn" id="menuCustom">⚙ Custom Game (2–6)</button>
           <button class="menu-btn" id="menuOnline">🌐 Online Multiplayer</button>
@@ -1373,6 +1400,34 @@
         <div class="lobby-status" id="setupInfo"></div>
         <button class="lobby-btn primary" id="setupStartBtn">Start Game</button>
         <div class="lobby-back" id="setupBack">← Back</div>
+      </div>
+
+      <!-- AI difficulty picker (vs AI entry point) -->
+      <div class="lobby-panel hidden" id="lobbyDifficulty">
+        <div class="lobby-title">Choose Opponent</div>
+        <div class="difficulty-list">
+          <button class="difficulty-btn difficulty-easy" data-difficulty="easy">
+            <span class="difficulty-name">🌱 Easy</span>
+            <span class="difficulty-sub">Relaxed opponent</span>
+            <span class="difficulty-desc">Basic tactics and some randomness</span>
+          </button>
+          <button class="difficulty-btn difficulty-normal" data-difficulty="normal">
+            <span class="difficulty-name">🧠 Normal</span>
+            <span class="difficulty-sub">Balanced opponent</span>
+            <span class="difficulty-desc">Uses threat awareness and sensible economy</span>
+          </button>
+          <button class="difficulty-btn difficulty-hard" data-difficulty="hard">
+            <span class="difficulty-name">💀 Hard</span>
+            <span class="difficulty-sub">Strong opponent</span>
+            <span class="difficulty-desc">Plans ahead and coordinates its army</span>
+          </button>
+          <button class="difficulty-btn difficulty-expert" data-difficulty="expert">
+            <span class="difficulty-name">♛ Expert</span>
+            <span class="difficulty-sub">Maximum challenge</span>
+            <span class="difficulty-desc">Searches responses and evaluates future positions</span>
+          </button>
+        </div>
+        <div class="lobby-back" id="difficultyBack">← Back</div>
       </div>
 
       <!-- Online lobby: login step -->

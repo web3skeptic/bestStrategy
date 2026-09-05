@@ -68,7 +68,7 @@ import {
   getUnitCost,
 } from './game';
 import { getUnitThumbnail } from './unitThumbnails';
-import { runAITurn, runHardAITurn } from './ai';
+import { runAiTurn, difficultyLabel, AiDifficulty } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from './serializer';
 import type { ServerMessage } from './protocol';
@@ -105,7 +105,7 @@ const AI_DELAY_MS = 600;
 // 'human' = a local seat, 'normal'/'hard' = an AI seat of that difficulty. This
 // generalizes the old single "AI is slot 1" assumption to N players with any mix
 // of humans and AIs (1 human + 3 AI, hotseat N humans, etc.).
-type ControllerKind = 'human' | 'normal' | 'hard';
+type ControllerKind = 'human' | AiDifficulty;
 let controllers: ControllerKind[] = ['human', 'normal'];
 
 // Is the given local slot controlled by an AI? (Never true in online play — the
@@ -337,13 +337,16 @@ const spectatorBanner = document.getElementById('spectatorBanner')!;
 const spectatorInfo = document.getElementById('spectatorInfo')!;
 const lobbySetup = document.getElementById('lobbySetup')!;
 const playerListEl = document.getElementById('playerList')!;
+const lobbyDifficulty = document.getElementById('lobbyDifficulty')!;
+const difficultyBack = document.getElementById('difficultyBack')!;
 
-function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup'): void {
+function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup' | 'difficulty'): void {
   lobbyMain.classList.toggle('hidden', panel !== 'main');
   lobbyLogin.classList.toggle('hidden', panel !== 'login');
   lobbyRoomListPanel.classList.toggle('hidden', panel !== 'rooms');
   lobbyWaiting.classList.toggle('hidden', panel !== 'waiting');
   lobbySetup.classList.toggle('hidden', panel !== 'setup');
+  lobbyDifficulty.classList.toggle('hidden', panel !== 'difficulty');
   if (panel === 'main') updateContinueButton(); // reflect any saved local game
   if (panel === 'setup') renderSetupSlots();
 }
@@ -776,7 +779,7 @@ function updateContinueButton(): void {
 // Build a human-readable name for a local seat.
 function seatName(kind: ControllerKind, idx: number): string {
   if (kind === 'human') return `Player ${idx + 1}`;
-  return kind === 'hard' ? `Hard AI ${idx + 1}` : `AI ${idx + 1}`;
+  return `${difficultyLabel(kind)} ${idx + 1}`;
 }
 
 // Start a LOCAL game with an arbitrary per-slot controller layout (N players,
@@ -821,14 +824,17 @@ function startLocalGame(kinds: ControllerKind[]): void {
 }
 
 // Back-compat wrapper for the classic 2-player quick-start buttons.
-function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
+function startGame(vsAI: boolean, difficulty: AiDifficulty = 'normal'): void {
   startLocalGame(vsAI ? ['human', difficulty] : ['human', 'human']);
 }
 
 menuContinueBtn.addEventListener('click', () => restoreGame());
-menuVsAI.addEventListener('click', () => startGame(true, 'normal'));
 menu2P.addEventListener('click', () => startGame(false));
-(document.getElementById('menuVsHardAI') as HTMLButtonElement).addEventListener('click', () => startGame(true, 'hard'));
+menuVsAI.addEventListener('click', () => showLobbyPanel('difficulty'));
+for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('.difficulty-btn'))) {
+  btn.addEventListener('click', () => startGame(true, btn.dataset.difficulty as AiDifficulty));
+}
+difficultyBack.addEventListener('click', () => showLobbyPanel('main'));
 menuBtn.addEventListener('click', () => showMenu());
 
 // ── Custom game setup (N players, human/AI mix) ──
@@ -849,7 +855,7 @@ function renderSetupSlots(): void {
   setupPlayersCountEl.textContent = String(setupKinds.length);
   setupSlotsEl.innerHTML = '';
   const KIND_LABELS: [ControllerKind, string][] = [
-    ['human', 'Human'], ['normal', 'AI — Normal'], ['hard', 'AI — Hard'],
+    ['human', 'Human'], ['easy', 'AI — Easy'], ['normal', 'AI — Normal'], ['hard', 'AI — Hard'], ['expert', 'AI — Expert'],
   ];
   setupKinds.forEach((kind, i) => {
     const row = document.createElement('div');
@@ -2752,9 +2758,10 @@ function runAI(): void {
 
   const playerVisible = getCurrentPlayerVisible(state);
 
-  // Each AI seat runs at its own difficulty; runAITurn/runHardAITurn default the
-  // acting player to the current slot, so this drives any AI in an N-player game.
-  const actions = controllers[state.currentPlayerIndex] === 'hard' ? runHardAITurn(state) : runAITurn(state);
+  // Each AI seat runs at its own difficulty — runAiTurn defaults the acting
+  // player to the current slot, so this drives any AI in an N-player game.
+  const seatDifficulty = controllers[state.currentPlayerIndex] as AiDifficulty;
+  const actions = runAiTurn(state, seatDifficulty);
   for (const action of actions) {
     if (playerVisible.has(hexKey(action.pos))) {
       logCombat(action.description);

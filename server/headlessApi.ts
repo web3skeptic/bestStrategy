@@ -7,7 +7,7 @@ import {
   getPlayerVisible, isForestUnitRevealed,
   PlayerConfig,
 } from '../src/game';
-import { runAITurn, runHardAITurn } from '../src/ai';
+import { runAiTurn } from '../src/ai';
 import { resyncCounters } from './stateUtils';
 import {
   GameState, UnitType, TechId,
@@ -516,7 +516,7 @@ function playAiSeat(session: HeadlessSession): { seat: number; difficulty: Headl
   const seat = state.currentPlayerIndex;
   const difficulty = session.controllers[seat] ?? 'hard';
   // 'hard' (and any auto-played 'human') seats use the strong AI; 'normal' uses the light one.
-  const actions = difficulty === 'normal' ? runAITurn(state, seat) : runHardAITurn(state, seat);
+  const actions = runAiTurn(state, difficulty === 'normal' ? 'normal' : 'hard', seat);
   executeAction(state, seat, 'end-turn', {});
   session.tick++;
   return { seat, difficulty, actions: actions.length };
