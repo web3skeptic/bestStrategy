@@ -387,8 +387,9 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
     if (garrison.has(unit.id)) return capital.pos;
     // A single guard is a fine deterrent while the Capital is untouched, but
     // once it's actually taking damage a lone defender has provably already
-    // failed to stop whatever's hitting it — escalate to two.
-    const desiredGuards = capital.hp < capital.maxHp ? 2 : 1;
+    // failed to stop whatever's hitting it — escalate to two, or three once
+    // the plan has escalated all the way to a confirmed DEFEND emergency.
+    const desiredGuards = plan === 'DEFEND' ? 3 : capital.hp < capital.maxHp ? 2 : 1;
     if (garrison.size < desiredGuards) {
       const closest = bestBy(combatUnitsAll.filter(u => !garrison.has(u.id)), u => -hexDistance(u.pos, capital.pos));
       if (closest) {
@@ -415,6 +416,18 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
       .filter(u => u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, s.pos) <= 1)
       .reduce((sum, u) => sum + getUnitCost(u.type, faction) * (u.hp / u.stats.maxHp), 0);
     if (defenderValue < threatValue) return s.pos;
+  }
+
+  // DEFEND plan (a confirmed emergency, not just "an enemy exists
+  // somewhere") — interior lines: don't leave the rest of the army scattered
+  // deep in enemy territory while home is under real pressure. Pulling back
+  // within reach of the Capital means the NEXT threatened structure actually
+  // has reinforcements available a turn or two away, not several turns of
+  // travel away. A tighter radius than the generic low-army rally below —
+  // this fires regardless of army size, because a big army split across the
+  // map is exactly as unable to respond in time as a small one.
+  if (plan === 'DEFEND' && capital && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS) {
+    return capital.pos;
   }
 
   // v14 — a not-already-mine Fertile Site is a real objective (Agrar
@@ -631,10 +644,15 @@ function actCombatUnit(
 
   // Agrar's Builder grows its Farm network first — that's the faction's
   // whole economy now (§6-9) — and only pays a road forward if no valid
-  // Farm hex is available this turn (Normal+; a simple baseline, not a
-  // network planner — though getValidRoadHexes already only ever offers
-  // hexes adjacent to the existing Capital/Farm/Road network, so every
-  // candidate is inherently "connected", never an isolated stray tile).
+  // Farm hex is available this turn, UNLESS the strategic plan is already
+  // DEFEND (a real threat, not just a hypothetical one): interior lines —
+  // a road that lets defenders reach the front (or race home) faster — are
+  // worth more than one more Farm once an actual raid is already brewing.
+  // Either way getValidRoadHexes already only ever offers hexes adjacent to
+  // the existing Capital/Farm/Road network, so every candidate is
+  // inherently connected, never an isolated stray tile — and which of those
+  // candidates gets picked is no longer arbitrary either, see
+  // roadFrontierPoint below.
   if (advanced && unit.type === 'founder') {
     const player = state.players[aiPlayerId]!;
     if (player.faction === 'agrar') {
@@ -660,19 +678,35 @@ function actCombatUnit(
         }
       }
 
-      const farmHex = getValidFarmHexes(state, unit).find(h => canStartFarm(state, unit, h));
-      if (farmHex) {
-        observe(state, 'build-farm', { unitId: unit.id, pos: farmHex });
-        startFarm(state, unit.id, farmHex);
-        actions.push({ type: 'upgrade', pos: { ...farmHex }, description: `${difficultyLabel(difficulty)} begins building a Farm at (${farmHex.q},${farmHex.r})` });
-        return; // building spends the whole activation
-      }
-      const roadHex = getValidRoadHexes(state, unit).find(h => canBuildRoad(state, unit, h));
-      if (roadHex) {
+      // A valid road hex is picked toward the actual frontier (nearest
+      // threat, or failing that wherever the army operates) instead of
+      // arbitrarily — see roadFrontierPoint. Under DEFEND (a real threat is
+      // already active, not just anticipated) interior lines matter more
+      // than one more Farm right now, so Road takes priority over Farm;
+      // otherwise Farm-first as before (the faction's core economy).
+      const capitalPos = getPlayerCapital(state, aiPlayerId)?.pos;
+      const buildRoadNow = (): boolean => {
+        const validRoads = getValidRoadHexes(state, unit).filter(h => canBuildRoad(state, unit, h));
+        if (validRoads.length === 0) return false;
+        const frontier = capitalPos ? roadFrontierPoint(state, aiPlayerId, capitalPos) : unit.pos;
+        const roadHex = bestBy(validRoads, h => -hexDistance(h, frontier)) ?? validRoads[0]!;
         observe(state, 'build-road', { unitId: unit.id, pos: roadHex });
         buildRoad(state, unit.id, roadHex);
         actions.push({ type: 'upgrade', pos: { ...roadHex }, description: `${difficultyLabel(difficulty)} builds a road at (${roadHex.q},${roadHex.r})` });
-        return; // building spends the whole activation
+        return true;
+      };
+      const buildFarmNow = (): boolean => {
+        const farmHex = getValidFarmHexes(state, unit).find(h => canStartFarm(state, unit, h));
+        if (!farmHex) return false;
+        observe(state, 'build-farm', { unitId: unit.id, pos: farmHex });
+        startFarm(state, unit.id, farmHex);
+        actions.push({ type: 'upgrade', pos: { ...farmHex }, description: `${difficultyLabel(difficulty)} begins building a Farm at (${farmHex.q},${farmHex.r})` });
+        return true;
+      };
+      if (plan === 'DEFEND') {
+        if (buildRoadNow() || buildFarmNow()) return;
+      } else {
+        if (buildFarmNow() || buildRoadNow()) return;
       }
     }
   }
@@ -963,7 +997,15 @@ function enemyCanReachNextTurn(state: GameState, e: Unit, target: HexCoord): boo
 
 function hasEmergency(state: GameState, aiPlayerId: number): boolean {
   const capital = getPlayerCapital(state, aiPlayerId);
-  if (capital && capital.hp / capital.maxHp < 0.5) return true;
+  // The Capital never regenerates HP, so ANY damage on it is unambiguous
+  // proof an enemy already reached it once — not a hypothetical risk.
+  // Waiting for it to drop below 50% before treating this as an emergency
+  // was far too late for a slower faction to actually respond to: by the
+  // time a speed-1 army could travel back, the raid that did the first
+  // 20-30% of damage was long gone and the SAME raid (or its friends)
+  // finished the job before reinforcements arrived. Anticipate instead —
+  // one confirmed hit is reason enough to stay defensive for a while.
+  if (capital && capital.hp < capital.maxHp) return true;
   const enemies = revealedEnemies(state, aiPlayerId);
   // See pickObjective's myStructures comment — Farms must be included here
   // too, or an Agrar economy under active raid would never count as an
@@ -1004,6 +1046,30 @@ function computeThreatMap(state: GameState, aiPlayerId: number): Map<string, num
     }
   }
   return map;
+}
+
+// Where should the Road network actually grow TOWARD? Building a Farm/Road
+// network is Agrar's only lever against being permanently outrun by a
+// faster faction — but a Builder picking "whichever adjacent hex happens to
+// be first" wastes that lever on a network that never reaches anywhere it
+// matters. Anticipate instead of react: the nearest revealed enemy is
+// exactly where a raid would come from, so extend toward it; absent any
+// visible enemy, extend toward wherever the AI's own army is actually
+// operating (so reinforcements get a road home later); absent even that
+// (very first turns), no directional preference yet.
+function roadFrontierPoint(state: GameState, aiPlayerId: number, capital: HexCoord): HexCoord {
+  const enemies = revealedEnemies(state, aiPlayerId);
+  if (enemies.length > 0) {
+    const nearest = bestBy(enemies, e => -hexDistance(e.pos, capital));
+    if (nearest) return nearest.pos;
+  }
+  const mine = state.units.filter(u =>
+    u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type) && u.type !== 'founder');
+  if (mine.length > 0) {
+    const farthest = bestBy(mine, u => hexDistance(u.pos, capital));
+    if (farthest) return farthest.pos;
+  }
+  return capital;
 }
 
 // ── Strategic plan (Hard+) ───────────────────────────────────────────────────
