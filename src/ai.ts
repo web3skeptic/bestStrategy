@@ -372,6 +372,48 @@ function getReserveMemory(state: GameState, aiPlayerId: number): Set<string> {
   return s;
 }
 
+// Which of this player's units has "called dibs" on which claimable site
+// (a neutral/ruined strategic site, or a Fertile Site) — without this,
+// every unit picking its own individually-nearest open site converges on
+// the SAME one whenever they start out clustered together (e.g. fresh off
+// the Capital), leaving any OTHER open site completely unclaimed for many
+// extra turns until some later unit happens to end up closer to it instead
+// of the first. Keyed by (state, aiPlayerId) same as garrison/reserve.
+const siteClaimMemory = new WeakMap<GameState, Map<number, Map<string, string>>>();
+function getSiteClaimMemory(state: GameState, aiPlayerId: number): Map<string, string> {
+  let byPlayer = siteClaimMemory.get(state);
+  if (!byPlayer) { byPlayer = new Map(); siteClaimMemory.set(state, byPlayer); }
+  let m = byPlayer.get(aiPlayerId);
+  if (!m) { m = new Map(); byPlayer.set(aiPlayerId, m); }
+  return m;
+}
+
+// Sticks a unit with whichever claimable site (by id) it already committed
+// to, prunes stale claims (the site got claimed/founded elsewhere, or the
+// claimant died), and otherwise assigns the unit to the nearest still-
+// UNCLAIMED site — spreading multiple available units across multiple open
+// sites instead of everyone racing for the same one.
+function claimNearestOpenSite<T extends { id: string; pos: HexCoord }>(
+  state: GameState, unit: Unit, aiPlayerId: number, openSites: T[],
+): T | null {
+  if (openSites.length === 0) return null;
+  const claims = getSiteClaimMemory(state, aiPlayerId);
+  for (const [siteId, unitId] of [...claims]) {
+    const stillOpen = openSites.some(s => s.id === siteId);
+    const claimantAlive = state.units.some(u => u.id === unitId && u.hp > 0);
+    if (!stillOpen || !claimantAlive) claims.delete(siteId);
+  }
+  const myClaimId = [...claims].find(([, uid]) => uid === unit.id)?.[0];
+  if (myClaimId) {
+    const mine = openSites.find(s => s.id === myClaimId);
+    if (mine) return mine;
+  }
+  const unclaimed = openSites.filter(s => !claims.has(s.id));
+  const target = bestBy(unclaimed.length > 0 ? unclaimed : openSites, s => -hexDistance(unit.pos, s.pos));
+  if (target) claims.set(target.id, unit.id);
+  return target;
+}
+
 // Rough (not exact — §18 "does not need to be perfect") turns for an enemy
 // to reach a threatening position on `target`: distance divided by its own
 // move-then-hit reach (speed + effective range), same reach definition
@@ -497,6 +539,44 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
     }
   }
 
+  // 0.6. Free, unclaimed economic value takes priority over merely
+  // ANTICIPATING a threat (the mobile reserve below) — a neutral site or
+  // Fertile Site sitting there uncontested is real, current income being
+  // left on the table, whereas the reserve is speculative insurance against
+  // something that hasn't happened yet. The one always-on garrison guard
+  // above still stands regardless, so the Capital is never truly
+  // undefended even while the rest of the army rushes economic targets.
+  //
+  // v14 — a not-already-mine Fertile Site (Agrar mirror only;
+  // state.fertileSites is empty in every other matchup, so this is a no-op
+  // there). Contested map control, not free — walking a unit toward it is
+  // how the AI ever bothers claiming one at all.
+  const player = state.players.find(p => p.id === aiPlayerId);
+  if (player?.faction === 'agrar') {
+    const openFertile = claimNearestOpenSite(state, unit, aiPlayerId,
+      state.fertileSites.filter(f => f.ownerId !== aiPlayerId));
+    if (openFertile) return openFertile.pos;
+  }
+
+  // An unclaimed (neutral or ruined, not already being founded/reconstructed
+  // by someone else) strategic site is a real objective for Temple — any
+  // Temple unit can found one (v15, no dedicated founder type), and there
+  // was previously NO explicit priority sending anyone toward one at all:
+  // besiege/hunt only ever considers structures the ENEMY already owns, so
+  // a neutral site just sat there uncontested for the entire game unless a
+  // unit happened to wander onto it by coincidence. Each site gives real
+  // income the moment it's founded, so speed matters — this used to sit
+  // BELOW the mobile reserve check, which meant a merely-anticipated
+  // (not yet real) threat could tie up 1-2 more units in reserve duty
+  // before anyone was free to go grab free money. claimNearestOpenSite also
+  // spreads multiple units across multiple open sites at once instead of
+  // everyone converging on whichever is nearest overall.
+  if (player?.faction === 'temple') {
+    const openSite = claimNearestOpenSite(state, unit, aiPlayerId,
+      state.strategicSites.filter(s => (s.state === 'neutral' || s.state === 'ruins') && !s.founding));
+    if (openSite) return openSite.pos;
+  }
+
   // 0.5. Mobile defensive reserve — proactive, not reactive (§21, §28): does
   // the REST of the army (everyone not already on garrison duty) still have
   // enough response time against a visible fast threat? If not, hold one or
@@ -552,32 +632,6 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
       .filter(u => u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, s.pos) <= 1)
       .reduce((sum, u) => sum + getUnitCost(u.type, faction) * (u.hp / u.stats.maxHp), 0);
     if (defenderValue < threatValue) return s.pos;
-  }
-
-  // v14 — a not-already-mine Fertile Site is a real objective (Agrar
-  // mirror only; state.fertileSites is empty in every other matchup, so
-  // this is a no-op there). Contested map control, not free — walking a
-  // unit toward it is how the AI ever bothers claiming one at all.
-  const player = state.players.find(p => p.id === aiPlayerId);
-  if (player?.faction === 'agrar') {
-    const openFertile = state.fertileSites.find(f => f.ownerId !== aiPlayerId);
-    if (openFertile) return openFertile.pos;
-  }
-
-  // An unclaimed (neutral or ruined, not already being founded/reconstructed
-  // by someone else) strategic site is a real objective for Temple — any
-  // Temple unit can found one (v15, no dedicated founder type), and there
-  // was previously NO explicit priority sending anyone toward one at all:
-  // besiege/hunt below only ever considers structures the ENEMY already
-  // owns, so a neutral site just sat there uncontested for the entire game
-  // unless a unit happened to wander onto it by coincidence. Low-risk,
-  // high-value economic development — exempt from the "mass before
-  // attacking" caution below, same as the Fertile Site check above.
-  if (player?.faction === 'temple') {
-    const openSite = bestBy(
-      state.strategicSites.filter(s => (s.state === 'neutral' || s.state === 'ruins') && !s.founding),
-      s => -hexDistance(unit.pos, s.pos));
-    if (openSite) return openSite.pos;
   }
 
   // RAID_ECONOMY plan — a Raider heading for an exposed enemy Farm takes

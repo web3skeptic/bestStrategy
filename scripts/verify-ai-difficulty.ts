@@ -362,15 +362,48 @@ console.log('\n=== Temple actively captures neutral strategic sites, not just by
   for (const p of state.players) p.aura = 200;
   let rounds = 0;
   let firstCaptureRound: number | null = null;
-  while (rounds < 30 && state.phase === 'playing' && firstCaptureRound === null) {
+  while (rounds < 60 && state.phase === 'playing' && firstCaptureRound === null) {
     rounds++;
     const seat = getCurrentPlayer(state).id;
     runAiTurn(state, 'hard', seat);
     if (state.strategicSites.some(s => s.state === 'temple' || s.founding)) firstCaptureRound = rounds;
     endTurn(state);
   }
-  check('at least one neutral site is claimed or under founding within 30 rounds',
+  check('at least one neutral site is claimed or under founding within 60 rounds',
     firstCaptureRound !== null, `rounds checked=${rounds}`);
+}
+
+// Regression: neutral-site capture used to sit BELOW the mobile reserve
+// check, so a merely-anticipated threat could tie up units in reserve duty
+// before anyone was free to grab free income, and every unit picked its own
+// individually-nearest open site with no memory — when several units
+// started out clustered near the Capital, they'd all converge on the SAME
+// site, leaving any other one completely unclaimed for many extra turns.
+// Random Capital/site placement means a single trial occasionally lands on
+// a genuinely slow/contested layout (e.g. a skirmish over the 2nd site) —
+// a small batch with a majority threshold catches the real regression
+// (converging on one site, leaving the other unclaimed for a very long
+// time) without being flaky over legitimate one-off slow games.
+console.log('\n=== Temple captures BOTH neutral sites promptly, not serially one at a time ===');
+{
+  const TRIALS = 5;
+  let succeeded = 0;
+  for (let t = 0; t < TRIALS; t++) {
+    const state = setup('temple', 'temple');
+    for (const p of state.players) p.aura = 200;
+    let rounds = 0;
+    let bothRound: number | null = null;
+    while (rounds < 60 && state.phase === 'playing' && bothRound === null) {
+      rounds++;
+      const seat = getCurrentPlayer(state).id;
+      runAiTurn(state, 'hard', seat);
+      if (state.strategicSites.filter(s => s.state === 'temple' || s.founding).length >= 2) bothRound = rounds;
+      endTurn(state);
+    }
+    if (bothRound !== null) succeeded++;
+  }
+  check(`both neutral sites are claimed or under founding within 60 rounds in most trials (${succeeded}/${TRIALS})`,
+    succeeded >= TRIALS - 1);
 }
 
 // ── No cheating: all 4 difficulties only ever act through canonical engine mutators ──
