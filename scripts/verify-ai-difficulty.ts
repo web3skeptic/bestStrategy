@@ -6,8 +6,8 @@
 // createGameState, chooseFaction, endTurn, runAiTurn.
 //
 // Run with: npx tsx scripts/verify-ai-difficulty.ts
-import { createGameState, chooseFaction, endTurn, getCurrentPlayer, getPlayerCapital } from '../src/game';
-import { runAiTurn, evaluateState, AI_DIFFICULTY, AiDifficulty } from '../src/ai';
+import { createGameState, chooseFaction, endTurn, getCurrentPlayer, getPlayerCapital, createUnit } from '../src/game';
+import { runAiTurn, evaluateState, anyEnemyHasLethalShot, AI_DIFFICULTY, AiDifficulty } from '../src/ai';
 import type { GameState } from '../src/types';
 
 let failures = 0;
@@ -34,8 +34,8 @@ console.log('\n=== Difficulty config sanity ===');
   check('normal has a threat map', AI_DIFFICULTY.normal.useThreatMap);
   check('normal has NO strategic planning (Hard+ only)', !AI_DIFFICULTY.normal.useStrategicPlanning);
   check('hard has strategic planning', AI_DIFFICULTY.hard.useStrategicPlanning);
-  check('hard has search depth 0 (greedy — no lookahead yet)', AI_DIFFICULTY.hard.searchDepth === 0);
-  check('expert has search depth > 0 (shallow lookahead)', AI_DIFFICULTY.expert.searchDepth > 0);
+  check('hard has shallow lookahead (search depth > 0)', AI_DIFFICULTY.hard.searchDepth > 0);
+  check('expert searches deeper than hard', AI_DIFFICULTY.expert.searchDepth > AI_DIFFICULTY.hard.searchDepth);
   check('expert has the widest candidate pool', AI_DIFFICULTY.expert.candidateLimit >= AI_DIFFICULTY.hard.candidateLimit);
   check('randomness strictly decreases easy > normal > hard >= expert',
     AI_DIFFICULTY.easy.randomness > AI_DIFFICULTY.normal.randomness
@@ -96,6 +96,43 @@ console.log('\n=== evaluateState: monotonic in material/aura/Capital HP ===');
 
   check('evaluateState is symmetric (viewer\'s own score negated is the opponent\'s)',
     Math.abs(evaluateState(state, 0) + evaluateState(state, 1)) < 1e-9);
+}
+
+// ── §49 lethal-exposure detection (Hard/Expert lookahead) + §34 fog-of-war ──
+console.log('\n=== anyEnemyHasLethalShot: detects guaranteed kills, respects fog ===');
+{
+  const state = setup('agrar', 'temple');
+  const tech0 = state.playerTech[0], tech1 = state.playerTech[1];
+  const target = createUnit('heavyknight', 0, { q: 0, r: 0 }, tech0, 'agrar');
+  const attacker = createUnit('heavyknight', 1, { q: 1, r: 0 }, tech1, 'temple'); // adjacent, in range
+  target.hp = 1; // guaranteed one-shot regardless of exact damage numbers
+  state.units.push(target, attacker);
+  check('an adjacent enemy that can one-shot the target IS detected',
+    anyEnemyHasLethalShot(state, target, 0));
+
+  attacker.pos = { q: 6, r: 0 }; // far outside any unit's range
+  check('an enemy far out of range is NOT flagged as a lethal threat',
+    !anyEnemyHasLethalShot(state, target, 0));
+
+  // Fog of war: a RANGED lethal attacker sitting in a forest 2 hexes away
+  // (in range, but not adjacent — a melee attacker adjacent to the target
+  // would always incidentally reveal itself via the target's own presence,
+  // so this needs distance) with nothing of player 0's within 1 hex of the
+  // forest tile to reveal it — must NOT be "seen" by the lookahead (§34 —
+  // no hidden-information cheating).
+  state.units.length = 0;
+  const target2 = createUnit('heavyknight', 0, { q: -6, r: 0 }, tech0, 'agrar');
+  const archer = createUnit('archer', 1, { q: 2, r: 0 }, tech1, 'temple'); // range 2, well clear of target2
+  archer.hp = archer.stats.maxHp;
+  target2.pos = { q: 0, r: 0 }; // now 2 hexes from the archer — in its range
+  target2.hp = 1;
+  state.units.push(target2, archer);
+  const forestKey = `${archer.pos.q},${archer.pos.r}`;
+  state.forests.add(forestKey);
+  check('sanity: this archer WOULD be a lethal threat if visible',
+    anyEnemyHasLethalShot({ ...state, forests: new Set() }, target2, 0));
+  check('the same lethal archer hidden in an unrevealed forest is NOT detected (no fog cheating)',
+    !anyEnemyHasLethalShot(state, target2, 0));
 }
 
 // ── No cheating: all 4 difficulties only ever act through canonical engine mutators ──

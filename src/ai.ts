@@ -2,6 +2,7 @@ import {
   GameState, HexCoord, Unit, UnitType, TechId,
   UNIT_COSTS,
   SUPPORT_RANGE,
+  RANGE_BOOST_RADIUS,
   TECH_NODES,
 } from './types';
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
@@ -24,6 +25,7 @@ import {
   calculateEncirclement, isForestUnitRevealed, endTurn,
   getUnitTypeMultiplier,
   getUnitCost,
+  getPlayerIncome,
 } from './game';
 
 export interface AIAction {
@@ -64,8 +66,8 @@ export interface AiDifficultyConfig {
 export const AI_DIFFICULTY: Record<AiDifficulty, AiDifficultyConfig> = {
   easy:   { randomness: 0.35, useResourceReservation: false, useThreatMap: false, useStrategicPlanning: false, candidateLimit: 1, searchDepth: 0 },
   normal: { randomness: 0.15, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: false, candidateLimit: 1, searchDepth: 0 },
-  hard:   { randomness: 0.04, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 1, searchDepth: 0 },
-  expert: { randomness: 0,    useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 4, searchDepth: 1 },
+  hard:   { randomness: 0.04, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 3, searchDepth: 1 },
+  expert: { randomness: 0,    useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 6, searchDepth: 2 },
 };
 
 export function difficultyLabel(d: AiDifficulty): string {
@@ -103,6 +105,8 @@ export function difficultyLabel(d: AiDifficulty): string {
 
 const SUPPORT_TYPES = new Set<UnitType>(['healer', 'damageBooster', 'rangeBooster']);
 const isSupport = (t: UnitType): boolean => SUPPORT_TYPES.has(t);
+// §16 — line-fighting/melee-adjacent classes that should screen the backline.
+const FRONTLINE_TYPES = new Set<UnitType>(['warrior', 'spearsman', 'horserider', 'heavyknight']);
 
 // ── AI observer hook (additive; ZERO behavior when unset) ────────────────────
 // Used ONLY by the ML behavioural-cloning recorder (ml/bcRecord.ts). When an
@@ -263,13 +267,44 @@ function weakestEnemyTarget(state: GameState, unit: Unit, aiPlayerId: number): H
 // first refusal ahead of the others below — it never REMOVES an option, it
 // just changes the priority order, so a plan whose preferred target doesn't
 // exist this turn just falls through to the normal chain.
+// A completely unguarded Capital (no owned combat unit anywhere near it) has
+// no vision of its own approach and so no warning before an enemy is already
+// close enough to hit it — simulation showed this let the whole army commit
+// to offense while the Capital slowly bled to death unseen and undefended
+// until it was too late to recall anyone. GARRISON_RADIUS is deliberately
+// wider than the structure's own vision (2) so "someone's on the way home"
+// still counts as garrisoned, not just "already standing on the doorstep".
+const GARRISON_RADIUS = 3;
+const MIN_ARMY_TO_GARRISON = 2; // don't strand a brand-new 1-unit army on turtle duty
+
 function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null): HexCoord | null {
   const myStructures = getOwnedStructures(state, aiPlayerId);
   const enemies = revealedEnemies(state, aiPlayerId);
 
-  // 1. Defend an owned structure under imminent threat with no adjacent defender.
+  // 0. Keep a standing home guard — a genuinely competent player never
+  // leaves the Capital with zero eyes/defenders on it, and reactive
+  // "defend once threatened" (below) can't help if the threat was never
+  // seen coming in the first place (fog of war). Only the single CLOSEST
+  // available unit is redirected, and only while NOTHING is already posted
+  // nearby — this is a standing-garrison preference, not a lockdown.
+  const capital = getPlayerCapital(state, aiPlayerId);
+  const myArmySize = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type)).length;
+  if (capital && myArmySize >= MIN_ARMY_TO_GARRISON) {
+    const guarded = state.units.some(u =>
+      u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type) && hexDistance(u.pos, capital.pos) <= GARRISON_RADIUS);
+    if (!guarded) {
+      const combatUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type));
+      const closest = bestBy(combatUnits, u => -hexDistance(u.pos, capital.pos));
+      if (closest && closest.id === unit.id) return capital.pos;
+    }
+  }
+
+  // 1. Defend an owned structure under imminent threat with no adjacent
+  // defender — "imminent" scaled to each enemy's actual mobility (see
+  // enemyCanReachNextTurn) rather than a flat radius, so a fast unit gets
+  // flagged from farther out than a slow one, giving proportionate warning.
   for (const s of myStructures) {
-    const threatened = enemies.some(e => hexDistance(e.pos, s.pos) <= 2);
+    const threatened = enemies.some(e => enemyCanReachNextTurn(state, e, s.pos));
     if (!threatened) continue;
     const defended = state.units.some(u =>
       u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && hexDistance(u.pos, s.pos) <= 1);
@@ -350,8 +385,46 @@ function tryAttackStructure(state: GameState, unit: Unit, difficulty: AiDifficul
 // best reply" rather than a real recursive search. Falls back to the
 // heuristic's own top pick if simulation ever fails for every candidate
 // (never throws — a failed clone/move just drops that candidate).
+// Does any enemy unit in `sim`, from ITS current position and stats, have a
+// GUARANTEED kill on `target` right now? The single most concrete, cheapest
+// form of "the opponent's best reply" — directly targets §49's "don't take a
+// trade that hands the opponent a guaranteed kill on something valuable".
+// §34 — fog of war: both reply-simulation helpers below only ever look at
+// revealedEnemies (the SAME visibility filter every other targeting/threat
+// function in this file already uses), never the clone's full unit list —
+// the AI's search must never "know" about a unit it couldn't actually see.
+export function anyEnemyHasLethalShot(sim: GameState, target: Unit, aiPlayerId: number): boolean {
+  for (const e of revealedEnemies(sim, aiPlayerId)) {
+    const rng = getEffectiveRange(sim, e);
+    if (hexDistance(e.pos, target.pos) > rng) continue;
+    if (estimateDamage(sim, e, target) >= target.hp) return true;
+  }
+  return false;
+}
+
+// One cheap, single "opponent reply" step for depth>=2: the (visible) enemy
+// unit that can deal the most damage to ANY of the AI's units this instant
+// takes that shot (on the clone). Not a recursive AI turn (too expensive,
+// and risks runaway recursion) — just the single most obviously-threatening
+// reply, good enough to catch "this walks me into their whole army's focus fire".
+function applyBestEnemyReply(sim: GameState, aiPlayerId: number): void {
+  let bestDmg = 0, bestAttacker: Unit | null = null, bestTarget: Unit | null = null;
+  for (const e of revealedEnemies(sim, aiPlayerId)) {
+    const rng = getEffectiveRange(sim, e);
+    for (const u of sim.units) {
+      if (u.hp <= 0 || u.playerId !== aiPlayerId) continue;
+      if (hexDistance(e.pos, u.pos) > rng) continue;
+      const dmg = estimateDamage(sim, e, u);
+      if (dmg > bestDmg) { bestDmg = dmg; bestAttacker = e; bestTarget = u; }
+    }
+  }
+  if (bestAttacker && bestTarget) {
+    bestTarget.hp = Math.max(0, bestTarget.hp - bestDmg);
+  }
+}
+
 function chooseBestCandidateByLookahead(
-  state: GameState, unit: Unit, aiPlayerId: number, candidates: HexCoord[],
+  state: GameState, unit: Unit, aiPlayerId: number, candidates: HexCoord[], depth: number,
 ): HexCoord | null {
   if (candidates.length === 0) return null;
   let best: HexCoord | null = null;
@@ -363,8 +436,13 @@ function chooseBestCandidateByLookahead(
       if (!simUnit) continue;
       selectUnit(sim, simUnit.id);
       if (!moveUnit(sim, hex).moved) continue;
+      // depth >= 2 (Expert): actually simulate the single most threatening
+      // enemy reply before scoring, not just a static post-move threat read.
+      if (depth >= 2) applyBestEnemyReply(sim, aiPlayerId);
       const postThreat = computeThreatMap(sim, aiPlayerId).get(hexKey(simUnit.pos)) ?? 0;
-      const score = evaluateState(sim, aiPlayerId) - postThreat * 2;
+      const lethalExposure = simUnit.hp > 0 && anyEnemyHasLethalShot(sim, simUnit, aiPlayerId);
+      let score = evaluateState(sim, aiPlayerId) - postThreat * 2;
+      if (lethalExposure) score -= getUnitCost(simUnit.type, sim.players[aiPlayerId]?.faction) * 4;
       if (score > bestScore) { bestScore = score; best = hex; }
     } catch { /* a failed simulation just drops this one candidate */ }
   }
@@ -468,27 +546,43 @@ function actCombatUnit(
         }
       }
       if (state.hills.has(hexKey(dest))) s += 1.5; // prefer defensible terrain
-      // Frontline/backline preference: a squishy backline unit (archer/
-      // siege/support) scores a hex worse the closer it lands to a visible
-      // enemy, unless that closeness is already accounted for by a kill/
-      // attack-opportunity bonus above.
+      // §16-17 — formation as a scoring PREFERENCE, never a hard constraint
+      // (a better kill/objective always wins if one exists): a squishy
+      // backline unit (archer/siege) scores a hex worse the closer it lands
+      // to a visible enemy, unless that closeness is already accounted for
+      // by a kill/attack-opportunity bonus above; a frontline unit
+      // (warrior/pike/cavalry/heavy) gets a small bonus for standing closer
+      // to the nearest enemy than its own backline currently sits — i.e.
+      // actually screening them, not leaving them exposed out front.
       if ((unit.type === 'archer' || unit.type === 'catapult') && enemies.length > 0) {
         const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
         if (nearestEnemyDist < rng) s -= (rng - nearestEnemyDist) * 2;
+      }
+      if (FRONTLINE_TYPES.has(unit.type) && enemies.length > 0) {
+        const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
+        const backline = state.units.filter(u =>
+          u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id
+          && (u.type === 'archer' || u.type === 'catapult' || isSupport(u.type)));
+        if (backline.length > 0) {
+          const avgBacklineDist = backline.reduce((sum, b) =>
+            sum + Math.min(...enemies.map(e => hexDistance(b.pos, e.pos))), 0) / backline.length;
+          if (nearestEnemyDist < avgBacklineDist) s += 2;
+        }
       }
       if (threatMap) s -= (threatMap.get(hexKey(dest)) ?? 0) * 1.5;
       return s;
     };
 
     const rankedHexes = [...moveHexes].sort((a, b) => scoreHex(b) - scoreHex(a));
-    // Expert — shallow lookahead: rather than trust the heuristic's top pick
-    // outright, actually simulate the top `candidateLimit` candidates on a
-    // CLONED state (never the live one) and re-rank by the resulting
-    // evaluateState() score minus the post-move threat map at the landing
-    // hex — a cheap "what could the opponent then do to me" estimate, not a
+    // Hard/Expert — shallow lookahead: rather than trust the heuristic's top
+    // pick outright, actually simulate the top `candidateLimit` candidates on
+    // a CLONED state (never the live one) and re-rank by the resulting
+    // evaluateState() score, an explicit "would this hand the opponent a
+    // guaranteed kill" check, and (Expert, searchDepth>=2 only) the single
+    // most threatening enemy reply actually simulated — not a full
     // recursive search.
     const scored = cfg.searchDepth > 0
-      ? chooseBestCandidateByLookahead(state, unit, aiPlayerId, rankedHexes.slice(0, cfg.candidateLimit))
+      ? chooseBestCandidateByLookahead(state, unit, aiPlayerId, rankedHexes.slice(0, cfg.candidateLimit), cfg.searchDepth)
       : pickWithRandomness(rankedHexes, cfg.randomness);
 
     if (scored && !hexEqual(effectiveDest(state, scored), unit.pos)) {
@@ -533,15 +627,28 @@ function actSupportUnit(state: GameState, unit: Unit, aiPlayerId: number, action
   const combat = state.units.filter(u =>
     u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && !isSupport(u.type));
   const enemies = revealedEnemies(state, aiPlayerId);
+  const faction = state.players[aiPlayerId]?.faction;
+  // §17 — weigh actual expected VALUE delivered, not just a raw ally count:
+  // a Healer favors hexes near INJURED, valuable allies (missing HP it could
+  // actually restore); a damage/range booster favors hexes near many
+  // valuable allies that benefit from the buff (range booster specifically
+  // only helps already-ranged units — buffing a warrior's range does nothing).
+  const allyValue = (ally: Unit): number => {
+    const cost = getUnitCost(ally.type, faction);
+    if (unit.type === 'healer') return cost * (1 - ally.hp / ally.stats.maxHp);
+    if (unit.type === 'rangeBooster') return ally.stats.range > 1 ? cost : 0;
+    return cost; // damageBooster — any combat ally benefits
+  };
   const scoreHex = (pos: HexCoord): number => {
-    let allies = 0;
-    for (const c of combat) if (hexDistance(pos, c.pos) <= SUPPORT_RANGE) allies++;
+    const radius = unit.type === 'rangeBooster' ? RANGE_BOOST_RADIUS : SUPPORT_RANGE;
+    let value = 0;
+    for (const c of combat) if (hexDistance(pos, c.pos) <= radius) value += allyValue(c);
     let danger = 0;
     for (const e of enemies) {
       const d = hexDistance(pos, e.pos);
       if (d <= 1) danger += 3; else if (d <= 2) danger += 1;
     }
-    return allies * 4 - danger * 3;
+    return value * 2 - danger * 3;
   };
 
   let bestHex: HexCoord | null = null;
@@ -671,12 +778,23 @@ function computeReservation(state: GameState, aiPlayerId: number): number {
 // Emergencies override saving/planning — a Capital in real danger, or an
 // owned structure under imminent threat with nothing nearby to defend it,
 // always gets first claim on the Energy the AI has right now.
+// Could `e` reach and hit `target` on ITS OWN next activation (move + attack,
+// same-turn)? Simulation showed the flat "within 2 hexes" radius the defend
+// checks used to use was far too tight against Temple's faster (speed 2-3)
+// roster — by the time a fast Raider/Champion was actually within 2 hexes it
+// could already reach and hit next turn regardless, giving the (slower,
+// speed 1-2) Agrar side's AI no real warning. Using each enemy's actual
+// speed+range gives proportionate warning to however mobile the threat is.
+function enemyCanReachNextTurn(state: GameState, e: Unit, target: HexCoord): boolean {
+  return hexDistance(e.pos, target) <= e.stats.speed + getEffectiveRange(state, e);
+}
+
 function hasEmergency(state: GameState, aiPlayerId: number): boolean {
   const capital = getPlayerCapital(state, aiPlayerId);
   if (capital && capital.hp / capital.maxHp < 0.5) return true;
   const enemies = revealedEnemies(state, aiPlayerId);
   for (const s of getOwnedStructures(state, aiPlayerId)) {
-    if (!enemies.some(e => hexDistance(e.pos, s.pos) <= 2)) continue;
+    if (!enemies.some(e => enemyCanReachNextTurn(state, e, s.pos))) continue;
     const defended = state.units.some(u => u.hp > 0 && u.playerId === aiPlayerId && hexDistance(u.pos, s.pos) <= 1);
     if (!defended) return true;
   }
@@ -824,12 +942,19 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
   const cfg = AI_DIFFICULTY[difficulty];
   const player = state.players[aiPlayerId]!;
   // §9-10 — resource reservation: don't recruit past the point of dropping
-  // below the aura reserved for the AI's next research/Temple-upgrade goal,
-  // unless there's a genuine emergency. The mandatory first Builder/founder
-  // recruit (handled inside chooseSpawnType) is exempt — without one the AI
-  // can never develop its economy at all, so it's never "discretionary".
+  // below the aura reserved for the AI's next research/Temple-upgrade goal
+  // — but ONLY once that goal is actually within reach next income cycle
+  // (current aura + one round's income already covers it). Reserving from
+  // the moment a distant, expensive goal enters the plan (regardless of how
+  // far off it is) was tried first and was a disaster in practice — it left
+  // the AI with a ZERO-unit army for 10+ rounds while it slow-saved toward a
+  // single 16-cost tech, losing to an opponent that just built an army. The
+  // aura-within-reach gate below keeps saving to its intended narrow case —
+  // "I'm 1 recruit away from also affording my tech goal next round" — never
+  // "stockpile from turn one no matter how far away the goal is".
   const reservation = cfg.useResourceReservation ? computeReservation(state, aiPlayerId) : 0;
-  const emergency = reservation > 0 ? hasEmergency(state, aiPlayerId) : false;
+  const withinReachNextRound = reservation > 0 && player.aura + getPlayerIncome(state, aiPlayerId) >= reservation;
+  const emergency = withinReachNextRound ? hasEmergency(state, aiPlayerId) : false;
   for (const structure of getOwnedStructures(state, aiPlayerId)) {
     if (getUnitAt(state, structure.pos)) continue; // occupied — can't spawn (throttles multi-spawn)
     if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
@@ -839,7 +964,7 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
     // alone is enough to identify "this recruit is discretionary".
     const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, cfg.useResourceReservation);
     if (!type) continue;
-    if (reservation > 0 && !emergency && type !== 'founder') {
+    if (withinReachNextRound && !emergency && type !== 'founder') {
       const cost = getUnitCost(type, player.faction);
       if (player.aura - cost < reservation) continue; // saving — skip this discretionary recruit
     }
