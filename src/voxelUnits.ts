@@ -4,7 +4,7 @@
 // renderer, the asset demo, and the unit-card thumbnail renderer so all three
 // always show the same models.
 import * as THREE from 'three';
-import { UnitType, FactionId } from './types';
+import { UnitType } from './types';
 import { buildGuy } from './voxelWarrior';
 import { buildHorseRider } from './voxelHorserider';
 import { buildHeavyKnight } from './voxelHeavyKnight';
@@ -13,7 +13,6 @@ import { buildSpear } from './voxelSpear';
 import { buildBow } from './voxelBow';
 import { buildDemonStaff, buildRuneStaff, buildHealerStaff } from './voxelStaff';
 import { buildCannon } from './voxelCannon';
-import { attachFactionAccent } from './voxelFactionAccent';
 
 // A foot soldier ("Voxel Guy"), team-tinted, holding a weapon on its right side,
 // scaled down to tile size. scaleVec overrides the uniform weapon scale.
@@ -36,11 +35,7 @@ function mounted(model: THREE.Group): THREE.Group {
   return model;
 }
 
-// `faction`, when known (post-reveal), adds a small faction-flavored banner
-// (§70 asset policy — see voxelFactionAccent.ts) on top of the per-player
-// team-color body tint, so Agrar and Temple read as visually distinct even
-// though a given slot's base rig/geometry is shared.
-export function buildUnitModel(type: UnitType, color: number, faction?: FactionId | null): THREE.Group {
+export function buildUnitModel(type: UnitType, color: number): THREE.Group {
   const wrap = new THREE.Group();
   switch (type) {
     case 'catapult': wrap.add(buildCannon(color)); break; // cannon, muzzle faces +Z
@@ -54,6 +49,5 @@ export function buildUnitModel(type: UnitType, color: number, faction?: FactionI
     case 'heavyknight': wrap.add(mounted(buildHeavyKnight(color))); break;
     default: { const g = buildGuy(color); g.scale.setScalar(0.2); g.position.y = 0.08; wrap.add(g); }
   }
-  attachFactionAccent(wrap, faction);
   return wrap;
 }

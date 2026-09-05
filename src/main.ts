@@ -1736,13 +1736,11 @@ function updateUnitCards(): void {
     card.classList.toggle('disabled', !affordable);
 
     // Card art = a 3D render of the unit model, team-tinted to the current
-    // player plus its faction banner. Regenerated only when the player
-    // colour or faction changes (cached otherwise) — faction changes exactly
-    // once, at reveal, so this also refreshes the pre-reveal placeholder art.
+    // player. Regenerated only when the player colour changes (cached otherwise).
     const thumb = card.querySelector('.unit-card-thumb') as HTMLImageElement;
-    const thumbKey = `${player.color}:${player.faction ?? 'none'}`;
+    const thumbKey = player.color;
     if (thumb && thumb.dataset.thumbKey !== thumbKey) {
-      try { thumb.src = getUnitThumbnail(type, player.color, player.faction); thumb.dataset.thumbKey = thumbKey; }
+      try { thumb.src = getUnitThumbnail(type, player.color); thumb.dataset.thumbKey = thumbKey; }
       catch { /* keep the PNG fallback set in buildUnitCards */ }
     }
 
@@ -2042,31 +2040,31 @@ function renderTechTree(): void {
   const own = (n: typeof TECH_NODES[number]) => !n.faction || n.faction === player.faction;
 
   const siegeNodes = TECH_NODES.filter(n => own(n) && (n.id === 'agrar_siegecraft' || n.id === 'agrar_siegecraft_splash' || n.id === 'temple_mobile_siege_tech' || n.id === 'temple_mobile_siege_splash'));
-  appendSection(techBody, 'Siege', undefined, siegeNodes, tech, player.aura, player.color, player.faction);
+  appendSection(techBody, 'Siege', undefined, siegeNodes, tech, player.aura, player.color);
 
   const heavyNodes = TECH_NODES.filter(n => own(n) && (n.id === 'agrar_heavy_armor' || n.id === 'agrar_heavy_knight_tech' || n.id === 'temple_warrior_rite' || n.id === 'temple_champion_rite'));
-  appendSection(techBody, 'Heavy Unit', undefined, heavyNodes, tech, player.aura, player.color, player.faction);
+  appendSection(techBody, 'Heavy Unit', undefined, heavyNodes, tech, player.aura, player.color);
 
   // Command — linear (not a branch pick-one); prereqs alone keep II gated
   // behind I. Also the prereq for each faction's Heavy-unit tier 2 above.
   const commandNodes = TECH_NODES.filter(n => n.id === 'command_1' || n.id === 'command_2');
-  appendSection(techBody, 'Command', undefined, commandNodes, tech, player.aura, player.color, player.faction);
+  appendSection(techBody, 'Command', undefined, commandNodes, tech, player.aura, player.color);
 
   // Branches — shared by both factions.
   const branches = ['stat_bonus', 'support'];
   for (const branch of branches) {
     const nodes = TECH_NODES.filter(n => n.branch === branch);
     const meta = BRANCH_META[branch]!;
-    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color, player.faction);
+    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color);
   }
 }
 
 // The art a tech card "stands for": the unlocked unit, or the Catapult/Mobile
 // Siege model for its splash sub-upgrade. Rendered (team-coloured) the same
 // way as the build-card thumbnails, so the tech tree shows the actual model.
-function techNodeArt(node: typeof TECH_NODES[number], color: string, faction: FactionId | null): string | null {
-  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color, faction);
-  if (node.id === 'agrar_siegecraft_splash' || node.id === 'temple_mobile_siege_splash') return getUnitThumbnail('catapult', color, faction);
+function techNodeArt(node: typeof TECH_NODES[number], color: string): string | null {
+  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color);
+  if (node.id === 'agrar_siegecraft_splash' || node.id === 'temple_mobile_siege_splash') return getUnitThumbnail('catapult', color);
   return null;
 }
 
@@ -2083,7 +2081,6 @@ function appendSection(
   tech: PlayerTech,
   aura: number,
   playerColor: string,
-  playerFaction: FactionId | null,
 ): void {
   if (nodes.length === 0) return;
 
@@ -2151,7 +2148,7 @@ function appendSection(
       statusClass = 'status-available';
     }
 
-    const artUrl = techNodeArt(node, playerColor, playerFaction);
+    const artUrl = techNodeArt(node, playerColor);
     const artHtml = artUrl
       ? `<img class="tech-node-art" src="${artUrl}" alt="${node.name}" draggable="false">`
       : '';

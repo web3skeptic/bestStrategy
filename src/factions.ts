@@ -3,11 +3,12 @@
 // STATUS: fully wired — sites/farms/structures (phase 3-4), the full unit
 // roster (phase 5), Command population (phase 6), Agrar Roads (phase 7),
 // ZOC (phase 8, keyed off unitClass — see game.ts ZOC_CLASSES), the
-// per-faction visual banner accent (phase 9, see voxelFactionAccent.ts), the
 // Farm-network macro-economy correction (phase 10), and the opening/
-// recruitment correction (phase 11 — no Founding Round, Builder/Acolyte
-// recruitable, training queue, adjacency-only Farms, Agrar-only Road speed)
-// all read from this file rather than duplicating numbers.
+// recruitment correction (phase 11 — no Founding Round, Builder recruitable,
+// training queue, adjacency-only Farms, Agrar-only Road speed) all read from
+// this file rather than duplicating numbers. (Phase 9 added a per-faction
+// visual banner accent on every unit model; removed later — it didn't add
+// anything the team-color tint didn't already convey.)
 import type { UnitClass } from './combat';
 import type { FactionId, UnitType } from './types';
 
@@ -39,10 +40,9 @@ export interface FactionUnitDef {
   // ZOC: warrior/pike/cavalry/heavy project it; archer/siege/support/builder don't (§26).
   projectsZOC: boolean;
   assetReference: string;
-  // Phase 9: every unit now gets a faction-flavored banner accent on top of
-  // its shared base rig (see voxelFactionAccent.ts) — that's the baseline,
-  // so this is false everywhere. Only set true for a slot that still needs
-  // genuinely bespoke geometry beyond the shared banner treatment.
+  // The shared base rig (see voxelUnits.ts) is the baseline, so this is
+  // false everywhere. Only set true for a slot that still needs genuinely
+  // bespoke geometry.
   placeholderAsset: boolean;
 }
 

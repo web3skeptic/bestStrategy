@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
 import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory, getAgrarCultivation } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
@@ -245,11 +245,6 @@ export class Renderer3D {
   private tileMeshes = new Map<string, THREE.Object3D>();
   private capMeshes = new Map<string, THREE.Mesh>();
   private unitMeshes = new Map<string, THREE.Object3D>();
-  // Tracks the faction each cached mesh was built with, so a unit whose
-  // owner reveals their faction mid-game (Round-1 Warrior/Archer/Founder)
-  // gets its mesh rebuilt with the faction banner instead of staying stuck
-  // on the pre-reveal (no-banner) model forever.
-  private unitMeshFaction = new Map<string, FactionId | null>();
   private boosterAuras = new Map<string, THREE.Mesh[]>(); // pulsating range rings, keyed by unit id
   private unitHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number }>();
   // Ids of the local player's units currently showing the pulsating "still to
@@ -540,7 +535,6 @@ export class Renderer3D {
     for (const dim of this.darkMatCache.values()) { this.sharedResources.delete(dim); dim.dispose(); }
     this.darkMatCache.clear();
     this.unitMeshes.clear();
-    this.unitMeshFaction.clear();
     this.boosterAuras.clear();
     this.unitHpBars.clear();
     this.toMoveTintIds.clear();
@@ -1382,8 +1376,8 @@ export class Renderer3D {
     }
   }
 
-  private buildUnitMesh(unit: Unit, colorNum: number, faction?: FactionId | null): THREE.Object3D {
-    const wrap = buildUnitModel(unit.type, colorNum, faction);
+  private buildUnitMesh(unit: Unit, colorNum: number): THREE.Object3D {
+    const wrap = buildUnitModel(unit.type, colorNum);
     // Support units get pulsating range "circles" (rings only — tiles inside are
     // NOT highlighted). Green = healer, orange = damage, cyan = range.
     // Radius of the N-tile ring in world units (linear in tile count).
@@ -1629,20 +1623,12 @@ export class Renderer3D {
 
       const player = state.players.find(p => p.id === unit.playerId)!;
       let mesh = this.unitMeshes.get(unit.id);
-      if (mesh && this.unitMeshFaction.get(unit.id) !== player.faction) {
-        // Faction just revealed (or otherwise changed) — rebuild with the
-        // correct banner rather than leaving a stale pre-reveal model.
-        this.unitGroup.remove(mesh);
-        this.disposeObject(mesh);
-        this.unitMeshes.delete(unit.id);
-        mesh = undefined;
-      }
       if (!mesh) {
         const colorNum = new THREE.Color(player.color).getHex();
         // The model lives in an inner "facer" group that we rotate to face the
         // unit's heading; the outer group carries position + the HP bar (so the
         // billboarded HP bar never inherits the unit's facing rotation).
-        const model = this.buildUnitMesh(unit, colorNum, player.faction);
+        const model = this.buildUnitMesh(unit, colorNum);
         const off = forwardOffset(unit.type);
         model.rotation.y = off;
         mesh = new THREE.Group();
@@ -1652,7 +1638,6 @@ export class Renderer3D {
         mesh.traverse(o => o.layers.enable(UNIT_LAYER)); // lit by the brighter unit-only lights
         this.unitGroup.add(mesh);
         this.unitMeshes.set(unit.id, mesh);
-        this.unitMeshFaction.set(unit.id, player.faction);
         this.unitFacing.set(unit.id, { cur: off, tgt: off });
       }
       this.updateHpBar(unit.id, unit.hp, unit.stats.maxHp);
@@ -1692,7 +1677,6 @@ export class Renderer3D {
         this.unitGroup.remove(mesh);
         this.disposeObject(mesh);
         this.unitMeshes.delete(id);
-        this.unitMeshFaction.delete(id);
         this.boosterAuras.delete(id);
         this.unitHpBars.delete(id);
         this.toMoveTintIds.delete(id);
