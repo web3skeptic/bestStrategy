@@ -2408,13 +2408,16 @@ function handleHexClick(clientX: number, clientY: number): void {
 
   // Own structure with a friendly unit standing on it: tapping toggles
   // structure ⇄ unit so the structure's recruit tray stays reachable even
-  // while occupied. First tap surfaces the structure; tap again controls the unit.
+  // while occupied. First tap controls the unit (moving/attacking is by far
+  // the more common action, and a unit that looks selected but shows no move
+  // highlights reads as "stuck"/broken); tap again surfaces the structure's
+  // recruit tray.
   if (myStructureHere && myUnitHere) {
-    const structureSelected = state.selectionMode === 'site' && state.selectedSiteId === structureId;
-    if (structureSelected) {
-      sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
-    } else {
+    const unitSelected = state.selectionMode === 'unit' && state.selectedUnitId === unit!.id;
+    if (unitSelected) {
       sendOrCall({ type: 'action_select_temple', templeId: structureId! }, () => selectSite(state, structureId!));
+    } else {
+      sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
     }
     return;
   }
