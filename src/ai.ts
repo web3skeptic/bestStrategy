@@ -196,6 +196,54 @@ function effectiveDest(state: GameState, hex: HexCoord): HexCoord {
   return hex;
 }
 
+// The heuristic value of moving to `hex` given a target `objective` — how
+// much closer it gets, plus tactical adjustments (attack-from-there bonus,
+// defensible terrain, formation/screening, threat-map exposure). Shared by
+// actCombatUnit's own move ranking and scoreObjectiveCandidate below (which
+// uses it to estimate how good pursuing a given objective actually is,
+// before committing to it) — one formula, not two copies that could drift.
+function scoreMoveHex(
+  state: GameState, unit: Unit, aiPlayerId: number, hex: HexCoord, objective: HexCoord | null,
+  enemies: Unit[], threatMap: Map<string, number> | null,
+): number {
+  const dest = effectiveDest(state, hex);
+  let s = objective ? -hexDistance(dest, objective) : 0;
+  const rng = unit.stats.range + (state.hills.has(hexKey(dest)) && unit.stats.range > 1 ? 1 : 0);
+  for (const e of enemies) {
+    const d = hexDistance(dest, e.pos);
+    if (d >= 1 && d <= rng) {
+      const kill = estimateDamage(state, unit, e) >= e.hp;
+      s += (kill ? 60 : 12) + unitValue(e.type);
+    }
+  }
+  if (state.hills.has(hexKey(dest))) s += 1.5; // prefer defensible terrain
+  // §16-17 — formation as a scoring PREFERENCE, never a hard constraint
+  // (a better kill/objective always wins if one exists): a squishy
+  // backline unit (archer/siege) scores a hex worse the closer it lands
+  // to a visible enemy, unless that closeness is already accounted for
+  // by a kill/attack-opportunity bonus above; a frontline unit
+  // (warrior/pike/cavalry/heavy) gets a small bonus for standing closer
+  // to the nearest enemy than its own backline currently sits — i.e.
+  // actually screening them, not leaving them exposed out front.
+  if ((unit.type === 'archer' || unit.type === 'catapult') && enemies.length > 0) {
+    const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
+    if (nearestEnemyDist < rng) s -= (rng - nearestEnemyDist) * 2;
+  }
+  if (FRONTLINE_TYPES.has(unit.type) && enemies.length > 0) {
+    const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
+    const backline = state.units.filter(u =>
+      u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id
+      && (u.type === 'archer' || u.type === 'catapult' || isSupport(u.type)));
+    if (backline.length > 0) {
+      const avgBacklineDist = backline.reduce((sum, b) =>
+        sum + Math.min(...enemies.map(e => hexDistance(b.pos, e.pos))), 0) / backline.length;
+      if (nearestEnemyDist < avgBacklineDist) s += 2;
+    }
+  }
+  if (threatMap) s -= (threatMap.get(hexKey(dest)) ?? 0) * 1.5;
+  return s;
+}
+
 // Select a unit and expose the engine-computed highlight sets (moveHexes /
 // attackHexes). Returns false if it can't be selected.
 function select(state: GameState, unit: Unit): boolean {
@@ -484,7 +532,32 @@ function chooseReservePosition(state: GameState, aiPlayerId: number, capitalPos:
   return junction ? junction.pos : capitalPos;
 }
 
-function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null): HexCoord | null {
+// How good is actually pursuing this objective, right now? Finds the
+// unit's best move toward it (the exact same scoreMoveHex ranking
+// actCombatUnit itself uses for the real move) and — for Hard/Expert —
+// the resulting whole-state evaluateState() score from actually
+// simulating that move, via the same chooseBestCandidateByLookahead
+// machinery already used to pick between move candidates. Used below to
+// let besiege-the-enemy-structure and hunt-the-weakest-enemy settle by
+// comparing actual simulated outcomes instead of a fixed priority order
+// with a hand-tuned distance margin — the fixed order still exists as the
+// fallback for Normal/Easy (cfg.searchDepth === 0), which don't get this
+// heavier evaluation.
+function scoreObjectiveCandidate(
+  state: GameState, unit: Unit, aiPlayerId: number, objective: HexCoord, cfg: AiDifficultyConfig,
+): number {
+  if (!select(state, unit)) return -Infinity;
+  const enemies = revealedEnemies(state, aiPlayerId);
+  const moveHexes = [...state.moveHexes];
+  if (moveHexes.length === 0) return evaluateState(state, aiPlayerId);
+  const ranked = moveHexes
+    .sort((a, b) => scoreMoveHex(state, unit, aiPlayerId, b, objective, enemies, null)
+      - scoreMoveHex(state, unit, aiPlayerId, a, objective, enemies, null));
+  const best = chooseBestCandidateByLookahead(state, unit, aiPlayerId, ranked.slice(0, cfg.candidateLimit), cfg.searchDepth);
+  return best?.score ?? evaluateState(state, aiPlayerId);
+}
+
+function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null, cfg: AiDifficultyConfig = AI_DIFFICULTY.easy): HexCoord | null {
   // getOwnedStructures only ever returns the Capital + owned Temple sites —
   // it never includes Farms. For Agrar that meant its ENTIRE economy was
   // structurally invisible to the "defend a threatened structure" check
@@ -646,7 +719,15 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
   // trickle this one deep into enemy territory alone — rally back toward
   // home instead, overriding even an already-remembered offensive target
   // (an army that just took losses should regroup, not keep splintering).
-  // Already-close units are left alone (nothing to rally back FROM).
+  // Already-close units are left alone (nothing to rally back FROM). A hard
+  // gate for EVERY difficulty, including the Hard/Expert evaluation branch
+  // below — an early attempt let "rally home" compete freely against
+  // besiege/hunt via scoreObjectiveCandidate, but a 1-2 ply evaluation has
+  // no way to see the multi-turn value of massing up first, and a lone
+  // unit heading home always LOOKS safer in the moment (less immediate
+  // threat exposure) regardless of whether there's an actual reason to
+  // retreat — it ended up recalling units with no real threat around at
+  // all, undoing real, tested "don't overreact" behavior.
   if (capital && combatUnitsAll.length < MIN_ARMY_TO_ATTACK && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
     return capital.pos;
   }
@@ -664,23 +745,44 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
     memory.delete(unit.id); // target destroyed/vanished — fall through to pick a new one
   }
 
-  // SIEGE plan — a siege unit heads straight for the enemy Capital instead of
-  // whichever enemy structure merely happens to be nearest.
   const enemyStructures = state.players
     .filter(p => p.id !== aiPlayerId)
     .flatMap(p => getOwnedStructures(state, p.id));
-  if (plan === 'SIEGE' && unit.type === 'catapult') {
-    const enemyCapitals = state.players
-      .filter(p => p.id !== aiPlayerId)
-      .map(p => getPlayerCapital(state, p.id))
-      .filter((c): c is NonNullable<typeof c> => !!c);
-    const enemyCapital = bestBy(enemyCapitals, c => -hexDistance(unit.pos, c.pos));
-    if (enemyCapital) { memory.set(unit.id, { kind: 'structure', id: enemyCapital.id }); return enemyCapital.pos; }
-  }
-  const nearestStructure = bestBy(enemyStructures, s => -hexDistance(unit.pos, s.pos));
-  const structureDist = nearestStructure ? hexDistance(unit.pos, nearestStructure.pos) : Infinity;
-
+  // SIEGE plan — a siege unit heads straight for the enemy Capital instead of
+  // whichever enemy structure merely happens to be nearest.
+  const siegeCapital = plan === 'SIEGE' && unit.type === 'catapult'
+    ? bestBy(
+      state.players.filter(p => p.id !== aiPlayerId).map(p => getPlayerCapital(state, p.id)).filter((c): c is NonNullable<typeof c> => !!c),
+      c => -hexDistance(unit.pos, c.pos))
+    : null;
+  const nearestStructure = siegeCapital ?? bestBy(enemyStructures, s => -hexDistance(unit.pos, s.pos));
   const enemyTarget = weakestEnemyTarget(state, unit, aiPlayerId);
+
+  // Hard/Expert: rather than settle "besiege vs hunt" with a fixed priority
+  // order and a hand-tuned distance margin, gather both genuine candidates
+  // and let simulated outcomes (scoreObjectiveCandidate) decide which is
+  // actually better right now — this is the one part of pickObjective that
+  // was pure "which of these looks closest-ish", where an actual evaluation
+  // of the resulting position is worth the extra compute. Deliberately
+  // does NOT include "rally home" as a THIRD competing option here — that
+  // decision is already made above (a hard gate, not a comparison): a 1-2
+  // ply evaluation has no way to see the multi-turn value of massing up
+  // first, and a lone unit heading home always looks safer in the moment
+  // regardless of whether there's an actual reason to retreat. Normal/Easy
+  // keep the original fixed-margin logic below unchanged (cfg.searchDepth
+  // === 0 for both).
+  if (cfg.searchDepth > 0 && (nearestStructure || enemyTarget)) {
+    const candidates: { pos: HexCoord; ref: TargetRef | null }[] = [];
+    if (nearestStructure) candidates.push({ pos: nearestStructure.pos, ref: { kind: 'structure', id: nearestStructure.id } });
+    if (enemyTarget) candidates.push({ pos: enemyTarget.pos, ref: enemyTarget.ref });
+    const best = bestBy(candidates, c => scoreObjectiveCandidate(state, unit, aiPlayerId, c.pos, cfg));
+    if (best) {
+      if (best.ref) memory.set(unit.id, best.ref);
+      return best.pos;
+    }
+  }
+
+  const structureDist = nearestStructure ? hexDistance(unit.pos, nearestStructure.pos) : Infinity;
   const enemyDist = enemyTarget ? hexDistance(unit.pos, enemyTarget.pos) : Infinity;
 
   // Destroying a Capital is the ONLY win condition (§11) — a scattered
@@ -773,7 +875,7 @@ function applyBestEnemyReply(sim: GameState, aiPlayerId: number): void {
 
 function chooseBestCandidateByLookahead(
   state: GameState, unit: Unit, aiPlayerId: number, candidates: HexCoord[], depth: number,
-): HexCoord | null {
+): { hex: HexCoord; score: number } | null {
   if (candidates.length === 0) return null;
   let best: HexCoord | null = null;
   let bestScore = -Infinity;
@@ -794,7 +896,7 @@ function chooseBestCandidateByLookahead(
       if (score > bestScore) { bestScore = score; best = hex; }
     } catch { /* a failed simulation just drops this one candidate */ }
   }
-  return best ?? candidates[0]!;
+  return { hex: best ?? candidates[0]!, score: bestScore };
 }
 
 function actCombatUnit(
@@ -981,47 +1083,11 @@ function actCombatUnit(
 
   // Otherwise consider repositioning toward the best objective / a kill.
   if (!unit.hasMoved) {
-    const objective = pickObjective(state, unit, aiPlayerId, plan);
+    const objective = pickObjective(state, unit, aiPlayerId, plan, cfg);
     const enemies = revealedEnemies(state, aiPlayerId);
     const moveHexes = [...state.moveHexes];
-    const scoreHex = (hex: HexCoord): number => {
-      const dest = effectiveDest(state, hex);
-      let s = objective ? -hexDistance(dest, objective) : 0;
-      const rng = unit.stats.range + (state.hills.has(hexKey(dest)) && unit.stats.range > 1 ? 1 : 0);
-      for (const e of enemies) {
-        const d = hexDistance(dest, e.pos);
-        if (d >= 1 && d <= rng) {
-          const kill = estimateDamage(state, unit, e) >= e.hp;
-          s += (kill ? 60 : 12) + unitValue(e.type);
-        }
-      }
-      if (state.hills.has(hexKey(dest))) s += 1.5; // prefer defensible terrain
-      // §16-17 — formation as a scoring PREFERENCE, never a hard constraint
-      // (a better kill/objective always wins if one exists): a squishy
-      // backline unit (archer/siege) scores a hex worse the closer it lands
-      // to a visible enemy, unless that closeness is already accounted for
-      // by a kill/attack-opportunity bonus above; a frontline unit
-      // (warrior/pike/cavalry/heavy) gets a small bonus for standing closer
-      // to the nearest enemy than its own backline currently sits — i.e.
-      // actually screening them, not leaving them exposed out front.
-      if ((unit.type === 'archer' || unit.type === 'catapult') && enemies.length > 0) {
-        const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
-        if (nearestEnemyDist < rng) s -= (rng - nearestEnemyDist) * 2;
-      }
-      if (FRONTLINE_TYPES.has(unit.type) && enemies.length > 0) {
-        const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
-        const backline = state.units.filter(u =>
-          u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id
-          && (u.type === 'archer' || u.type === 'catapult' || isSupport(u.type)));
-        if (backline.length > 0) {
-          const avgBacklineDist = backline.reduce((sum, b) =>
-            sum + Math.min(...enemies.map(e => hexDistance(b.pos, e.pos))), 0) / backline.length;
-          if (nearestEnemyDist < avgBacklineDist) s += 2;
-        }
-      }
-      if (threatMap) s -= (threatMap.get(hexKey(dest)) ?? 0) * 1.5;
-      return s;
-    };
+    const scoreHex = (hex: HexCoord): number =>
+      scoreMoveHex(state, unit, aiPlayerId, hex, objective, enemies, threatMap);
 
     const rankedHexes = [...moveHexes].sort((a, b) => scoreHex(b) - scoreHex(a));
     // Hard/Expert — shallow lookahead: rather than trust the heuristic's top
@@ -1032,7 +1098,7 @@ function actCombatUnit(
     // most threatening enemy reply actually simulated — not a full
     // recursive search.
     const scored = cfg.searchDepth > 0
-      ? chooseBestCandidateByLookahead(state, unit, aiPlayerId, rankedHexes.slice(0, cfg.candidateLimit), cfg.searchDepth)
+      ? chooseBestCandidateByLookahead(state, unit, aiPlayerId, rankedHexes.slice(0, cfg.candidateLimit), cfg.searchDepth)?.hex ?? null
       : pickWithRandomness(rankedHexes, cfg.randomness);
 
     if (scored && !hexEqual(effectiveDest(state, scored), unit.pos)) {

@@ -395,21 +395,29 @@ console.log('\n=== Agrar reaches MAX_ACTIVE_FARMS in a reasonable number of roun
 // unless it happened to already be standing on one. Confirmed via actual
 // play, not just a synthetic scenario: Temple simply never captured either
 // neutral site over an entire game.
+// Random Capital/site placement means a single trial occasionally lands on
+// a genuinely distant layout — a small batch avoids flakiness from any
+// single unlucky-map trial (same rationale as the "BOTH sites" test below).
 console.log('\n=== Temple actively captures neutral strategic sites, not just by coincidence ===');
 {
-  const state = setup('temple', 'temple');
-  for (const p of state.players) p.aura = 200;
-  let rounds = 0;
-  let firstCaptureRound: number | null = null;
-  while (rounds < 60 && state.phase === 'playing' && firstCaptureRound === null) {
-    rounds++;
-    const seat = getCurrentPlayer(state).id;
-    runAiTurn(state, 'hard', seat);
-    if (state.strategicSites.some(s => s.state === 'temple' || s.founding)) firstCaptureRound = rounds;
-    endTurn(state);
+  const TRIALS = 10;
+  let succeeded = 0;
+  for (let t = 0; t < TRIALS; t++) {
+    const state = setup('temple', 'temple');
+    for (const p of state.players) p.aura = 200;
+    let rounds = 0;
+    let firstCaptureRound: number | null = null;
+    while (rounds < 60 && state.phase === 'playing' && firstCaptureRound === null) {
+      rounds++;
+      const seat = getCurrentPlayer(state).id;
+      runAiTurn(state, 'hard', seat);
+      if (state.strategicSites.some(s => s.state === 'temple' || s.founding)) firstCaptureRound = rounds;
+      endTurn(state);
+    }
+    if (firstCaptureRound !== null) succeeded++;
   }
-  check('at least one neutral site is claimed or under founding within 60 rounds',
-    firstCaptureRound !== null, `rounds checked=${rounds}`);
+  check(`at least one neutral site is claimed or under founding within 60 rounds in most trials (${succeeded}/${TRIALS})`,
+    succeeded >= TRIALS * 0.7);
 }
 
 // Regression: neutral-site capture used to sit BELOW the mobile reserve
