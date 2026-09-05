@@ -36,7 +36,7 @@ export { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE };
 // the resulting import cycle is safe in practice (a common, well-supported
 // pattern for two tightly-coupled modules — see aiSearch.ts's own header
 // comment for the layering this preserves everywhere else).
-import { searchBestAction, applyAiAction, SEARCH_CONFIG, type AiAction } from './aiSearch';
+import { searchBestAction, searchBestActivation, applyAiAction, SEARCH_CONFIG, type AiAction } from './aiSearch';
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -935,6 +935,37 @@ function chooseBestCandidateByLookahead(
   return { hex: best ?? candidates[0]!, score: bestScore };
 }
 
+// Shared with the Phase 8 activation-order pre-pass below — whether THIS
+// unit specifically has real tactical content to weigh right now: an
+// immediate attack available, an enemy actually reachable this turn via
+// move+attack, or a credible lethal threat against it (a real defensive
+// emergency, not just proximity). See actCombatUnit's own call site for
+// why this gate is narrow rather than "an enemy exists somewhere nearby".
+function hasTacticalContent(state: GameState, unit: Unit, aiPlayerId: number): boolean {
+  if (!select(state, unit)) return false;
+  const hasImmediateCombat = currentAttackTargets(state).length > 0 || currentStructureAttackHexes(state).length > 0;
+  const reachableEnemy = revealedEnemies(state, aiPlayerId).some(e =>
+    hexDistance(e.pos, unit.pos) <= getEffectiveSpeed(state, unit) + getEffectiveRange(state, unit));
+  const underLethalThreat = anyEnemyHasLethalShot(state, unit, aiPlayerId);
+  return hasImmediateCombat || reachableEnemy || underLethalThreat;
+}
+
+// Eligible for the multi-unit activation-order pass: has real tactical
+// content (see above) AND doesn't have one of actCombatUnit's own
+// higher-priority special actions available (founding/claiming/pillaging,
+// or being an Agrar Builder) — those must never be preempted by a generic
+// move/attack candidate, since generateCandidateActions doesn't know about
+// any of them.
+function isEligibleForActivationSearch(state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty): boolean {
+  const cfg = AI_DIFFICULTY[difficulty];
+  const player = state.players.find(p => p.id === aiPlayerId);
+  if (unit.type === 'founder' && player?.faction === 'agrar') return false;
+  if (canStartFounding(state, unit)) return false;
+  if (canClaimFertileSite(state, unit)) return false;
+  if (cfg.useResourceReservation && canPillageRoad(state, unit)) return false;
+  return hasTacticalContent(state, unit, aiPlayerId);
+}
+
 // Applies the winning AiAction from searchBestAction to the LIVE state via
 // the same canonical applyAiAction the search itself used on its clones —
 // then translates it into the existing AIAction combat-log shape and fires
@@ -990,6 +1021,7 @@ function applySearchAction(
 function actCombatUnit(
   state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty,
   actions: AIAction[], plan: AiPlan | null, threatMap: Map<string, number> | null,
+  turnSearchDeadline: number = Infinity,
 ): void {
   if (state.phase !== 'playing' || unit.hp <= 0) return;
   const cfg = AI_DIFFICULTY[difficulty];
@@ -1174,13 +1206,10 @@ function actCombatUnit(
   // path whenever none of that applies, search is disabled for this
   // difficulty, finds nothing, or (defensively) throws — never a stall or
   // a skipped activation.
-  const hasImmediateCombat = currentAttackTargets(state).length > 0 || currentStructureAttackHexes(state).length > 0;
-  const reachableEnemy = revealedEnemies(state, aiPlayerId).some(e =>
-    hexDistance(e.pos, unit.pos) <= getEffectiveSpeed(state, unit) + getEffectiveRange(state, unit));
-  const underLethalThreat = anyEnemyHasLethalShot(state, unit, aiPlayerId);
-  if (SEARCH_CONFIG[difficulty].enabled && (hasImmediateCombat || reachableEnemy || underLethalThreat)) {
+  const remainingTurnBudget = turnSearchDeadline - Date.now();
+  if (SEARCH_CONFIG[difficulty].enabled && remainingTurnBudget > 0 && hasTacticalContent(state, unit, aiPlayerId)) {
     try {
-      const outcome = searchBestAction(state, unit, aiPlayerId, difficulty);
+      const outcome = searchBestAction(state, unit, aiPlayerId, difficulty, [], remainingTurnBudget);
       if (outcome && applySearchAction(state, unit, aiPlayerId, difficulty, outcome.action, actions)) return;
     } catch { /* fall through to the heuristic path below */ }
   }
@@ -1762,10 +1791,50 @@ function runTurn(state: GameState, aiPlayerId: number, difficulty: AiDifficulty)
   spawnPass(state, aiPlayerId, difficulty, actions);
 
   // 3. Manoeuvre — combat units first (so support can then tuck in behind them).
+  //
+  // Hard/Expert — before falling into the fixed per-unit order below,
+  // let search itself pick WHICH eligible unit acts next, not just what it
+  // does (§ "who acts next", deliberately deferred until the single-unit
+  // search — Phase 4-7 — was already measured working). Only kicks in when
+  // there are genuinely 2+ units search would even consider (see
+  // isEligibleForActivationSearch — founders and anything with no real
+  // tactical content nearby are excluded, same gate as the per-unit path
+  // below), and capped to a handful of resolutions per turn: this is for
+  // untangling a live skirmish's turn order, not replacing the whole army's
+  // manoeuvring with one giant joint search. Whatever's left afterward
+  // (everything not eligible, or left over once the cap/budget/a null
+  // result is hit) goes through the exact same per-unit loop as before,
+  // completely unchanged — so the worst case is identical to not having
+  // this pass at all.
+  // A single call's own timeBudgetMs only bounds THAT call — a turn can
+  // make several (this pre-pass, plus one per eligible unit below), which
+  // could otherwise stack up to multiples of it on a busy board. This is a
+  // hard ceiling on ALL search time for the WHOLE turn combined, checked
+  // before every call (both here and inside actCombatUnit) — never a
+  // stall, worst case just falls back to the heuristic path early.
+  const turnSearchDeadline = Date.now() + SEARCH_CONFIG[difficulty].perTurnBudgetMs;
+  const MAX_ACTIVATION_SEARCHES_PER_TURN = 3;
+  if (SEARCH_CONFIG[difficulty].enabled) {
+    for (let i = 0; i < MAX_ACTIVATION_SEARCHES_PER_TURN && state.phase === 'playing'; i++) {
+      const remainingTurnBudget = turnSearchDeadline - Date.now();
+      if (remainingTurnBudget <= 0) break;
+      const pending = state.units.filter(u =>
+        u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type)
+        && isEligibleForActivationSearch(state, u, aiPlayerId, difficulty));
+      if (pending.length < 2) break; // no real "who goes first" ambiguity to resolve
+      try {
+        const outcome = searchBestActivation(state, pending, aiPlayerId, difficulty, remainingTurnBudget);
+        if (!outcome) break;
+        const unit = state.units.find(u => u.id === outcome.unitId);
+        if (!unit || !applySearchAction(state, unit, aiPlayerId, difficulty, outcome.action, actions)) break;
+      } catch { break; }
+    }
+  }
+
   const combatUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type));
   for (const unit of combatUnits) {
     if (state.phase !== 'playing') break;
-    actCombatUnit(state, unit, aiPlayerId, difficulty, actions, plan, threatMap);
+    actCombatUnit(state, unit, aiPlayerId, difficulty, actions, plan, threatMap, turnSearchDeadline);
   }
   const supportUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && isSupport(u.type));
   for (const unit of supportUnits) {

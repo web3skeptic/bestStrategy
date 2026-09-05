@@ -157,13 +157,19 @@ import type { Unit } from './types';
 // candidateLimit (3/6) provided (§35-36: Hard 8-12, Expert 12-20 BEFORE
 // pruning). Every number search/candidate-generation cares about lives
 // here, not scattered through ai.ts.
+// perTurnBudgetMs is the hard ceiling on TOTAL search time across an
+// entire AI turn (every activation-order call plus every per-unit call
+// combined) — timeBudgetMs alone only bounds a single call, and a turn can
+// call search many times (one per eligible unit, plus the activation-order
+// pre-pass), which could otherwise stack up to several times timeBudgetMs
+// on a busy board. See runTurn's turnSearchDeadline plumbing in ai.ts.
 export const SEARCH_CONFIG: Record<AiDifficulty, {
-  enabled: boolean; candidateWidth: number; maxDepthPlies: number; timeBudgetMs: number;
+  enabled: boolean; candidateWidth: number; maxDepthPlies: number; timeBudgetMs: number; perTurnBudgetMs: number;
 }> = {
-  easy:   { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0 },
-  normal: { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0 },
-  hard:   { enabled: true, candidateWidth: 10, maxDepthPlies: 4, timeBudgetMs: 400 },
-  expert: { enabled: true, candidateWidth: 16, maxDepthPlies: 6, timeBudgetMs: 1200 },
+  easy:   { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
+  normal: { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
+  hard:   { enabled: true, candidateWidth: 10, maxDepthPlies: 4, timeBudgetMs: 400, perTurnBudgetMs: 1300 },
+  expert: { enabled: true, candidateWidth: 16, maxDepthPlies: 6, timeBudgetMs: 1200, perTurnBudgetMs: 2600 },
 };
 
 function actionKey(a: AiAction): string {
@@ -362,7 +368,7 @@ function orderByTT(candidates: AiAction[], bestActionKey: string | null): AiActi
 const MAX_SEARCH_NODES = 20000;
 // Node count is cheap to check every call; Date.now() has real overhead, so
 // only sample the clock every so many nodes.
-const CLOCK_CHECK_INTERVAL = 32;
+const CLOCK_CHECK_INTERVAL = 16;
 
 function timeUp(ctx: SearchCtx): boolean {
   if (ctx.nodes >= ctx.nodeBudget) return true;
@@ -565,11 +571,19 @@ function minimax(
 // Returns null if search is disabled for this difficulty, or if the unit
 // has no real candidates to choose from at all — callers must fall back to
 // the existing heuristic path in that case.
+//
+// `maxTimeBudgetMs`, if given, caps this call BELOW SEARCH_CONFIG's own
+// per-call timeBudgetMs — used by runTurn to enforce a hard PER-TURN
+// search budget across every call it makes, not just each one individually
+// (see SEARCH_CONFIG's own comment on perTurnBudgetMs).
 export function searchBestAction(
   state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty, otherPendingUnits: Unit[] = [],
+  maxTimeBudgetMs?: number,
 ): SearchOutcome | null {
   const searchCfg = SEARCH_CONFIG[difficulty];
   if (!searchCfg.enabled) return null;
+  const timeBudgetMs = maxTimeBudgetMs === undefined ? searchCfg.timeBudgetMs : Math.min(searchCfg.timeBudgetMs, maxTimeBudgetMs);
+  if (timeBudgetMs <= 0) return null;
 
   const rootCandidates = generateCandidateActions(state, unit, aiPlayerId, difficulty);
   if (rootCandidates.length === 0) return null;
@@ -606,7 +620,7 @@ export function searchBestAction(
   for (let depth = 2; depth <= searchCfg.maxDepthPlies; depth += 2) {
     const ctx: SearchCtx = {
       aiPlayerId, difficulty,
-      deadline: startTime + searchCfg.timeBudgetMs,
+      deadline: startTime + timeBudgetMs,
       nodeBudget: MAX_SEARCH_NODES,
       nodes: 0,
       tt,
@@ -635,7 +649,134 @@ export function searchBestAction(
       best.timedOut = true;
       break;
     }
-    if (Date.now() >= startTime + searchCfg.timeBudgetMs) break;
+    if (Date.now() >= startTime + timeBudgetMs) break;
+  }
+  return best;
+}
+
+// ── AI 2.0 Phase 8 — activation-order search ("who acts next") ─────────────
+//
+// searchBestAction always answers "what should THIS unit do" for whichever
+// unit the caller already picked — the turn order itself was still fixed.
+// This instead compares candidate actions from SEVERAL pending units at
+// once at the root, so the search can discover that unit B striking first
+// sets up a better follow-up for unit A than acting in the order they
+// happened to be listed in. Built entirely on the same minimax/quiescence/
+// TT machinery above — the only new part is the root loop iterating
+// (unit, action) pairs instead of one unit's actions.
+export interface ActivationOutcome {
+  unitId: string;
+  action: AiAction;
+  score: number;
+  depthReached: number;
+  nodesVisited: number;
+  timedOut: boolean;
+}
+
+interface RootCandidate { unit: Unit; action: AiAction }
+
+function orderRootsByKey(candidates: RootCandidate[], key: string | null): RootCandidate[] {
+  if (!key) return candidates;
+  const idx = candidates.findIndex(rc => actionKey(rc.action) === key);
+  if (idx <= 0) return candidates;
+  const reordered = candidates.slice();
+  const [best] = reordered.splice(idx, 1);
+  reordered.unshift(best!);
+  return reordered;
+}
+
+// Chooses both WHICH of `pendingUnits` should act and WHAT it should do,
+// by combining every eligible unit's own candidates into one root pool
+// (still capped to the same per-difficulty width as searchBestAction, so
+// having more eligible units doesn't multiply the search's total work —
+// it's the same budget spent comparing across units instead of within
+// one). Returns null under the same conditions as searchBestAction
+// (disabled difficulty, no candidates) — callers fall back to resolving
+// units one at a time via searchBestAction/the heuristic path.
+export function searchBestActivation(
+  state: GameState, pendingUnits: Unit[], aiPlayerId: number, difficulty: AiDifficulty,
+  maxTimeBudgetMs?: number,
+): ActivationOutcome | null {
+  const searchCfg = SEARCH_CONFIG[difficulty];
+  if (!searchCfg.enabled) return null;
+  const timeBudgetMs = maxTimeBudgetMs === undefined ? searchCfg.timeBudgetMs : Math.min(searchCfg.timeBudgetMs, maxTimeBudgetMs);
+  if (timeBudgetMs <= 0) return null;
+  const eligible = pendingUnits.filter(u => u.hp > 0 && !u.hasAttacked);
+  if (eligible.length === 0) return null;
+
+  const rootCandidates: RootCandidate[] = [];
+  for (const unit of eligible) {
+    for (const action of generateCandidateActions(state, unit, aiPlayerId, difficulty)) {
+      rootCandidates.push({ unit, action });
+    }
+  }
+  if (rootCandidates.length === 0) return null;
+  if (rootCandidates.length === 1) {
+    const only = rootCandidates[0]!;
+    return { unitId: only.unit.id, action: only.action, score: 0, depthReached: 0, nodesVisited: 0, timedOut: false };
+  }
+
+  const ordered = rootCandidates
+    .map(rc => {
+      const { state: next, applied } = simulateAction(state, rc.action);
+      return { rc, staticScore: applied ? evaluateState(next, aiPlayerId) : -Infinity };
+    })
+    .filter(r => r.staticScore > -Infinity)
+    .sort((a, b) => b.staticScore - a.staticScore)
+    .map(r => r.rc)
+    .slice(0, Math.max(1, searchCfg.candidateWidth));
+  if (ordered.length === 0) return null;
+
+  const startTime = Date.now();
+  let best: ActivationOutcome = {
+    unitId: ordered[0]!.unit.id, action: ordered[0]!.action,
+    score: -Infinity, depthReached: 0, nodesVisited: 0, timedOut: false,
+  };
+  const tt = new Map<string, TTEntry>();
+  let rootOrder = ordered;
+
+  for (let depth = 2; depth <= searchCfg.maxDepthPlies; depth += 2) {
+    const ctx: SearchCtx = {
+      aiPlayerId, difficulty,
+      deadline: startTime + timeBudgetMs,
+      nodeBudget: MAX_SEARCH_NODES,
+      nodes: 0,
+      tt,
+    };
+    let depthBest: RootCandidate = rootOrder[0]!;
+    let depthBestScore = -Infinity;
+    let alpha = -Infinity;
+    const beta = Infinity;
+    let completed = true;
+    for (const rc of rootOrder) {
+      if (timeUp(ctx)) { completed = false; break; }
+      const { state: next, applied } = simulateAction(state, rc.action);
+      if (!applied) continue;
+      // Whoever's left to consider deeper in this line: everyone else
+      // eligible, PLUS this same unit again if its action didn't spend the
+      // whole activation (e.g. moved but hasn't attacked yet) — resolved
+      // against the SIMULATED unit so hasMoved/hasAttacked reflect what
+      // actually happened, not the pre-action state.
+      const simUnit = next.units.find(u => u.id === rc.unit.id);
+      const stillPending = simUnit && simUnit.hp > 0 && !simUnit.hasAttacked;
+      const rest = eligible.filter(u => u.id !== rc.unit.id);
+      const remaining = stillPending ? [simUnit!, ...rest] : rest;
+      const score = minimax(next, ctx, depth - 1, alpha, beta, 'opponent', rc.unit.pos, remaining);
+      if (score > depthBestScore) { depthBestScore = score; depthBest = rc; }
+      if (depthBestScore > alpha) alpha = depthBestScore;
+    }
+    if (timeUp(ctx)) completed = false;
+    if (completed) {
+      best = {
+        unitId: depthBest.unit.id, action: depthBest.action,
+        score: depthBestScore, depthReached: depth, nodesVisited: ctx.nodes, timedOut: false,
+      };
+      rootOrder = orderRootsByKey(rootOrder, actionKey(depthBest.action));
+    } else {
+      best.timedOut = true;
+      break;
+    }
+    if (Date.now() >= startTime + timeBudgetMs) break;
   }
   return best;
 }
