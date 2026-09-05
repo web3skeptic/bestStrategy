@@ -36,7 +36,7 @@ export { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE };
 // the resulting import cycle is safe in practice (a common, well-supported
 // pattern for two tightly-coupled modules — see aiSearch.ts's own header
 // comment for the layering this preserves everywhere else).
-import { searchBestAction, searchBestActivation, applyAiAction, SEARCH_CONFIG, type AiAction } from './aiSearch';
+import { searchBestAction, searchBestActivation, applyAiAction, generateCandidateActions, SEARCH_CONFIG, type AiAction } from './aiSearch';
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -229,6 +229,23 @@ export function scoreMoveHex(
   // explicit lethal-exposure penalty), so this only needs to be a real
   // driver of progress, not a suicidal one.
   let s = objective ? -hexDistance(dest, objective) * 4 : 0;
+  // Extra penalty for ACTIVELY GIVING UP ground toward the objective, on
+  // top of the plain distance term above — found by tracing a real,
+  // continuing oscillation directly: even at 4x weighting, a unit would
+  // advance a hex, then retreat the very next turn as the threat map's
+  // gradient shifted slightly (the enemy also moved), net progress zero
+  // for dozens of turns. The x4 term alone is symmetric — it values
+  // advancing and retreating a hex equally in magnitude — so a marginal,
+  // transient threat swing could still tip a committed advance into a
+  // retreat every single turn. A genuine emergency retreat already has its
+  // own explicit path (the reserve/garrison logic, and search's dedicated
+  // "toward home" candidate) — this only needs to stop ordinary threat-map
+  // noise from unwinding a committed advance for no real reason.
+  if (objective) {
+    const currentDist = hexDistance(unit.pos, objective);
+    const destDist = hexDistance(dest, objective);
+    if (destDist > currentDist) s -= (destDist - currentDist) * 6;
+  }
   const rng = unit.stats.range + (state.hills.has(hexKey(dest)) && unit.stats.range > 1 ? 1 : 0);
   for (const e of enemies) {
     const d = hexDistance(dest, e.pos);
@@ -941,13 +958,25 @@ function chooseBestCandidateByLookahead(
 // move+attack, or a credible lethal threat against it (a real defensive
 // emergency, not just proximity). See actCombatUnit's own call site for
 // why this gate is narrow rather than "an enemy exists somewhere nearby".
-function hasTacticalContent(state: GameState, unit: Unit, aiPlayerId: number): boolean {
-  if (!select(state, unit)) return false;
-  const hasImmediateCombat = currentAttackTargets(state).length > 0 || currentStructureAttackHexes(state).length > 0;
-  const reachableEnemy = revealedEnemies(state, aiPlayerId).some(e =>
-    hexDistance(e.pos, unit.pos) <= getEffectiveSpeed(state, unit) + getEffectiveRange(state, unit));
-  const underLethalThreat = anyEnemyHasLethalShot(state, unit, aiPlayerId);
-  return hasImmediateCombat || reachableEnemy || underLethalThreat;
+function hasTacticalContent(state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty): boolean {
+  if (anyEnemyHasLethalShot(state, unit, aiPlayerId)) return true;
+  // A real, generated attack/moveAttack/attackStructure candidate — not a
+  // rough hexDistance <= speed+range estimate. That estimate massively
+  // over-fired in real play: it has no idea whether terrain/other units
+  // actually block the path, or whether the "reachable" enemy is one of
+  // several spread out across a wide radius a fast unit could theoretically
+  // touch. Since evaluateState has no notion of "closer to my objective",
+  // every one of those over-eager triggers handed a plain approach march to
+  // search instead of the heuristic — and search has no reason to keep
+  // walking the SAME direction two turns running the way pickObjective's
+  // persistent target-tracking does, so it visibly oscillated between
+  // similarly-scored hexes turn after turn instead of ever closing distance
+  // (confirmed via real AI-vs-AI telemetry: units bouncing between the same
+  // few tiles for 10+ consecutive turns). Checking the actual generated
+  // candidates instead means this only ever fires when a real hit is
+  // genuinely achievable THIS activation.
+  return generateCandidateActions(state, unit, aiPlayerId, difficulty)
+    .some(a => a.kind === 'attack' || a.kind === 'moveAttack' || a.kind === 'attackStructure');
 }
 
 // Eligible for the multi-unit activation-order pass: has real tactical
@@ -963,7 +992,7 @@ function isEligibleForActivationSearch(state: GameState, unit: Unit, aiPlayerId:
   if (canStartFounding(state, unit)) return false;
   if (canClaimFertileSite(state, unit)) return false;
   if (cfg.useResourceReservation && canPillageRoad(state, unit)) return false;
-  return hasTacticalContent(state, unit, aiPlayerId);
+  return hasTacticalContent(state, unit, aiPlayerId, difficulty);
 }
 
 // Applies the winning AiAction from searchBestAction to the LIVE state via
@@ -1155,6 +1184,7 @@ function actCombatUnit(
       // move once a Farm/Road is placed), it simply never came back, so
       // no LATER Farm from a different position was ever attempted again
       // even with aura piling up unspent for dozens of rounds.
+      const farmsSoFar = state.farms.filter(f => f.ownerId === aiPlayerId).length;
       if (capitalPos && !unit.hasMoved && select(state, unit) && state.moveHexes.length > 0) {
         // Head toward the nearest hex ANYWHERE in current territory that
         // could actually hold a Farm (not just neighbours of the Builder's
@@ -1167,7 +1197,15 @@ function actCombatUnit(
         // dead end instead of ever reaching a still-open spot elsewhere.
         // Only once there's truly nowhere left for a Farm does this fall
         // back to whichever anchor still has open Road room.
-        const openFarmSpots = getAllValidFarmSpots(state, aiPlayerId);
+        //
+        // getAllValidFarmSpots only checks terrain/spacing, never the
+        // MAX_ACTIVE_FARMS cap — once the cap is reached it kept finding
+        // "open" spots forever that canStartFarm would always refuse, so
+        // the Builder wandered toward one indefinitely and never did
+        // anything useful again for the rest of the game. Skip straight to
+        // the Road-room fallback once there's genuinely no more Farm to
+        // build, rather than chasing a target that can never be built on.
+        const openFarmSpots = farmsSoFar < MAX_ACTIVE_FARMS ? getAllValidFarmSpots(state, aiPlayerId) : [];
         let target: HexCoord | null = bestBy(openFarmSpots, h => -hexDistance(unit.pos, h));
         if (!target) {
           const anchors = [capitalPos, ...state.farms.filter(f => f.ownerId === aiPlayerId).map(f => f.pos)];
@@ -1207,7 +1245,7 @@ function actCombatUnit(
   // difficulty, finds nothing, or (defensively) throws — never a stall or
   // a skipped activation.
   const remainingTurnBudget = turnSearchDeadline - Date.now();
-  if (SEARCH_CONFIG[difficulty].enabled && remainingTurnBudget > 0 && hasTacticalContent(state, unit, aiPlayerId)) {
+  if (SEARCH_CONFIG[difficulty].enabled && remainingTurnBudget > 0 && hasTacticalContent(state, unit, aiPlayerId, difficulty)) {
     try {
       const outcome = searchBestAction(state, unit, aiPlayerId, difficulty, [], remainingTurnBudget);
       if (outcome && applySearchAction(state, unit, aiPlayerId, difficulty, outcome.action, actions)) return;
