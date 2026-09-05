@@ -7,7 +7,8 @@
 //
 // Run with: npx tsx scripts/verify-ai-difficulty.ts
 import { createGameState, chooseFaction, endTurn, getCurrentPlayer, getPlayerCapital, createUnit } from '../src/game';
-import { runAiTurn, evaluateState, anyEnemyHasLethalShot, AI_DIFFICULTY, AiDifficulty } from '../src/ai';
+import { runAiTurn, evaluateState, evaluateStateDetailed, anyEnemyHasLethalShot, AI_DIFFICULTY, AiDifficulty } from '../src/ai';
+import { serialize, deserialize } from '../src/serializer';
 import { hexDistance } from '../src/hex';
 import { MAX_ACTIVE_FARMS } from '../src/factions';
 import type { GameState } from '../src/types';
@@ -151,7 +152,7 @@ console.log('\n=== evaluateState: monotonic in material/aura/Capital HP ===');
 
   const capital = getPlayerCapital(state, 0)!;
   const healthyScore = evaluateState(state, 0);
-  const damagedState: GameState = JSON.parse(JSON.stringify(state));
+  const damagedState: GameState = deserialize(JSON.parse(JSON.stringify(serialize(state))));
   damagedState.capitals.find(c => c.playerId === 0)!.hp = Math.round(capital.maxHp * 0.2);
   const damagedScore = evaluateState(damagedState, 0);
   check('a Capital critically low on HP scores much worse than a healthy one',

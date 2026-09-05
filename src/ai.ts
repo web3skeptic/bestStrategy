@@ -27,6 +27,8 @@ import {
   getUnitCost,
   getPlayerIncome,
 } from './game';
+import { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE } from './aiEval';
+export { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE };
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -1516,32 +1518,12 @@ function chooseStrategicPlan(state: GameState, aiPlayerId: number): AiPlan {
 }
 
 // ── Whole-state evaluator ────────────────────────────────────────────────────
-// A single number, positive = good for `forPlayerId`. Used by Expert's
-// shallow lookahead (chooseBestCandidate) to compare candidate resulting
-// positions. Deliberately NOT the full §23 spec (no tech-progress/road-
-// connectivity/formation terms yet) — material, income, Capital safety
-// (nonlinear — see §25) and structure count cover the load-bearing cases.
-export function evaluateState(state: GameState, forPlayerId: number): number {
-  let score = 0;
-  for (const player of state.players) {
-    const sign = player.id === forPlayerId ? 1 : -1;
-    for (const u of state.units) {
-      if (u.hp <= 0 || u.playerId !== player.id) continue;
-      score += sign * getUnitCost(u.type, player.faction) * (u.hp / u.stats.maxHp) * 3;
-    }
-    score += sign * player.aura * 0.5;
-    const capital = getPlayerCapital(state, player.id);
-    if (capital) {
-      const frac = capital.hp / capital.maxHp;
-      let capScore = frac * 100;
-      if (frac < 0.25) capScore -= 150;
-      else if (frac < 0.5) capScore -= 60;
-      score += sign * capScore;
-    }
-    score += sign * getOwnedStructures(state, player.id).length * 15;
-  }
-  return score;
-}
+// AI 2.0 — moved to aiEval.ts (a single number, positive = good for
+// forPlayerId, negative for the opponent(s); see that file's own header for
+// why it's a separate, ai.ts-independent module). Imported (not just
+// re-exported) so every existing LOCAL caller in this file keeps working
+// unchanged, and re-exported so every test importing `evaluateState`/
+// `evaluateStateDetailed` from '../src/ai' also keeps working unchanged.
 
 // Deep-clones a GameState for simulation — a plain object-spread (as
 // serializer.ts's own serialize/deserialize do for the live save/load path)
