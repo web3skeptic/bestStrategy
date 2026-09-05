@@ -1061,6 +1061,21 @@ function fertileSiteBlockReason(state: GameState, unit: Unit): string | null {
   return null;
 }
 
+// WHY the "Upgrade to Temple II" button is disabled — mirroring farmBlock
+// Reason/roadBlockReason/foundBlockReason: it used to just disable with the
+// same static label regardless of cause (not enough Energy, an enemy's
+// Temple you're merely viewing, already mid-upgrade elsewhere), giving no
+// clue why a seemingly-affordable-looking upgrade wasn't starting.
+function templeUpgradeBlockReason(state: GameState, siteId: string): string | null {
+  const player = getCurrentPlayer(state);
+  const site = state.strategicSites.find(s => s.id === siteId);
+  if (!site) return 'site not found';
+  if (site.ownerId !== player.id) return 'not your Temple';
+  if (site.upgrade) return 'already upgrading';
+  if (player.aura < TEMPLE_UPGRADE_COST) return `not enough Energy (need ⚡${TEMPLE_UPGRADE_COST})`;
+  return null;
+}
+
 // ── Render & UI ──
 
 function render(): void {
@@ -1476,10 +1491,14 @@ function updateUI(): void {
       // shown for a Temple I site (§21-22 — Temple II shows no upgrade,
       // an in-progress upgrade shows no button either, see economyNote).
       if (myTurn && site && site.state === 'temple' && site.templeLevel === 1) {
+        const reason = templeUpgradeBlockReason(state, siteId);
         economyBtn.style.display = 'block';
         economyBtn.classList.remove('active');
-        economyBtn.disabled = !canStartTempleUpgrade(state, siteId);
-        economyBtn.textContent = `⛩ Upgrade to Temple II (${TEMPLE_UPGRADE_COST}⚡) — 1 round`;
+        economyBtn.disabled = !!reason;
+        economyBtn.title = reason ?? '';
+        economyBtn.textContent = reason
+          ? `⛩ Upgrade to Temple II — ${reason}`
+          : `⛩ Upgrade to Temple II (${TEMPLE_UPGRADE_COST}⚡) — 1 round`;
       } else {
         economyBtn.style.display = 'none';
         if (buildingFarm) clearBuildFarm();
