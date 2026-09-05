@@ -270,6 +270,80 @@ export function generateCandidateActions(state: GameState, unit: Unit, aiPlayerI
   return dedupeActions(candidates);
 }
 
+// ── AI 2.0 Phase 9 — search telemetry/profiling ────────────────────────────
+//
+// Always-on, always-cheap in-memory aggregates per difficulty (calls,
+// nodes, timing, timeout rate, depth reached) — recorded once per REAL
+// search call (the trivial "0/1 candidates, no search needed" early-outs
+// in searchBestAction/searchBestActivation don't count, they're not a
+// search sample). Plus an optional observer hook, same convention as
+// ai.ts's own `observe`/`setAIObserver`, for anyone who wants per-call
+// detail rather than just the rolling summary — both default to a no-op,
+// so normal play pays only the cost of a few counter increments.
+export interface SearchTelemetryEvent {
+  kind: 'searchBestAction' | 'searchBestActivation';
+  difficulty: AiDifficulty;
+  aiPlayerId: number;
+  depthReached: number;
+  nodesVisited: number;
+  timedOut: boolean;
+  elapsedMs: number;
+}
+let searchObserver: ((event: SearchTelemetryEvent) => void) | null = null;
+export function setSearchObserver(fn: ((event: SearchTelemetryEvent) => void) | null): void { searchObserver = fn; }
+
+interface DifficultyTelemetry {
+  calls: number;
+  totalNodes: number;
+  totalElapsedMs: number;
+  maxElapsedMs: number;
+  timeouts: number;
+  depthReachedSum: number;
+}
+function emptyTelemetry(): DifficultyTelemetry {
+  return { calls: 0, totalNodes: 0, totalElapsedMs: 0, maxElapsedMs: 0, timeouts: 0, depthReachedSum: 0 };
+}
+const telemetry: Record<AiDifficulty, DifficultyTelemetry> = {
+  easy: emptyTelemetry(), normal: emptyTelemetry(), hard: emptyTelemetry(), expert: emptyTelemetry(),
+};
+
+export interface SearchTelemetrySummary {
+  calls: number;
+  avgNodesVisited: number;
+  avgElapsedMs: number;
+  maxElapsedMs: number;
+  timeoutRate: number;
+  avgDepthReached: number;
+}
+export function getSearchTelemetry(difficulty: AiDifficulty): SearchTelemetrySummary {
+  const t = telemetry[difficulty];
+  return {
+    calls: t.calls,
+    avgNodesVisited: t.calls ? t.totalNodes / t.calls : 0,
+    avgElapsedMs: t.calls ? t.totalElapsedMs / t.calls : 0,
+    maxElapsedMs: t.maxElapsedMs,
+    timeoutRate: t.calls ? t.timeouts / t.calls : 0,
+    avgDepthReached: t.calls ? t.depthReachedSum / t.calls : 0,
+  };
+}
+export function resetSearchTelemetry(): void {
+  for (const key of Object.keys(telemetry) as AiDifficulty[]) telemetry[key] = emptyTelemetry();
+}
+
+function recordSearchTelemetry(
+  kind: SearchTelemetryEvent['kind'], difficulty: AiDifficulty, aiPlayerId: number,
+  depthReached: number, nodesVisited: number, timedOut: boolean, elapsedMs: number,
+): void {
+  const t = telemetry[difficulty];
+  t.calls++;
+  t.totalNodes += nodesVisited;
+  t.totalElapsedMs += elapsedMs;
+  if (elapsedMs > t.maxElapsedMs) t.maxElapsedMs = elapsedMs;
+  if (timedOut) t.timeouts++;
+  t.depthReachedSum += depthReached;
+  if (searchObserver) searchObserver({ kind, difficulty, aiPlayerId, depthReached, nodesVisited, timedOut, elapsedMs });
+}
+
 // ── AI 2.0 Phase 4 — negamax-style minimax with alpha-beta, iterative
 // deepening, and a hard wall-clock/node budget ─────────────────────────────
 //
@@ -366,9 +440,15 @@ function orderByTT(candidates: AiAction[], bestActionKey: string | null): AiActi
 // Independent of wall-clock — a slow machine (or a GC pause) could blow the
 // time budget on far fewer nodes than expected; this is the true hard stop.
 const MAX_SEARCH_NODES = 20000;
-// Node count is cheap to check every call; Date.now() has real overhead, so
-// only sample the clock every so many nodes.
-const CLOCK_CHECK_INTERVAL = 16;
+// Checked every single node: the real per-node cost here is a full
+// cloneStateForSim (a JSON round-trip of the whole GameState), which gets
+// noticeably more expensive as a real game accumulates units/farms/roads/
+// tech over dozens of rounds — sampling the clock only every N nodes (as
+// this used to) meant a late-game turn could overshoot its own per-call
+// time budget by several hundred ms before the next check even landed.
+// Date.now() itself is nanoseconds; the clone is the expensive part, so
+// checking every node costs nothing extra worth trading away.
+const CLOCK_CHECK_INTERVAL = 4;
 
 function timeUp(ctx: SearchCtx): boolean {
   if (ctx.nodes >= ctx.nodeBudget) return true;
@@ -651,6 +731,7 @@ export function searchBestAction(
     }
     if (Date.now() >= startTime + timeBudgetMs) break;
   }
+  recordSearchTelemetry('searchBestAction', difficulty, aiPlayerId, best.depthReached, best.nodesVisited, best.timedOut, Date.now() - startTime);
   return best;
 }
 
@@ -778,5 +859,6 @@ export function searchBestActivation(
     }
     if (Date.now() >= startTime + timeBudgetMs) break;
   }
+  recordSearchTelemetry('searchBestActivation', difficulty, aiPlayerId, best.depthReached, best.nodesVisited, best.timedOut, Date.now() - startTime);
   return best;
 }
