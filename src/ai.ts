@@ -207,7 +207,18 @@ function scoreMoveHex(
   enemies: Unit[], threatMap: Map<string, number> | null,
 ): number {
   const dest = effectiveDest(state, hex);
-  let s = objective ? -hexDistance(dest, objective) : 0;
+  // Weighted well above the tactical/threat terms below (which can easily
+  // total 5-15+ points from a single nearby enemy) — a plain 1-point-per-hex
+  // signal was so weak that ANY threat-map presence near a committed
+  // objective completely swamped "make progress toward it", causing units
+  // to advance a hex, feel a threat gradient, retreat, then repeat forever
+  // without ever closing the distance (observed directly: a unit stuck
+  // oscillating between the same 3-4 hexes for 300+ rounds while its
+  // objective sat fixed and reachable the entire time). Genuinely reckless
+  // moves are already vetoed hard elsewhere (chooseBestCandidateByLookahead's
+  // explicit lethal-exposure penalty), so this only needs to be a real
+  // driver of progress, not a suicidal one.
+  let s = objective ? -hexDistance(dest, objective) * 4 : 0;
   const rng = unit.stats.range + (state.hills.has(hexKey(dest)) && unit.stats.range > 1 ? 1 : 0);
   for (const e of enemies) {
     const d = hexDistance(dest, e.pos);
@@ -543,18 +554,33 @@ function chooseReservePosition(state: GameState, aiPlayerId: number, capitalPos:
 // with a hand-tuned distance margin — the fixed order still exists as the
 // fallback for Normal/Easy (cfg.searchDepth === 0), which don't get this
 // heavier evaluation.
+// Reward an objective the army is ALREADY converging on. Found by tracing a
+// genuine stalemate directly: a lone attacker kept probing a heavily
+// defended Capital approach, getting parried by a single defender forever,
+// while its allies were off independently pursuing whatever THEIR OWN
+// per-unit evaluation happened to prefer — the army never once converged
+// on the same target long enough to actually break through. A 1-2 ply
+// evaluateState() score can't see this (it has no notion of "reinforcements
+// are 3 turns away"), so it's added on top as an explicit signal instead.
+function massBonus(state: GameState, unit: Unit, aiPlayerId: number, objective: HexCoord): number {
+  const alliesNear = state.units.filter(u =>
+    u.hp > 0 && u.playerId === aiPlayerId && u.id !== unit.id && !isSupport(u.type) && u.type !== 'founder'
+    && hexDistance(u.pos, objective) <= 6).length;
+  return alliesNear * 4;
+}
+
 function scoreObjectiveCandidate(
   state: GameState, unit: Unit, aiPlayerId: number, objective: HexCoord, cfg: AiDifficultyConfig,
 ): number {
   if (!select(state, unit)) return -Infinity;
   const enemies = revealedEnemies(state, aiPlayerId);
   const moveHexes = [...state.moveHexes];
-  if (moveHexes.length === 0) return evaluateState(state, aiPlayerId);
+  if (moveHexes.length === 0) return evaluateState(state, aiPlayerId) + massBonus(state, unit, aiPlayerId, objective);
   const ranked = moveHexes
     .sort((a, b) => scoreMoveHex(state, unit, aiPlayerId, b, objective, enemies, null)
       - scoreMoveHex(state, unit, aiPlayerId, a, objective, enemies, null));
   const best = chooseBestCandidateByLookahead(state, unit, aiPlayerId, ranked.slice(0, cfg.candidateLimit), cfg.searchDepth);
-  return best?.score ?? evaluateState(state, aiPlayerId);
+  return (best?.score ?? evaluateState(state, aiPlayerId)) + massBonus(state, unit, aiPlayerId, objective);
 }
 
 function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null, cfg: AiDifficultyConfig = AI_DIFFICULTY.easy): HexCoord | null {
