@@ -9,7 +9,7 @@
 import {
   createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, buildRoadPath, getRoadAt, getValidRoadHexes,
   isLegalRoadTile, getEffectiveSpeed, selectUnit, moveUnit, getPlayerCapital, getStructureAt,
-  createUnit, canStartFarm, startFarm, canPillageRoad, pillageRoad,
+  createUnit, canStartFarm, startFarm, getValidFarmHexes, canPillageRoad, pillageRoad,
 } from '../src/game';
 import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, ROAD_SEGMENTS_PER_ACTIVATION, AGRAR_FARM_COST } from '../src/factions';
 import { hexNeighbors, hexEqual, hexKey, hexDistance } from '../src/hex';
@@ -216,6 +216,29 @@ console.log('\n=== Movement bonus applies to Agrar units ONLY (§26) ===');
   const templeBaseSpeed = templeWarrior.stats.speed;
   templeWarrior.pos = { ...roadPos };
   check('a Temple unit standing on the SAME road gets NO bonus — treats it as normal terrain (§26)', getEffectiveSpeed(state, templeWarrior) === templeBaseSpeed);
+}
+
+// ── An active Farm counts as Road property too ──
+console.log('\n=== An active Farm grants the same movement bonus as a Road (Agrar only) ===');
+{
+  const state = setup();
+  const builder = clearRoadArea(state, 0);
+  state.currentPlayerIndex = 0; // who moves first is randomized per game — force it for a deterministic test
+  const farmHex = getValidFarmHexes(state, builder).find(h => canStartFarm(state, builder, h))!;
+  startFarm(state, builder.id, farmHex);
+  endTurn(state); endTurn(state); // one full round — resolves founding into an active Farm
+
+  const agrarWarrior = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const baseSpeed = agrarWarrior.stats.speed;
+  agrarWarrior.pos = { ...farmHex };
+  check('an Agrar unit standing on an active Farm gets +ROAD_MOVEMENT_BONUS',
+    getEffectiveSpeed(state, agrarWarrior) === baseSpeed + ROAD_MOVEMENT_BONUS);
+
+  const templeWarrior = state.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  const templeBaseSpeed = templeWarrior.stats.speed;
+  templeWarrior.pos = { ...farmHex };
+  check('a Temple unit standing on the SAME Farm gets NO bonus (Agrar-only infrastructure, §26)',
+    getEffectiveSpeed(state, templeWarrior) === templeBaseSpeed);
 }
 
 // ── Pillage (§25; v14 — a real action, not automatic-on-move) ──

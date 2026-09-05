@@ -725,11 +725,16 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
 // §25 (phase 11 correction) — a road grants its movement bonus to Agrar
 // units ONLY. Temple units treat an Agrar road as normal terrain — Agrar's
 // physical infrastructure is a faction-locked mechanic, not a map-wide buff.
+// An active Farm counts as Road property too — it's already a permanent
+// Agrar structure sitting on cultivated, cleared land, so a Farm network
+// doubles as the backbone of the fast-travel network, not just a separate
+// thing a Road happens to also connect to.
 export function getEffectiveSpeed(state: GameState, unit: Unit): number {
   const player = state.players.find(p => p.id === unit.playerId);
   if (player?.faction !== 'agrar') return unit.stats.speed;
   const onRoad = state.roads.some(r => hexEqual(r.pos, unit.pos));
-  return unit.stats.speed + (onRoad ? ROAD_MOVEMENT_BONUS : 0);
+  const onFarm = state.farms.some(f => f.ownerId === unit.playerId && f.state === 'farm' && hexEqual(f.pos, unit.pos));
+  return unit.stats.speed + (onRoad || onFarm ? ROAD_MOVEMENT_BONUS : 0);
 }
 
 // ── Zone of Control (§26) ──
