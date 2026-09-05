@@ -309,23 +309,33 @@ console.log('\n=== Mobile reserve: does NOT overreact to a distant, slow, easily
     distAfter >= distBefore, `before=${distBefore} after=${distAfter}`);
 }
 
+// Whether a multi-segment Road build ever happens at all now depends on
+// map layout too (Farms take priority, and a capital with open farmland in
+// every direction might never need more than 1 Road segment at a time to
+// reach the next spot) — a small batch avoids flakiness from any single
+// unlucky-terrain trial.
 console.log('\n=== Road arteries: Builder lays a multi-segment connected path, not one arbitrary hex ===');
 {
-  const state = setup('agrar', 'agrar');
-  for (const p of state.players) p.aura = 200;
-  let rounds = 0;
-  let sawMultiSegment = false;
-  while (rounds < 30 && state.phase === 'playing' && !sawMultiSegment) {
-    rounds++;
-    const seat = getCurrentPlayer(state).id;
-    const before = state.roads.filter(r => r.ownerId === 0).length;
-    runAiTurn(state, 'hard', seat);
-    const after = state.roads.filter(r => r.ownerId === 0).length;
-    if (after - before > 1) sawMultiSegment = true;
-    endTurn(state);
+  const TRIALS = 5;
+  let succeeded = 0;
+  for (let t = 0; t < TRIALS; t++) {
+    const state = setup('agrar', 'agrar');
+    for (const p of state.players) p.aura = 200;
+    let rounds = 0;
+    let sawMultiSegment = false;
+    while (rounds < 40 && state.phase === 'playing' && !sawMultiSegment) {
+      rounds++;
+      const seat = getCurrentPlayer(state).id;
+      const before = state.roads.filter(r => r.ownerId === 0).length;
+      runAiTurn(state, 'hard', seat);
+      const after = state.roads.filter(r => r.ownerId === 0).length;
+      if (after - before > 1) sawMultiSegment = true;
+      endTurn(state);
+    }
+    if (sawMultiSegment) succeeded++;
   }
-  check('at least one Builder activation laid more than 1 Road segment at once',
-    sawMultiSegment, `rounds checked=${rounds}`);
+  check(`at least one Builder activation laid more than 1 Road segment at once in most trials (${succeeded}/${TRIALS})`,
+    succeeded >= TRIALS * 0.6);
 }
 
 // Regression: DEFEND used to make the Builder prioritize Road over Farm —

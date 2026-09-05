@@ -1562,6 +1562,42 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
 // to another Farm (`distance >= FARM_MIN_SPACING` — exactly 2 apart is
 // legal, touching is not). Adjacent to the Capital itself is fine (tight
 // bunkering).
+// Every rule a Farm hex must satisfy, independent of WHERE it needs to
+// connect from — split out from getValidFarmHexes so the AI can scan the
+// whole territory for ANY still-buildable spot (not just neighbours of the
+// Builder's current position) when deciding where to head next.
+function isLegalFarmTile(state: GameState, hex: HexCoord, territory: Set<string>, existingFarms: Farm[]): boolean {
+  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return false; // off-map
+  const key = hexKey(hex);
+  if (state.hills.has(key) || state.walls.has(key)) return false;
+  if (getStrategicSiteAt(state, hex)) return false;
+  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) return false;
+  if (state.capitals.some(c => hexEqual(c.pos, hex))) return false;
+  if (state.farms.some(f => hexEqual(f.pos, hex))) return false;
+  if (getUnitAt(state, hex)) return false;
+  if (!territory.has(key)) return false; // must land inside existing Agrar Territory
+  if (!existingFarms.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) return false; // not adjacent to another Farm
+  return true;
+}
+
+// Every hex, anywhere in the player's current Agrar Territory, that could
+// legally hold a NEW Farm right now — regardless of whether any unit is
+// actually standing next to it. Used by the AI to find a target worth
+// travelling toward when nothing is buildable from the Builder's current
+// position (getValidFarmHexes below stays adjacency-scoped, matching the
+// real construction rule).
+export function getAllValidFarmSpots(state: GameState, playerId: number): HexCoord[] {
+  const territory = getAgrarTerritory(state, playerId);
+  const existingFarms = allFarmsOf(state, playerId);
+  const result: HexCoord[] = [];
+  for (const key of territory) {
+    const [q, r] = key.split(',').map(Number);
+    const hex = { q: q!, r: r! };
+    if (isLegalFarmTile(state, hex, territory, existingFarms)) result.push(hex);
+  }
+  return result;
+}
+
 export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return [];
@@ -1571,16 +1607,7 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   const territory = getAgrarTerritory(state, player.id);
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
-    if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue; // off-map
-    const key = hexKey(hex);
-    if (state.hills.has(key) || state.walls.has(key)) continue;
-    if (getStrategicSiteAt(state, hex)) continue;
-    if (state.fertileSites.some(f => hexEqual(f.pos, hex))) continue;
-    if (state.capitals.some(c => hexEqual(c.pos, hex))) continue;
-    if (state.farms.some(f => hexEqual(f.pos, hex))) continue;
-    if (getUnitAt(state, hex)) continue;
-    if (!territory.has(key)) continue; // must land inside existing Agrar Territory
-    if (!allOwn.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) continue; // not adjacent to another Farm
+    if (!isLegalFarmTile(state, hex, territory, allOwn)) continue;
     result.push(hex);
   }
   return result;

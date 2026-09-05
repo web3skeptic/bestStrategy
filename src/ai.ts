@@ -17,7 +17,7 @@ import {
   getOwnedStructures, getPlayerCapital,
   researchTech, canResearch,
   getTeleportAt,
-  canStartFarm, startFarm, getValidFarmHexes, canStartTempleUpgrade, startTempleUpgrade,
+  canStartFarm, startFarm, getValidFarmHexes, getAllValidFarmSpots, canStartTempleUpgrade, startTempleUpgrade,
   canBuildRoad, buildRoadPath, getValidRoadHexes, isLegalRoadTile, canPillageRoad, pillageRoad,
   canClaimFertileSite, claimFertileSite,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
@@ -922,6 +922,45 @@ function actCombatUnit(
         return true;
       };
       if (buildFarmNow() || buildRoadNow()) return;
+      // Nothing legal to build from HERE (getValidFarmHexes/getValidRoadHexes
+      // only ever offer hexes adjacent to the Builder's CURRENT position) —
+      // head back toward the Capital/Farm network instead of falling
+      // through to the generic combat pickObjective logic below, which
+      // isn't founder-aware and would otherwise send the Builder wandering
+      // off to besiege/hunt/garrison duty. This was the actual cause of
+      // Farm-building grinding to a halt after the very first Farm: once
+      // the Builder drifted away (there's no other reason it would ever
+      // move once a Farm/Road is placed), it simply never came back, so
+      // no LATER Farm from a different position was ever attempted again
+      // even with aura piling up unspent for dozens of rounds.
+      if (capitalPos && !unit.hasMoved && select(state, unit) && state.moveHexes.length > 0) {
+        // Head toward the nearest hex ANYWHERE in current territory that
+        // could actually hold a Farm (not just neighbours of the Builder's
+        // current position, which is all getValidFarmHexes ever checks) —
+        // the network can grow lopsided in one direction early on (nothing
+        // revealed yet to point chooseRoadArteryDestination anywhere else)
+        // until it runs into the map edge or FARM_MIN_SPACING packs the
+        // immediate area solid, and "just return to the nearest anchor"
+        // used to endlessly loop the Builder right back into that same
+        // dead end instead of ever reaching a still-open spot elsewhere.
+        // Only once there's truly nowhere left for a Farm does this fall
+        // back to whichever anchor still has open Road room.
+        const openFarmSpots = getAllValidFarmSpots(state, aiPlayerId);
+        let target: HexCoord | null = bestBy(openFarmSpots, h => -hexDistance(unit.pos, h));
+        if (!target) {
+          const anchors = [capitalPos, ...state.farms.filter(f => f.ownerId === aiPlayerId).map(f => f.pos)];
+          const openRoom = (p: HexCoord) => hexNeighbors(p).filter(h => isLegalRoadTile(state, h)).length;
+          target = bestBy(anchors, p => openRoom(p) * 10 - hexDistance(unit.pos, p));
+        }
+        const dest = target ? bestBy(state.moveHexes, h => -hexDistance(h, target!)) : null;
+        if (dest) {
+          observe(state, 'move', { unitId: unit.id, to: dest });
+          if (moveUnit(state, dest).moved) {
+            actions.push({ type: 'move', pos: { ...unit.pos }, description: `${difficultyLabel(difficulty)} Builder heads toward open Farm territory` });
+            return;
+          }
+        }
+      }
     }
   }
   if (unit.hasAttacked) return;
@@ -1192,17 +1231,26 @@ function computeReservation(state: GameState, aiPlayerId: number): number {
       target = Math.min(target, TEMPLE_UPGRADE_COST);
     }
   }
-  // Agrar — as many Farms as possible (up to MAX_ACTIVE_FARMS) is the
-  // faction's whole point, so reserve for the next one exactly like a
-  // tech/Temple-upgrade goal is reserved for: a recruiting binge should
-  // never leave the Builder unable to afford a Farm the moment it's
-  // actually able to build one.
-  const player = state.players[aiPlayerId];
-  if (player?.faction === 'agrar') {
-    const farmCount = state.farms.filter(f => f.ownerId === aiPlayerId).length;
-    if (farmCount < MAX_ACTIVE_FARMS) target = Math.min(target, AGRAR_FARM_COST);
-  }
   return Number.isFinite(target) ? target : 0;
+}
+
+// Agrar — as many Farms as possible (up to MAX_ACTIVE_FARMS) is the
+// faction's whole point. Unlike computeReservation above, this is NOT
+// gated behind "within reach next round": AGRAR_FARM_COST is cheap (6) —
+// nothing like the "zero units for 10+ rounds" disaster a distant, 16-cost
+// tech goal caused — but with only a low income cycle, the "within reach"
+// gate for a cheap goal like this almost never actually engages: as long
+// as even the cheapest recruit (1⚡) is affordable, spawnPass keeps
+// recruiting it every single turn, resetting aura back near 0 before it
+// can ever climb close enough to the Farm cost to trip the gate at all.
+// The Farm reservation is therefore always active while below the cap —
+// see spawnPass, which enforces it unconditionally rather than folding it
+// into the same reach-gated pool as computeReservation.
+function computeFarmReservation(state: GameState, aiPlayerId: number): number {
+  const player = state.players[aiPlayerId];
+  if (player?.faction !== 'agrar') return 0;
+  const farmCount = state.farms.filter(f => f.ownerId === aiPlayerId).length;
+  return farmCount < MAX_ACTIVE_FARMS ? AGRAR_FARM_COST : 0;
 }
 
 // Emergencies override saving/planning — a Capital in real danger, or an
@@ -1295,6 +1343,17 @@ function chooseRoadArteryDestination(state: GameState, aiPlayerId: number, capit
     myFarms.filter(f => enemies.some(e => enemyCanReachNextTurn(state, e, f.pos))),
     f => -hexDistance(f.pos, capitalPos));
   if (threatenedFarm) return threatenedFarm.pos;
+
+  // As many Farms as possible, as fast as possible, is the whole point of
+  // the faction — if the immediate area is boxed in by hills (Farms can't
+  // be built on them, but Roads CAN), aim the Road straight at the nearest
+  // hex anywhere in territory that's actually farmable, rather than a
+  // generic "chase the nearest enemy" direction that might not even be
+  // pointed toward open land at all.
+  if (myFarms.length < MAX_ACTIVE_FARMS) {
+    const openFarmSpot = bestBy(getAllValidFarmSpots(state, aiPlayerId), h => -hexDistance(h, capitalPos));
+    if (openFarmSpot) return openFarmSpot;
+  }
 
   if (enemies.length > 0) {
     const nearest = bestBy(enemies, e => -hexDistance(e.pos, capitalPos));
@@ -1467,7 +1526,14 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
   // "stockpile from turn one no matter how far away the goal is".
   const reservation = cfg.useResourceReservation ? computeReservation(state, aiPlayerId) : 0;
   const withinReachNextRound = reservation > 0 && player.aura + getPlayerIncome(state, aiPlayerId) >= reservation;
-  const emergency = withinReachNextRound ? hasEmergency(state, aiPlayerId) : false;
+  // The Farm reservation (see computeFarmReservation) is NOT gated behind
+  // "within reach" the same way — it's cheap enough that saving from turn
+  // one never risks the "zero units for 10+ rounds" scenario the gate above
+  // exists to prevent, and the gate would almost never engage for it anyway
+  // (see computeFarmReservation's own comment).
+  const farmReservation = cfg.useResourceReservation ? computeFarmReservation(state, aiPlayerId) : 0;
+  const effectiveFloor = Math.max(withinReachNextRound ? reservation : 0, farmReservation);
+  const emergency = effectiveFloor > 0 ? hasEmergency(state, aiPlayerId) : false;
   for (const structure of getOwnedStructures(state, aiPlayerId)) {
     if (getUnitAt(state, structure.pos)) continue; // occupied — can't spawn (throttles multi-spawn)
     if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
@@ -1477,9 +1543,9 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
     // alone is enough to identify "this recruit is discretionary".
     const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, cfg.useResourceReservation);
     if (!type) continue;
-    if (withinReachNextRound && !emergency && type !== 'founder') {
+    if (effectiveFloor > 0 && !emergency && type !== 'founder') {
       const cost = getUnitCost(type, player.faction);
-      if (player.aura - cost < reservation) continue; // saving — skip this discretionary recruit
+      if (player.aura - cost < effectiveFloor) continue; // saving — skip this discretionary recruit
     }
     observe(state, 'recruit', { unitType: type, templeId: structure.id });
     if (spawnUnit(state, structure.id, type)) {
