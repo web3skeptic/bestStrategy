@@ -8,6 +8,7 @@
 // Run with: npx tsx scripts/verify-ai-difficulty.ts
 import { createGameState, chooseFaction, endTurn, getCurrentPlayer, getPlayerCapital, createUnit } from '../src/game';
 import { runAiTurn, evaluateState, anyEnemyHasLethalShot, AI_DIFFICULTY, AiDifficulty } from '../src/ai';
+import { hexDistance } from '../src/hex';
 import type { GameState } from '../src/types';
 
 let failures = 0;
@@ -48,12 +49,13 @@ console.log('\n=== Resource reservation: Normal+ saves instead of always spendin
 {
   const state = setup('agrar', 'agrar');
   state.currentPlayerIndex = 0;
-  // agrar_siegecraft (first on the plan, no prereqs) costs 16 — set aura just
-  // short of it. The mandatory first Builder recruit (cost 2) is exempt.
-  state.players[0]!.aura = 15;
+  // command_1 (first on the plan, no prereqs — see HARD_RESEARCH_PLAN's own
+  // comment for why it leads) costs 12 — set aura just short of it. The
+  // mandatory first Builder recruit (cost 2) is exempt.
+  state.players[0]!.aura = 11;
   runAiTurn(state, 'normal');
   check('Normal AI does NOT blow past the reservation on a discretionary recruit',
-    state.players[0]!.aura >= 13, `aura=${state.players[0]!.aura}`);
+    state.players[0]!.aura >= 9, `aura=${state.players[0]!.aura}`);
   check('Normal AI did NOT prematurely research a cheaper, lower-priority tech',
     !state.playerTech[0]!.researching);
   check('Normal AI DID recruit its mandatory (exempt) first Builder',
@@ -61,7 +63,7 @@ console.log('\n=== Resource reservation: Normal+ saves instead of always spendin
 
   const state2 = setup('agrar', 'agrar');
   state2.currentPlayerIndex = 0;
-  state2.players[0]!.aura = 16; // now affordable
+  state2.players[0]!.aura = 12; // now affordable
   runAiTurn(state2, 'normal');
   check('Normal AI starts the reserved-for tech once it IS affordable',
     !!state2.playerTech[0]!.researching);
@@ -165,6 +167,30 @@ console.log('\n=== Agrar Builder must not permanently block Capital recruiting =
     armySize > 3, `army size = ${armySize}`);
   check('the training queue is not permanently jammed (empties out at some point)',
     state.trainingQueue.filter(o => o.playerId === 0).length < 3);
+}
+
+// ── Never leave the Capital undefended once an enemy is spotted, unless
+// provably safe (no revealed enemy at all) ──
+console.log('\n=== AI never leaves its Capital empty once an enemy is spotted ===');
+{
+  const state = setup('agrar', 'temple');
+  const cap = getPlayerCapital(state, 0)!;
+  const techA = state.playerTech[0], techB = state.playerTech[1];
+  // Place a lone combat unit a few hexes from home, toward the map center
+  // (so it's guaranteed to stay on-board regardless of which edge the
+  // Capital landed near), plus a revealed enemy well out of immediate
+  // engagement range — nothing to fight right now, just a reason to worry.
+  const dir = { q: cap.pos.q === 0 ? 1 : -Math.sign(cap.pos.q), r: cap.pos.r === 0 ? 1 : -Math.sign(cap.pos.r) };
+  const farPos = { q: cap.pos.q + dir.q * 6, r: cap.pos.r + dir.r * 6 };
+  const lone = createUnit('warrior', 0, farPos, techA, 'agrar');
+  const enemy = createUnit('warrior', 1, { q: farPos.q, r: farPos.r + 3 }, techB, 'temple');
+  state.units.push(lone, enemy);
+  state.currentPlayerIndex = 0;
+  const distBefore = hexDistance(farPos, cap.pos);
+  runAiTurn(state, 'hard', 0);
+  const distAfter = hexDistance(lone.pos, cap.pos);
+  check('the lone unit heads back toward (or stays no farther from) the empty Capital',
+    distAfter <= distBefore, `before=${distBefore} after=${distAfter} finalPos=(${lone.pos.q},${lone.pos.r})`);
 }
 
 // ── No cheating: all 4 difficulties only ever act through canonical engine mutators ──

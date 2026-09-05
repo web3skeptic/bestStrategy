@@ -314,7 +314,6 @@ function resolveTargetRef(state: GameState, ref: TargetRef): HexCoord | null {
 // wider than the structure's own vision (2) so "someone's on the way home"
 // still counts as garrisoned, not just "already standing on the doorstep".
 const GARRISON_RADIUS = 3;
-const MIN_ARMY_TO_GARRISON = 2; // don't strand a brand-new 1-unit army on turtle duty
 // Below this many combat units, don't trickle a lone (or nearly-lone) unit
 // deep into enemy territory to be picked off piecemeal — rally near home
 // until there's enough mass to actually threaten something. Simulation
@@ -332,10 +331,19 @@ const RALLY_SLACK = 2; // how much further than GARRISON_RADIUS still counts as 
 // Persisted the same way as objectiveMemory: once a unit is assigned
 // garrison duty it KEEPS that job (checked every turn, re-picked only if it
 // dies) instead of being re-evaluated from scratch each time.
-const garrisonMemory = new WeakMap<GameState, Set<string>>();
-function getGarrisonMemory(state: GameState): Set<string> {
-  let s = garrisonMemory.get(state);
-  if (!s) { s = new Set(); garrisonMemory.set(state, s); }
+// Keyed by (state, aiPlayerId) — a 2-player game shares ONE GameState object
+// between both AI seats' turns, so a map keyed only by state would let
+// Temple's own guard assignment silently "fill" Agrar's slot too (and vice
+// versa): Agrar's AI would see garrison.size > 0, assume it already had a
+// defender posted, and never assign one of its OWN units — leaving its
+// Capital genuinely empty the entire game while it looked, from the log,
+// like garrison duty was already handled.
+const garrisonMemory = new WeakMap<GameState, Map<number, Set<string>>>();
+function getGarrisonMemory(state: GameState, aiPlayerId: number): Set<string> {
+  let byPlayer = garrisonMemory.get(state);
+  if (!byPlayer) { byPlayer = new Map(); garrisonMemory.set(state, byPlayer); }
+  let s = byPlayer.get(aiPlayerId);
+  if (!s) { s = new Set(); byPlayer.set(aiPlayerId, s); }
   return s;
 }
 
@@ -349,23 +357,40 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
   const myStructures = [...getOwnedStructures(state, aiPlayerId), ...state.farms.filter(f => f.ownerId === aiPlayerId && f.state === 'farm')];
   const enemies = revealedEnemies(state, aiPlayerId);
 
-  // 0. Keep a standing home guard — a genuinely competent player never
-  // leaves the Capital with zero eyes/defenders on it, and reactive
-  // "defend once threatened" (below) can't help if the threat was never
-  // seen coming in the first place (fog of war). Exactly one unit is ever
-  // assigned (see garrisonMemory above) — this is a standing-garrison
-  // preference the rest of the army is entirely free of, not a lockdown.
+  // 0. Never leave the Capital completely empty — a genuinely competent
+  // player never does, and reactive "defend once threatened" (below) can't
+  // help if the threat was never seen coming in the first place (fog of
+  // war). The ONLY exception is being 100% certain nothing could take it:
+  // zero enemy units revealed ANYWHERE yet. The instant even one enemy has
+  // been spotted, garrisoning becomes mandatory — this is deliberately NOT
+  // gated behind having "enough" army first, per explicit instruction: an
+  // empty Capital is an instant loss waiting to happen no matter how small
+  // the army is. The Builder/founder is never assigned this job — it has
+  // its own critical economic role and building Farms/Roads doesn't need
+  // it to ever leave home anyway (see the founder block below). Exactly
+  // one unit is ever assigned (see garrisonMemory above) — a standing
+  // preference for the REST of the army, not a lockdown on everyone.
   const capital = getPlayerCapital(state, aiPlayerId);
-  const myArmySize = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type)).length;
-  if (capital && myArmySize >= MIN_ARMY_TO_GARRISON) {
-    const garrison = getGarrisonMemory(state);
-    const currentGuard = [...garrison].map(id => state.units.find(u => u.id === id && u.hp > 0)).find(u => !!u);
-    if (currentGuard) {
-      if (currentGuard.id === unit.id) return capital.pos;
-    } else {
-      garrison.clear(); // previous guard died — hand the job to a new unit
-      const combatUnits = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type));
-      const closest = bestBy(combatUnits, u => -hexDistance(u.pos, capital.pos));
+  const combatUnitsAll = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type) && u.type !== 'founder');
+  // A fast raider or a long-range siege unit can hit the Capital and then
+  // retreat (or simply stand) out of every ally's vision before the AI's
+  // next turn, making revealedEnemies() see nothing at all — "no enemy
+  // spotted" is NOT the same as "no enemy present". The Capital's own HP is
+  // always visible to its owner regardless of fog (it's your own
+  // structure), so any damage on it — even with zero currently-revealed
+  // enemies — is proof something is still out there and it is NOT safe to
+  // release the guard.
+  const provablySafe = enemies.length === 0 && (!capital || capital.hp >= capital.maxHp);
+  if (capital && combatUnitsAll.length > 0 && !provablySafe) {
+    const garrison = getGarrisonMemory(state, aiPlayerId);
+    for (const id of [...garrison]) if (!state.units.some(u => u.id === id && u.hp > 0)) garrison.delete(id); // prune dead guards
+    if (garrison.has(unit.id)) return capital.pos;
+    // A single guard is a fine deterrent while the Capital is untouched, but
+    // once it's actually taking damage a lone defender has provably already
+    // failed to stop whatever's hitting it — escalate to two.
+    const desiredGuards = capital.hp < capital.maxHp ? 2 : 1;
+    if (garrison.size < desiredGuards) {
+      const closest = bestBy(combatUnitsAll.filter(u => !garrison.has(u.id)), u => -hexDistance(u.pos, capital.pos));
       if (closest) {
         garrison.add(closest.id);
         if (closest.id === unit.id) return capital.pos;
@@ -415,7 +440,7 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
   // home instead, overriding even an already-remembered offensive target
   // (an army that just took losses should regroup, not keep splintering).
   // Already-close units are left alone (nothing to rally back FROM).
-  if (capital && myArmySize < MIN_ARMY_TO_ATTACK && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
+  if (capital && combatUnitsAll.length < MIN_ARMY_TO_ATTACK && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
     return capital.pos;
   }
 
@@ -811,23 +836,32 @@ function actSupportUnit(state: GameState, unit: Unit, aiPlayerId: number, action
 // first — see TECH_NODES). Siege/elite lines are faction-specific (phase 11
 // §33-34); canResearch also enforces branch exclusivity and faction gating,
 // so unreachable picks are skipped automatically.
+// command_1 is deliberately FIRST, ahead of the siege/support techs it used
+// to follow: the starting population cap (6 command points) saturates with
+// cheap 1-cost Warriors/Spearsmen within the first ~20 rounds, well before
+// any of the pricier unlocks (Catapult/Heavy Knight/support) finish
+// researching — so those units had no population room left to ever actually
+// get recruited, freezing the whole army composition at "all cheap melee"
+// for the rest of the game regardless of tech or aura. Command I is also the
+// cheapest, fastest item on either plan (12 aura, 1 round), so front-loading
+// it costs very little.
 const HARD_RESEARCH_PLAN: Record<'agrar' | 'temple', TechId[]> = {
   agrar: [
+    'command_1',
     'agrar_siegecraft',
     'longrange_hp',
     'unlock_damagebooster',
     'agrar_siegecraft_splash',
     'agrar_heavy_armor',
-    'command_1',
     'agrar_heavy_knight_tech',
   ],
   temple: [
+    'command_1',
     'temple_mobile_siege_tech',
     'longrange_hp',
     'unlock_damagebooster',
     'temple_mobile_siege_splash',
     'temple_warrior_rite',
-    'command_1',
     'temple_champion_rite',
   ],
 };
