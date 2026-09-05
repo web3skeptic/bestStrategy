@@ -29,6 +29,14 @@ import {
 } from './game';
 import { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE } from './aiEval';
 export { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE };
+// aiSearch.ts sits ABOVE this file (it imports heuristics FROM ai.ts) —
+// this one import back down is the sole, deliberate exception, confined to
+// actCombatUnit's search-integration point below; every binding used here
+// is only ever read inside a function body (never at module-init time), so
+// the resulting import cycle is safe in practice (a common, well-supported
+// pattern for two tightly-coupled modules — see aiSearch.ts's own header
+// comment for the layering this preserves everywhere else).
+import { searchBestAction, applyAiAction, SEARCH_CONFIG, type AiAction } from './aiSearch';
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -927,6 +935,58 @@ function chooseBestCandidateByLookahead(
   return { hex: best ?? candidates[0]!, score: bestScore };
 }
 
+// Applies the winning AiAction from searchBestAction to the LIVE state via
+// the same canonical applyAiAction the search itself used on its clones —
+// then translates it into the existing AIAction combat-log shape and fires
+// the same `observe` micro convention every other AI mutation already does
+// (see `observe`'s own comment — this is what feeds any future ML replay
+// pipeline, so a search-chosen move needs to look identical to a
+// heuristic-chosen one there). Returns whether it actually applied; a
+// false here means the caller falls back to the heuristic path untouched.
+function applySearchAction(
+  state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty, action: AiAction, actions: AIAction[],
+): boolean {
+  const before = { ...unit.pos };
+  switch (action.kind) {
+    case 'endActivation':
+      // A deliberate "nothing worthwhile right now" — no log line, exactly
+      // like the heuristic path's own silent no-op when it reaches the same
+      // conclusion.
+      return applyAiAction(state, action);
+    case 'attack': {
+      const targetId = getUnitAt(state, action.targetPos)?.id;
+      observe(state, 'attack', { unitId: unit.id, targetId });
+      if (!applyAiAction(state, action)) return false;
+      actions.push({ type: 'attack', pos: { ...action.targetPos }, description: `${difficultyLabel(difficulty)} ${unit.type} attacks at (${action.targetPos.q},${action.targetPos.r})` });
+      return true;
+    }
+    case 'attackStructure': {
+      observe(state, 'attack-structure', { unitId: unit.id, targetPos: action.targetPos });
+      if (!applyAiAction(state, action)) return false;
+      actions.push({ type: 'attack', pos: { ...action.targetPos }, description: `${difficultyLabel(difficulty)} ${unit.type} strikes a structure at (${action.targetPos.q},${action.targetPos.r})` });
+      return true;
+    }
+    case 'move': {
+      observe(state, 'move', { unitId: unit.id, to: action.to });
+      if (!applyAiAction(state, action)) return false;
+      actions.push({ type: 'move', pos: { ...unit.pos }, description: `${difficultyLabel(difficulty)} ${unit.type} advances (${before.q},${before.r})→(${unit.pos.q},${unit.pos.r})` });
+      return true;
+    }
+    case 'moveAttack': {
+      const targetId = getUnitAt(state, action.targetPos)?.id;
+      observe(state, 'move', { unitId: unit.id, to: action.to });
+      observe(state, 'attack', { unitId: unit.id, targetId });
+      if (!applyAiAction(state, action)) return false;
+      actions.push({ type: 'move+attack', pos: { ...unit.pos }, description: `${difficultyLabel(difficulty)} ${unit.type} advances (${before.q},${before.r})→(${unit.pos.q},${unit.pos.r}) and strikes` });
+      return true;
+    }
+    default:
+      // Search's combat-unit candidate generation never produces any other
+      // kind — a defensive default only, never actually reached.
+      return false;
+  }
+}
+
 function actCombatUnit(
   state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty,
   actions: AIAction[], plan: AiPlan | null, threatMap: Map<string, number> | null,
@@ -1095,6 +1155,35 @@ function actCombatUnit(
   }
   if (unit.hasAttacked) return;
   if (!select(state, unit)) return;
+
+  // Hard/Expert — let real search choose this unit's whole activation
+  // (attack-now / move / move+attack / retreat / hold) whenever THIS unit
+  // specifically has real tactical content to weigh, rather than the fixed
+  // heuristic priority order below. evaluateState has no notion of "closer
+  // to my objective" the way pickObjective/scoreMoveHex does, so handing a
+  // unit's every activation to search regressed multi-turn marches badly
+  // (racing to a neutral site, falling back to defend the Capital) — a
+  // shallow tactical evaluator has no reason to keep walking toward a goal
+  // several turns away with nothing to fight yet. So the gate is narrow and
+  // per-unit, not "an enemy exists somewhere nearby": an immediate
+  // attack available right now, an enemy actually reachable this turn via
+  // move+attack, or a credible lethal threat against THIS unit specifically
+  // (a real defensive emergency, not just proximity). Anything broader kept
+  // hijacking the site-capture/mobile-reserve heuristics the same tests
+  // below already cover. Falls straight through to the unchanged heuristic
+  // path whenever none of that applies, search is disabled for this
+  // difficulty, finds nothing, or (defensively) throws — never a stall or
+  // a skipped activation.
+  const hasImmediateCombat = currentAttackTargets(state).length > 0 || currentStructureAttackHexes(state).length > 0;
+  const reachableEnemy = revealedEnemies(state, aiPlayerId).some(e =>
+    hexDistance(e.pos, unit.pos) <= getEffectiveSpeed(state, unit) + getEffectiveRange(state, unit));
+  const underLethalThreat = anyEnemyHasLethalShot(state, unit, aiPlayerId);
+  if (SEARCH_CONFIG[difficulty].enabled && (hasImmediateCombat || reachableEnemy || underLethalThreat)) {
+    try {
+      const outcome = searchBestAction(state, unit, aiPlayerId, difficulty);
+      if (outcome && applySearchAction(state, unit, aiPlayerId, difficulty, outcome.action, actions)) return;
+    } catch { /* fall through to the heuristic path below */ }
+  }
 
   // Kill from current position if possible (esp. valuable for ranged units).
   const here = currentAttackTargets(state);
