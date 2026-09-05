@@ -8,7 +8,7 @@ import {
 import { hexDistance, hexKey, hexEqual, hexNeighbors } from './hex';
 import { calculateDamage } from './combat';
 import { serialize, deserialize } from './serializer';
-import { TEMPLE_UPGRADE_COST, ROAD_SEGMENTS_PER_ACTIVATION } from './factions';
+import { TEMPLE_UPGRADE_COST, ROAD_SEGMENTS_PER_ACTIVATION, MAX_ACTIVE_FARMS, AGRAR_FARM_COST } from './factions';
 import {
   getCurrentPlayer, getUnitAt,
   spawnUnit, selectUnit, moveUnit, attackUnit, deselectAll,
@@ -899,8 +899,23 @@ function actCombatUnit(
         return true;
       };
       const buildFarmNow = (): boolean => {
-        const farmHex = getValidFarmHexes(state, unit).find(h => canStartFarm(state, unit, h));
-        if (!farmHex) return false;
+        const validFarms = getValidFarmHexes(state, unit).filter(h => canStartFarm(state, unit, h));
+        if (validFarms.length === 0) return false;
+        // An active Farm now grants Road-equivalent movement (see
+        // getEffectiveSpeed), so WHERE it lands matters the same way Road
+        // placement does — prefer whichever legal candidate sits closer to
+        // the Capital (shorter response distance for the garrison/reserve —
+        // pure defense value) and closer to the same strategic direction
+        // the Road artery is already extending toward (so the Farm doubles
+        // as useful fast-travel infrastructure on the way there, not just
+        // isolated economy sitting wherever happened to be first).
+        let farmHex = validFarms[0]!;
+        if (capitalPos) {
+          const cap = capitalPos;
+          const destination = chooseRoadArteryDestination(state, aiPlayerId, cap);
+          const best = bestBy(validFarms, h => -hexDistance(h, cap) - hexDistance(h, destination) * 0.5);
+          if (best) farmHex = best;
+        }
         observe(state, 'build-farm', { unitId: unit.id, pos: farmHex });
         startFarm(state, unit.id, farmHex);
         actions.push({ type: 'upgrade', pos: { ...farmHex }, description: `${difficultyLabel(difficulty)} begins building a Farm at (${farmHex.q},${farmHex.r})` });
@@ -1176,6 +1191,16 @@ function computeReservation(state: GameState, aiPlayerId: number): number {
     if (site.state === 'temple' && site.templeLevel === 1 && !site.upgrade) {
       target = Math.min(target, TEMPLE_UPGRADE_COST);
     }
+  }
+  // Agrar — as many Farms as possible (up to MAX_ACTIVE_FARMS) is the
+  // faction's whole point, so reserve for the next one exactly like a
+  // tech/Temple-upgrade goal is reserved for: a recruiting binge should
+  // never leave the Builder unable to afford a Farm the moment it's
+  // actually able to build one.
+  const player = state.players[aiPlayerId];
+  if (player?.faction === 'agrar') {
+    const farmCount = state.farms.filter(f => f.ownerId === aiPlayerId).length;
+    if (farmCount < MAX_ACTIVE_FARMS) target = Math.min(target, AGRAR_FARM_COST);
   }
   return Number.isFinite(target) ? target : 0;
 }
