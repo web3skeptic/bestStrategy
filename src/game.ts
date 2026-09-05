@@ -1055,11 +1055,38 @@ function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): 
       // dead-center objective — Agrar vs Agrar's Fertile Sites — gets its
       // own separate, dead-center reposition in resolveMatchupObjectives,
       // entirely after this generic (matchup-blind) placement runs.
+      //
+      // Fully DETERMINISTIC given the Capital pair — no shuffling, no random
+      // sampling among tied candidates. Ranked by (1) maximize the minimum
+      // distance to BOTH Capitals, (2) among ties, minimize the ASYMMETRY
+      // between the two distances — hex lattices only have 60°-multiple
+      // rotational symmetry (not continuous), so the true perpendicular
+      // point doesn't always land exactly on a lattice hex; several
+      // candidates can tie on (1) while still differing in how evenly they
+      // split distance between the two Capitals (one lopsided 9-vs-12 pick
+      // used to slip through when a balanced 10-vs-10 candidate tied on
+      // just the raw minimum). (3) A final stable positional tie-break for
+      // full determinism. This is what actually guarantees "reachable by
+      // both parties at the same speed", not just "far enough from both".
       let neutrals: HexCoord[] | null = null;
       if (numNeutral === 2) {
-        const first = spread(1, starts, MIN_TEMPLE_SEPARATION, false);
-        if (first) {
-          const n0 = first[0]!;
+        const eligible = all.filter(hex =>
+          !starts.some(t => hexEqual(t, hex)) && minDistTo(hex, starts) >= MIN_TEMPLE_SEPARATION);
+        // `all` (generateHexMap) is itself already produced in a fixed,
+        // un-shuffled order for a given mapRadius, so scanning it in order
+        // with strict-better comparisons is already fully deterministic —
+        // no shuffle, no random sampling among tied candidates.
+        let bestMinDist = -Infinity;
+        let bestAsymmetry = Infinity;
+        let n0: HexCoord | null = null;
+        for (const hex of eligible) {
+          const dists = starts.map(s => hexDistance(s, hex));
+          const minDist = Math.min(...dists);
+          const asymmetry = Math.max(...dists) - minDist;
+          const better = minDist > bestMinDist || (minDist === bestMinDist && asymmetry < bestAsymmetry);
+          if (better) { bestMinDist = minDist; bestAsymmetry = asymmetry; n0 = hex; }
+        }
+        if (n0) {
           const n1: HexCoord = { q: -n0.q, r: -n0.r };
           const secondValid = hexDistance({ q: 0, r: 0 }, n1) <= mapRadius
             && !hexEqual(n1, n0) && minDistTo(n1, [...starts, n0]) >= MIN_TEMPLE_SEPARATION;

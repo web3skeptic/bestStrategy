@@ -325,5 +325,32 @@ console.log('\n=== Legacy removal ===');
   check('GameState has strategicSites + capitals, not temples', Array.isArray(state.strategicSites) && Array.isArray(state.capitals) && !('temples' in state));
 }
 
+// ── Temple sites in a 1v1 match are placed at a fixed, symmetric spot —
+// equidistant from both Capitals, not just "far enough away" — so a
+// Temple-vs-Agrar or Temple-vs-Temple game never hands one side an easier
+// reach than the other. Run across many fresh games since map generation
+// otherwise had per-game randomness in exactly which tied candidate hex won.
+console.log('\n=== Temple-vs-Temple: neutral sites are placed symmetrically, every game ===');
+{
+  let worstAsymmetry = 0;
+  const N = 30;
+  for (let i = 0; i < N; i++) {
+    const state = createGameState();
+    chooseFaction(state, 0, 'temple');
+    chooseFaction(state, 1, 'temple');
+    const caps = state.capitals;
+    for (const site of state.strategicSites) {
+      const dists = caps.map(c => {
+        const dq = site.pos.q - c.pos.q, dr = site.pos.r - c.pos.r;
+        return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+      });
+      const asymmetry = Math.max(...dists) - Math.min(...dists);
+      worstAsymmetry = Math.max(worstAsymmetry, asymmetry);
+    }
+  }
+  check(`every neutral site is equidistant (0 asymmetry) from both Capitals across ${N} games`,
+    worstAsymmetry === 0, `worst asymmetry=${worstAsymmetry}`);
+}
+
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);
 process.exit(failures === 0 ? 0 : 1);
