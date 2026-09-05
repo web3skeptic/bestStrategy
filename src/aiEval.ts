@@ -149,13 +149,24 @@ function materialScore(state: GameState, player: Player): { material: number; th
   // one-shot right now already counts as partially lost — and any enemy
   // unit I could one-shot right now already counts as partially won. Both
   // read only revealedEnemiesOf (fog-respecting).
+  // Both credits are scaled by the AT-RISK unit's OWN hp fraction — the
+  // same weighting `material` itself uses — so a threat's pre-charged
+  // value can never exceed what actually changes in `material` once it's
+  // resolved. Without this a nearly-dead enemy (hpFraction ~ 0, almost
+  // nothing left to lose) still handed out a full flat guaranteedKill
+  // bonus for merely being "killable", which made ACTUALLY taking a free
+  // kill look worse than leaving the corpse-to-be standing forever (the
+  // bonus disappears the instant the target is actually dead, while the
+  // real material gained from finishing off a 1-hp unit is nearly zero) —
+  // a real evaluation-symmetry bug, not a search bug: search correctly
+  // preferred whatever the evaluator actually scored higher.
   for (const u of myUnits) {
     const enemies = revealedEnemiesOf(state, player.id);
     const lethal = enemies.some(e => {
       const rng = getEffectiveRange(state, e);
       return hexDistance(e.pos, u.pos) <= rng && estimateDamageQuick(state, e, u) >= u.hp;
     });
-    if (lethal) threatened -= getUnitCost(u.type, player.faction) * w.threatenedMaterialFraction;
+    if (lethal) threatened -= getUnitCost(u.type, player.faction) * (u.hp / u.stats.maxHp) * w.threatenedMaterialFraction;
   }
   const visibleEnemies = revealedEnemiesOf(state, player.id);
   for (const e of visibleEnemies) {
@@ -165,7 +176,7 @@ function materialScore(state: GameState, player: Player): { material: number; th
     });
     if (canKill) {
       const enemyPlayer = state.players.find(p => p.id === e.playerId);
-      threatened += getUnitCost(e.type, enemyPlayer?.faction) * w.guaranteedKillFraction;
+      threatened += getUnitCost(e.type, enemyPlayer?.faction) * (e.hp / e.stats.maxHp) * w.guaranteedKillFraction;
     }
   }
   return { material, threatened };
@@ -239,7 +250,15 @@ function commandScore(state: GameState, player: Player): number {
   // Headroom only matters if there's Energy to actually spend it — same
   // "is this usable" gate as production.
   const usableHeadroom = player.aura >= 1 ? headroom : headroom * 0.3;
-  return usableHeadroom * AI_EVAL_WEIGHTS.commandHeadroom;
+  // Only value headroom up to what production slots can actually put to
+  // work soon — extra headroom beyond that is real but not yet actionable.
+  // Without this cap, a single kill that frees up 1 population slot for an
+  // opponent who was already nowhere near their cap scored as if it hands
+  // them a whole new recruit THIS round, which could outweigh the material
+  // value of the kill itself for a cheap/near-dead unit and made the
+  // evaluator prefer leaving a free kill on the table over taking it.
+  const slots = Math.max(1, getProductionSlots(state, player.id));
+  return Math.min(usableHeadroom, slots) * AI_EVAL_WEIGHTS.commandHeadroom;
 }
 
 // Rough per-tech value — not "count of researched techs" (§14). A tech's

@@ -146,7 +146,7 @@ export function simulateAction(state: GameState, action: AiAction): { state: Gam
 import {
   pickObjective, scoreMoveHex, select, currentAttackTargets, currentStructureAttackHexes,
   chooseStrategicPlan, computeThreatMap, revealedEnemies, effectiveDest,
-  AI_DIFFICULTY, type AiDifficulty,
+  AI_DIFFICULTY, type AiDifficulty, evaluateState,
 } from './ai';
 import { hexDistance } from './hex';
 import type { Unit } from './types';
@@ -262,4 +262,206 @@ export function generateCandidateActions(state: GameState, unit: Unit, aiPlayerI
   }
 
   return dedupeActions(candidates);
+}
+
+// ── AI 2.0 Phase 4 — negamax-style minimax with alpha-beta, iterative
+// deepening, and a hard wall-clock/node budget ─────────────────────────────
+//
+// This runs synchronously inside a live Express/WebSocket process, not a
+// browser Web Worker — there is no way to cancel a runaway search except by
+// never starting one that can run away. Every recursive call re-checks the
+// deadline AND a node-count backstop (Date.now() itself has overhead and
+// isn't free to call before every single clone), and a timeout during a
+// depth always discards that depth's partial result in favor of the last
+// FULLY completed one (§ hard safety limits + fallback-to-heuristic).
+//
+// Depth is counted in ACTIVATIONS (one unit choosing one action), not full
+// rounds, per the brief's own definition (§ "who acts next" is explicitly
+// OUT of scope for this pass — the mover sequence here is fixed: the root
+// unit, then a bounded set of the opponent's nearest not-yet-acted units as
+// their "plausible reply", then the root player's own other pending units,
+// alternating). evaluateState is always called with the FIXED root
+// perspective (aiPlayerId) — not negated per ply — so this is really
+// "minimax with a perspective-stable evaluator": max nodes are the root
+// player's turns to act, min nodes are the opponent's simulated replies.
+export interface SearchOutcome {
+  action: AiAction;
+  score: number;
+  depthReached: number;
+  nodesVisited: number;
+  timedOut: boolean;
+}
+
+interface SearchCtx {
+  aiPlayerId: number;
+  difficulty: AiDifficulty;
+  deadline: number;
+  nodeBudget: number;
+  nodes: number;
+}
+
+// Independent of wall-clock — a slow machine (or a GC pause) could blow the
+// time budget on far fewer nodes than expected; this is the true hard stop.
+const MAX_SEARCH_NODES = 20000;
+// Node count is cheap to check every call; Date.now() has real overhead, so
+// only sample the clock every so many nodes.
+const CLOCK_CHECK_INTERVAL = 32;
+
+function timeUp(ctx: SearchCtx): boolean {
+  if (ctx.nodes >= ctx.nodeBudget) return true;
+  if (ctx.nodes % CLOCK_CHECK_INTERVAL !== 0) return false;
+  return Date.now() >= ctx.deadline;
+}
+
+// The opponent's plausible responders to whatever just happened near
+// `aroundPos` — their nearest not-yet-acted units, not the whole army; this
+// keeps the min-layer's branching bounded without pretending a strong
+// opponent only ever considers one specific unit.
+function respondersNear(state: GameState, aiPlayerId: number, aroundPos: HexCoord, limit: number): Unit[] {
+  return state.units
+    .filter(u => u.playerId !== aiPlayerId && u.hp > 0 && !u.hasAttacked)
+    .sort((a, b) => hexDistance(a.pos, aroundPos) - hexDistance(b.pos, aroundPos))
+    .slice(0, limit);
+}
+
+// selectUnit (the real engine mutator, called deep inside select/
+// generateCandidateActions) refuses to select a unit that doesn't belong to
+// getCurrentPlayer(state) — a real, correct rule for actual play, but
+// during search the "current player" of a cloned node needs to track
+// WHICHEVER SIDE is acting at that node, not stay pinned to whoever's real
+// turn it is live. Every node in this search tree is a throwaway clone
+// (never the live state), so flipping this here is always safe.
+function setActingPlayer(state: GameState, playerId: number): void {
+  const idx = state.players.findIndex(p => p.id === playerId);
+  if (idx >= 0) state.currentPlayerIndex = idx;
+}
+
+// Narrow, depth-dependent slice of a unit's own candidates for the NON-root
+// plies — the root ply gets the full candidate width (that's the decision
+// actually being made); deeper plies only need to be plausible enough to
+// keep the root's evaluation honest, not exhaustively explored themselves.
+function narrowCandidates(state: GameState, unit: Unit, forPlayerId: number, difficulty: AiDifficulty, width: number): AiAction[] {
+  setActingPlayer(state, forPlayerId);
+  return generateCandidateActions(state, unit, forPlayerId, difficulty).slice(0, width);
+}
+
+function minimax(
+  state: GameState, ctx: SearchCtx, plyLeft: number, alpha: number, beta: number,
+  mover: 'me' | 'opponent', lastActedPos: HexCoord, myPendingUnits: Unit[],
+): number {
+  ctx.nodes++;
+  if (state.phase === 'gameOver' || plyLeft <= 0 || timeUp(ctx)) {
+    return evaluateState(state, ctx.aiPlayerId);
+  }
+
+  if (mover === 'opponent') {
+    const responders = respondersNear(state, ctx.aiPlayerId, lastActedPos, plyLeft >= 3 ? 3 : 2);
+    if (responders.length === 0) return evaluateState(state, ctx.aiPlayerId);
+    let value = Infinity;
+    outer: for (const u of responders) {
+      const candidates = narrowCandidates(state, u, u.playerId, ctx.difficulty, 3);
+      for (const action of candidates) {
+        if (timeUp(ctx)) break outer;
+        const { state: next, applied } = simulateAction(state, action);
+        if (!applied) continue;
+        const score = minimax(next, ctx, plyLeft - 1, alpha, beta, 'me', u.pos, myPendingUnits);
+        if (score < value) value = score;
+        if (value < beta) beta = value;
+        if (beta <= alpha) break outer;
+      }
+    }
+    return value === Infinity ? evaluateState(state, ctx.aiPlayerId) : value;
+  }
+
+  // mover === 'me' — one of the root player's own still-pending units
+  // continues the same turn (the root unit's own decision is handled by the
+  // caller, searchBestAction, not here).
+  if (myPendingUnits.length === 0) return evaluateState(state, ctx.aiPlayerId);
+  const [unit, ...rest] = myPendingUnits;
+  if (!unit || unit.hp <= 0) return minimax(state, ctx, plyLeft, alpha, beta, mover, lastActedPos, rest);
+  const candidates = narrowCandidates(state, unit, ctx.aiPlayerId, ctx.difficulty, 3);
+  let value = -Infinity;
+  for (const action of candidates) {
+    if (timeUp(ctx)) break;
+    const { state: next, applied } = simulateAction(state, action);
+    if (!applied) continue;
+    const score = minimax(next, ctx, plyLeft - 1, alpha, beta, 'opponent', unit.pos, rest);
+    if (score > value) value = score;
+    if (value > alpha) alpha = value;
+    if (beta <= alpha) break;
+  }
+  return value === -Infinity ? evaluateState(state, ctx.aiPlayerId) : value;
+}
+
+// Root search: chooses the best action for THIS unit's activation by
+// iterative deepening (2, 4, ... activations, capped by
+// SEARCH_CONFIG[difficulty].maxDepthPlies), each depth alpha-beta-pruned
+// and time/node-budgeted. `otherPendingUnits` — the root player's own other
+// not-yet-acted-this-turn units — lets the search look past just this one
+// unit when time allows, without requiring a full "who acts next" search
+// (they're considered in the fixed order given).
+//
+// Returns null if search is disabled for this difficulty, or if the unit
+// has no real candidates to choose from at all — callers must fall back to
+// the existing heuristic path in that case.
+export function searchBestAction(
+  state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty, otherPendingUnits: Unit[] = [],
+): SearchOutcome | null {
+  const searchCfg = SEARCH_CONFIG[difficulty];
+  if (!searchCfg.enabled) return null;
+
+  const rootCandidates = generateCandidateActions(state, unit, aiPlayerId, difficulty);
+  if (rootCandidates.length === 0) return null;
+  if (rootCandidates.length === 1) {
+    return { action: rootCandidates[0]!, score: 0, depthReached: 0, nodesVisited: 0, timedOut: false };
+  }
+
+  // Cheap static move-ordering: a shallow (0-ply) evaluation of each root
+  // candidate's resulting state, sorted best-first, so alpha-beta actually
+  // has something strong to prune against from move 1 of every depth
+  // (real transposition-table-driven ordering is Phase 5 — this is the
+  // minimum viable version of "try the likely-best move first").
+  const orderedRoots = rootCandidates
+    .map(action => {
+      const { state: next, applied } = simulateAction(state, action);
+      return { action, staticScore: applied ? evaluateState(next, aiPlayerId) : -Infinity };
+    })
+    .filter(r => r.staticScore > -Infinity)
+    .sort((a, b) => b.staticScore - a.staticScore)
+    .map(r => r.action);
+  if (orderedRoots.length === 0) return null;
+
+  const startTime = Date.now();
+  let best: SearchOutcome = { action: orderedRoots[0]!, score: -Infinity, depthReached: 0, nodesVisited: 0, timedOut: false };
+
+  for (let depth = 2; depth <= searchCfg.maxDepthPlies; depth += 2) {
+    const ctx: SearchCtx = {
+      aiPlayerId, difficulty,
+      deadline: startTime + searchCfg.timeBudgetMs,
+      nodeBudget: MAX_SEARCH_NODES,
+      nodes: 0,
+    };
+    let depthBestAction: AiAction = orderedRoots[0]!;
+    let depthBestScore = -Infinity;
+    let alpha = -Infinity;
+    const beta = Infinity;
+    let completed = true;
+    for (const action of orderedRoots) {
+      if (timeUp(ctx)) { completed = false; break; }
+      const { state: next, applied } = simulateAction(state, action);
+      if (!applied) continue;
+      const score = minimax(next, ctx, depth - 1, alpha, beta, 'opponent', unit.pos, otherPendingUnits);
+      if (score > depthBestScore) { depthBestScore = score; depthBestAction = action; }
+      if (depthBestScore > alpha) alpha = depthBestScore;
+    }
+    if (timeUp(ctx)) completed = false;
+    if (completed) {
+      best = { action: depthBestAction, score: depthBestScore, depthReached: depth, nodesVisited: ctx.nodes, timedOut: false };
+    } else {
+      best.timedOut = true;
+      break;
+    }
+    if (Date.now() >= startTime + searchCfg.timeBudgetMs) break;
+  }
+  return best;
 }
