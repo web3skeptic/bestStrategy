@@ -10,7 +10,7 @@ import type { GameState, HexCoord, TechId, UnitType } from './types';
 import {
   selectUnit, moveUnit, attackUnit, attackStructure, spawnUnit, researchTech,
   startFarm, buildRoadPath, startFounding, startTempleUpgrade, claimFertileSite, pillageRoad,
-  endTurn, getUnitAt, getStrategicSiteAt,
+  endTurn, getPlayerCapital,
 } from './game';
 import { cloneStateForSim } from './ai';
 
@@ -121,19 +121,145 @@ export function simulateAction(state: GameState, action: AiAction): { state: Gam
   return { state: sim, applied };
 }
 
-// Every hex-under-a-structure/site "self" action (found, claim, pillage) is
-// only ever legal or not depending on what's under the unit right now —
-// convenient to check without duplicating each mutator's own precondition
-// logic (canStartFounding/canClaimFertileSite/canPillageRoad already do
-// that; this is just a quick "is there anything worth trying" filter for
-// candidate generation, not a legality authority itself).
-export function standingOnFoundable(state: GameState, unitId: string): boolean {
-  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
-  if (!unit) return false;
-  const site = getStrategicSiteAt(state, unit.pos);
-  return !!site && (site.state === 'neutral' || site.state === 'ruins') && !site.founding;
+// ── AI 2.0 Phase 3 — candidate generation ──────────────────────────────────
+//
+// Scope decision: search-based candidate generation (this section) and the
+// negamax search built on top of it (Phase 4) apply to COMBAT UNIT
+// activations only — move/attack/hold decisions, where "simulate a few
+// plies and see which is actually better" is the whole point (this is also
+// exactly what the AI 2.0 brief's own test scenarios §86-89 exercise:
+// kills, quiet defense, activation order, horizon effects — all tactical).
+// Founder-type units (recruiting, research, Farms, Roads, Temple founding/
+// upgrade, Fertile Sites) keep using the existing heuristic AI in ai.ts
+// completely unchanged — those decisions are much more deterministic
+// ("build the next Farm the moment it's affordable" doesn't benefit from
+// adversarial search the way "which of 3 units to attack with first" does)
+// and are already reasonably tuned. Nothing here disturbs them.
+//
+// Reuses the EXISTING heuristics as generators rather than reinventing
+// "which move is plausible" (§3, §33): pickObjective/scoreMoveHex/
+// chooseStrategicPlan/computeThreatMap are the exact same functions
+// actCombatUnit itself already uses for the heuristic fallback (Normal and
+// below) — the search layer just gets to see MORE of the ranked candidates
+// and compare their simulated outcomes instead of committing to the
+// single top-ranked one outright.
+import {
+  pickObjective, scoreMoveHex, select, currentAttackTargets, currentStructureAttackHexes,
+  chooseStrategicPlan, computeThreatMap, revealedEnemies, effectiveDest,
+  AI_DIFFICULTY, type AiDifficulty,
+} from './ai';
+import { hexDistance } from './hex';
+import type { Unit } from './types';
+
+// Search-specific tuning, deliberately separate from AI_DIFFICULTY (which
+// still drives the existing heuristic fallback/lookahead unchanged) — the
+// AI 2.0 brief wants noticeably wider candidate pools than the old
+// candidateLimit (3/6) provided (§35-36: Hard 8-12, Expert 12-20 BEFORE
+// pruning). Every number search/candidate-generation cares about lives
+// here, not scattered through ai.ts.
+export const SEARCH_CONFIG: Record<AiDifficulty, {
+  enabled: boolean; candidateWidth: number; maxDepthPlies: number; timeBudgetMs: number;
+}> = {
+  easy:   { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0 },
+  normal: { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0 },
+  hard:   { enabled: true, candidateWidth: 10, maxDepthPlies: 4, timeBudgetMs: 400 },
+  expert: { enabled: true, candidateWidth: 16, maxDepthPlies: 6, timeBudgetMs: 1200 },
+};
+
+function actionKey(a: AiAction): string {
+  switch (a.kind) {
+    case 'move': return `move:${a.unitId}:${a.to.q},${a.to.r}`;
+    case 'attack': return `attack:${a.unitId}:${a.targetPos.q},${a.targetPos.r}`;
+    case 'moveAttack': return `moveAttack:${a.unitId}:${a.to.q},${a.to.r}:${a.targetPos.q},${a.targetPos.r}`;
+    case 'attackStructure': return `attackStructure:${a.unitId}:${a.targetPos.q},${a.targetPos.r}`;
+    case 'recruit': return `recruit:${a.structureId}:${a.unitType}`;
+    case 'research': return `research:${a.techId}`;
+    case 'buildFarm': return `buildFarm:${a.unitId}:${a.pos.q},${a.pos.r}`;
+    case 'buildRoad': return `buildRoad:${a.unitId}:${a.path.map(p => `${p.q},${p.r}`).join('|')}`;
+    case 'foundSite': return `foundSite:${a.unitId}`;
+    case 'upgradeTemple': return `upgradeTemple:${a.siteId}`;
+    case 'claimFertileSite': return `claimFertileSite:${a.unitId}`;
+    case 'pillageRoad': return `pillageRoad:${a.unitId}`;
+    case 'endActivation': return `endActivation:${a.unitId}`;
+    case 'endTurn': return 'endTurn';
+  }
 }
 
-export function standingOnOccupiedTile(state: GameState, pos: HexCoord): boolean {
-  return !!getUnitAt(state, pos);
+// §34 — count equivalent final states once, not once per path/permutation
+// that reaches them. Candidates here are already destination-hex-based
+// (not raw movement paths), so an exact-key dedup is enough: two entries
+// only collide when they really do describe the identical action.
+function dedupeActions(actions: AiAction[]): AiAction[] {
+  const seen = new Set<string>();
+  const result: AiAction[] = [];
+  for (const a of actions) {
+    const key = actionKey(a);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(a);
+  }
+  return result;
+}
+
+// Generates a bounded, meaningful set of candidate actions for one combat
+// unit's activation — categories per §33: best immediate kill, best
+// favorable attack (current position), best objective/pressure move (top-K
+// toward pickObjective's target, each with a move+attack variant when it
+// would put an enemy in range), best retreat/defensive move (explicitly a
+// DISTINCT alternative, not just whatever the objective already picked —
+// §37's "quiet moves" need to be genuinely reachable by search, not just
+// theoretically possible), and always, unconditionally, holding still
+// (§37, endActivation) as the baseline "quiet move" every other candidate
+// is measured against.
+export function generateCandidateActions(state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty): AiAction[] {
+  const candidates: AiAction[] = [{ kind: 'endActivation', unitId: unit.id }];
+  if (unit.hp <= 0 || unit.hasAttacked) return dedupeActions(candidates);
+  if (!select(state, unit)) return dedupeActions(candidates);
+
+  for (const target of currentAttackTargets(state)) {
+    candidates.push({ kind: 'attack', unitId: unit.id, targetPos: target.pos });
+  }
+  for (const targetPos of currentStructureAttackHexes(state)) {
+    candidates.push({ kind: 'attackStructure', unitId: unit.id, targetPos });
+  }
+
+  if (unit.hasMoved) return dedupeActions(candidates);
+
+  const cfg = AI_DIFFICULTY[difficulty];
+  const searchCfg = SEARCH_CONFIG[difficulty];
+  const plan = cfg.useStrategicPlanning ? chooseStrategicPlan(state, aiPlayerId) : null;
+  const threatMap = cfg.useThreatMap ? computeThreatMap(state, aiPlayerId) : null;
+  const objective = pickObjective(state, unit, aiPlayerId, plan, cfg);
+  const enemies = revealedEnemies(state, aiPlayerId);
+  const capital = getPlayerCapital(state, aiPlayerId);
+  const moveHexes = [...state.moveHexes];
+  if (moveHexes.length === 0) return dedupeActions(candidates);
+
+  const ranked = moveHexes
+    .map(hex => ({ hex, score: scoreMoveHex(state, unit, aiPlayerId, hex, objective, enemies, threatMap) }))
+    .sort((a, b) => b.score - a.score);
+
+  const width = Math.max(1, searchCfg.candidateWidth || moveHexes.length);
+  for (const { hex } of ranked.slice(0, width)) {
+    candidates.push({ kind: 'move', unitId: unit.id, to: hex });
+    const dest = effectiveDest(state, hex);
+    const rng = unit.stats.range;
+    const reachableTarget = enemies.find(e => {
+      const d = hexDistance(dest, e.pos);
+      return d >= 1 && d <= rng;
+    });
+    if (reachableTarget) candidates.push({ kind: 'moveAttack', unitId: unit.id, to: hex, targetPos: reachableTarget.pos });
+  }
+
+  // Always offer "head toward home" as its own candidate, distinct from
+  // whatever pickObjective committed to — otherwise search can only ever
+  // discover a retreat when the heuristic objective ALREADY happens to be
+  // retreat-shaped, defeating the point of comparing alternatives at all.
+  if (capital) {
+    const towardHome = moveHexes.reduce((best, h) =>
+      hexDistance(effectiveDest(state, h), capital.pos) < hexDistance(effectiveDest(state, best), capital.pos) ? h : best);
+    candidates.push({ kind: 'move', unitId: unit.id, to: towardHome });
+  }
+
+  return dedupeActions(candidates);
 }

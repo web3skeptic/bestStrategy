@@ -148,7 +148,7 @@ function isPlayerAlive(state: GameState, playerId: number): boolean {
   return !!capital && capital.hp > 0;
 }
 
-function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
+export function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
   return state.units.filter(u =>
     u.hp > 0 && u.playerId !== aiPlayerId && isForestUnitRevealed(state, u.pos, aiPlayerId));
 }
@@ -156,7 +156,7 @@ function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
 // Deterministic damage estimate for target ranking. Mirrors the engine's own
 // calculateDamage (combat.ts) exactly, via the shared getUnitTypeMultiplier
 // helper, so the AI never drifts from the real combat math.
-function estimateDamage(state: GameState, attacker: Unit, target: Unit): number {
+export function estimateDamage(state: GameState, attacker: Unit, target: Unit): number {
   const enc = calculateEncirclement(state, target);
   const typeBonus = getUnitTypeMultiplier(attacker.type, target.type);
   const atk = getEffectiveAttack(state, attacker);
@@ -165,7 +165,7 @@ function estimateDamage(state: GameState, attacker: Unit, target: Unit): number 
   return Math.max(1, calculateDamage(atk, def, enc.attackMultiplier, typeBonus, hpFraction));
 }
 
-function scoreTarget(state: GameState, attacker: Unit, target: Unit): number {
+export function scoreTarget(state: GameState, attacker: Unit, target: Unit): number {
   const dmg = estimateDamage(state, attacker, target);
   const kill = dmg >= target.hp;
   let score = kill ? 1000 + unitValue(target.type) * 10 : dmg * 3 + unitValue(target.type) * 5 - target.hp;
@@ -184,7 +184,7 @@ function scoreTarget(state: GameState, attacker: Unit, target: Unit): number {
 // Where a unit actually ends up if it moves onto `hex` — accounts for stepping
 // on an owned/any teleport portal (mirrors moveUnit's auto-teleport: land on the
 // first free neighbour of the partner portal).
-function effectiveDest(state: GameState, hex: HexCoord): HexCoord {
+export function effectiveDest(state: GameState, hex: HexCoord): HexCoord {
   const portal = getTeleportAt(state, hex);
   if (portal?.pairedId) {
     const exit = state.teleportBuildings.find(t => t.id === portal.pairedId);
@@ -204,7 +204,7 @@ function effectiveDest(state: GameState, hex: HexCoord): HexCoord {
 // actCombatUnit's own move ranking and scoreObjectiveCandidate below (which
 // uses it to estimate how good pursuing a given objective actually is,
 // before committing to it) — one formula, not two copies that could drift.
-function scoreMoveHex(
+export function scoreMoveHex(
   state: GameState, unit: Unit, aiPlayerId: number, hex: HexCoord, objective: HexCoord | null,
   enemies: Unit[], threatMap: Map<string, number> | null,
 ): number {
@@ -259,13 +259,13 @@ function scoreMoveHex(
 
 // Select a unit and expose the engine-computed highlight sets (moveHexes /
 // attackHexes). Returns false if it can't be selected.
-function select(state: GameState, unit: Unit): boolean {
+export function select(state: GameState, unit: Unit): boolean {
   selectUnit(state, unit.id);
   return state.selectedUnitId === unit.id;
 }
 
 // Enemy units currently in the selected unit's attack set.
-function currentAttackTargets(state: GameState): Unit[] {
+export function currentAttackTargets(state: GameState): Unit[] {
   return state.attackHexes
     .map(h => getUnitAt(state, h))
     .filter((u): u is Unit => !!u && u.hp > 0);
@@ -274,7 +274,7 @@ function currentAttackTargets(state: GameState): Unit[] {
 // Enemy structures (Capital/City/Temple) currently in range — a hard-AI-only
 // concern (finishing the enemy Capital is the whole point of the redesign),
 // so keep it a separate query from unit targets rather than merging shapes.
-function currentStructureAttackHexes(state: GameState): HexCoord[] {
+export function currentStructureAttackHexes(state: GameState): HexCoord[] {
   return state.structureAttackHexes;
 }
 
@@ -585,7 +585,7 @@ function scoreObjectiveCandidate(
   return (best?.score ?? evaluateState(state, aiPlayerId)) + massBonus(state, unit, aiPlayerId, objective);
 }
 
-function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null, cfg: AiDifficultyConfig = AI_DIFFICULTY.easy): HexCoord | null {
+export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null, cfg: AiDifficultyConfig = AI_DIFFICULTY.easy): HexCoord | null {
   // getOwnedStructures only ever returns the Capital + owned Temple sites —
   // it never includes Farms. For Agrar that meant its ENTIRE economy was
   // structurally invisible to the "defend a threatened structure" check
@@ -1398,7 +1398,7 @@ function hasEmergency(state: GameState, aiPlayerId: number): boolean {
 // bounded flat-radius spread per enemy unit, not a real reachability BFS —
 // and NEVER looks at anything not currently visible/revealed to aiPlayerId,
 // so it can't cheat through fog of war.
-function computeThreatMap(state: GameState, aiPlayerId: number): Map<string, number> {
+export function computeThreatMap(state: GameState, aiPlayerId: number): Map<string, number> {
   const map = new Map<string, number>();
   for (const e of revealedEnemies(state, aiPlayerId)) {
     const rng = getEffectiveRange(state, e);
@@ -1503,7 +1503,7 @@ function planRoadArteryPath(state: GameState, unit: Unit, destination: HexCoord)
 // regardless of plan, this just changes which objective gets first refusal.
 export type AiPlan = 'DEFEND' | 'RAID_ECONOMY' | 'SIEGE' | 'TECH_UP' | 'EXPAND';
 
-function chooseStrategicPlan(state: GameState, aiPlayerId: number): AiPlan {
+export function chooseStrategicPlan(state: GameState, aiPlayerId: number): AiPlan {
   if (hasEmergency(state, aiPlayerId)) return 'DEFEND';
   const player = state.players[aiPlayerId];
   const mine = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId);
