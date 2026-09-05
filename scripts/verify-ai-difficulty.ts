@@ -109,16 +109,18 @@ console.log('\n=== Resource reservation: Normal+ saves instead of always spendin
   const state = setup('agrar', 'agrar');
   state.currentPlayerIndex = 0;
   // command_1 (first on the plan, no prereqs — see HARD_RESEARCH_PLAN's own
-  // comment for why it leads) costs 12 — set aura just short of it. The
-  // mandatory first Builder recruit (cost 2) is exempt.
+  // comment for why it leads) costs 12 — set aura just short of it. With
+  // zero Farms yet, BOTH the 1st (mandatory) and 2nd (parallelizes Farm-
+  // building — see chooseSpawnType) Builder recruits are exempt (cost 2
+  // each), leaving 11-2-2=7.
   state.players[0]!.aura = 11;
   runAiTurn(state, 'normal');
   check('Normal AI does NOT blow past the reservation on a discretionary recruit',
-    state.players[0]!.aura >= 9, `aura=${state.players[0]!.aura}`);
+    state.players[0]!.aura >= 7, `aura=${state.players[0]!.aura}`);
   check('Normal AI did NOT prematurely research a cheaper, lower-priority tech',
     !state.playerTech[0]!.researching);
-  check('Normal AI DID recruit its mandatory (exempt) first Builder',
-    state.trainingQueue.some(o => o.playerId === 0 && o.unitType === 'founder'));
+  check('Normal AI DID recruit its mandatory (exempt) Builders',
+    state.trainingQueue.filter(o => o.playerId === 0 && o.unitType === 'founder').length === 2);
 
   const state2 = setup('agrar', 'agrar');
   state2.currentPlayerIndex = 0;

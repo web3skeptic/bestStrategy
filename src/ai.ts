@@ -1477,8 +1477,18 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
   // v15). Get exactly one out first — without it Agrar can never build a
   // Farm/Road — so this takes priority over any combat unit. count() already
   // includes a still-queued (not yet deployed) one, so a busy turn with
-  // multiple recruit passes never queues a second redundant Builder.
-  if (unlocked.has('founder') && count('founder') === 0 && aura >= cost('founder')) {
+  // multiple recruit passes never queues a redundant extra Builder.
+  //
+  // A single Builder serializes the whole Farm economy — it must physically
+  // stand next to a spot AND stay adjacent through the 1-round founding
+  // delay before it's free to start the next one, so a 2nd Builder roughly
+  // doubles Farm-building throughput while there's still Farm capacity left
+  // to fill. Cheap (2⚡, 1 Command point) relative to the payoff; stops
+  // being worth recruiting more of once Farms are maxed (a 3rd+ Builder
+  // would just be idle Road/pillage-repair labor, not double economy).
+  const farmCount = state.farms.filter(f => f.ownerId === aiPlayerId).length;
+  const desiredFounders = faction === 'agrar' && farmCount < MAX_ACTIVE_FARMS ? 2 : 1;
+  if (unlocked.has('founder') && count('founder') < desiredFounders && aura >= cost('founder')) {
     return 'founder';
   }
 
@@ -1538,9 +1548,16 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
     if (getUnitAt(state, structure.pos)) continue; // occupied — can't spawn (throttles multi-spawn)
     if (getPopulationCount(state, aiPlayerId) >= getPopulationCap(state, aiPlayerId)) break;
     const unlocked = getUnlockedUnits(state.playerTech[aiPlayerId]!, state.players[aiPlayerId]?.faction);
-    // chooseSpawnType only ever returns 'founder' while none exists yet
-    // (alive OR still queued — see its own count()), so `type !== 'founder'`
-    // alone is enough to identify "this recruit is discretionary".
+    // chooseSpawnType only ever returns 'founder' while there's still a
+    // genuine Builder need (the very first one, or a 2nd while Farms aren't
+    // maxed yet, to parallelize Farm-building — see its own comment), so
+    // `type !== 'founder'` alone identifies "this recruit is discretionary".
+    // A Builder recruit is exempt from reservation even then: it's part of
+    // the Farm economy the reservation exists to protect in the first
+    // place, not competing against it — blocking it on "not enough spare
+    // aura beyond the Farm reservation" would be self-defeating (a 2nd
+    // Builder recruit needing 2⚡ PLUS the already-reserved 6⚡ on top is a
+    // much higher bar than the 2nd Builder actually needs to clear).
     const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, cfg.useResourceReservation);
     if (!type) continue;
     if (effectiveFloor > 0 && !emergency && type !== 'founder') {
