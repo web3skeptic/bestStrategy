@@ -1531,7 +1531,7 @@ function chooseStrategicPlan(state: GameState, aiPlayerId: number): AiPlan {
 // share references with the live state; mutating a "clone" through the real
 // engine mutators would then corrupt the actual game. A full JSON round-trip
 // guarantees independence (GameState is plain, JSON-safe data).
-function cloneStateForSim(state: GameState): GameState {
+export function cloneStateForSim(state: GameState): GameState {
   return deserialize(JSON.parse(JSON.stringify(serialize(state))));
 }
 

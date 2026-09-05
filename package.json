@@ -21,7 +21,8 @@
     "test:fertile-sites": "tsx scripts/verify-fertile-sites.ts",
     "test:ai-difficulty": "tsx scripts/verify-ai-difficulty.ts",
     "test:ai-eval": "tsx scripts/verify-ai-eval.ts",
-    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval",
+    "test:ai-search": "tsx scripts/verify-ai-search.ts",
+    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search",
     "build:root": "vite build"
   },
   "keywords": [],
