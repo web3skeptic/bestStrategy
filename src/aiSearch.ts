@@ -327,13 +327,20 @@ function hashState(state: GameState): string {
   return parts.join('|');
 }
 
-interface SearchCtx {
+export interface SearchCtx {
   aiPlayerId: number;
   difficulty: AiDifficulty;
   deadline: number;
   nodeBudget: number;
   nodes: number;
   tt: Map<string, TTEntry>;
+}
+
+// Builds a fresh SearchCtx the same way searchBestAction does — exported
+// purely so quiescence (and other internals) can be exercised directly in
+// tests without having to reconstruct this shape by hand everywhere.
+export function makeSearchCtx(aiPlayerId: number, difficulty: AiDifficulty, timeBudgetMs = 1000): SearchCtx {
+  return { aiPlayerId, difficulty, deadline: Date.now() + timeBudgetMs, nodeBudget: MAX_SEARCH_NODES, nodes: 0, tt: new Map() };
 }
 
 // Whichever candidate's key matches the TT's remembered best move (if any)
@@ -395,13 +402,88 @@ function narrowCandidates(state: GameState, unit: Unit, forPlayerId: number, dif
   return generateCandidateActions(state, unit, forPlayerId, difficulty).slice(0, width);
 }
 
+// ── AI 2.0 Phase 6 — quiescence search ──────────────────────────────────────
+//
+// The horizon effect: the main search stops at a fixed activation depth
+// and evaluates whatever position it happens to land on — including one
+// where a profitable attack is sitting right there unresolved, which
+// evaluateState scores as if that material swing already happened (the
+// `threatenedMaterial`/guaranteed-kill terms from aiEval.ts approximate it,
+// but only as a discounted guess, never the real thing). A leaf that's
+// mid-fight is not a fair stopping point. So instead of evaluating a leaf
+// outright, keep searching ONLY attacks (never quiet moves — that's what
+// keeps this bounded) until the position is actually quiet, capped by its
+// own small ply budget independent of the main search's depth.
+export const QUIESCENCE_MAX_PLIES = 4;
+export const QUIESCENCE_WIDTH = 2;
+
+function noisyCandidates(state: GameState, unit: Unit, forPlayerId: number, difficulty: AiDifficulty, width: number): AiAction[] {
+  setActingPlayer(state, forPlayerId);
+  return generateCandidateActions(state, unit, forPlayerId, difficulty)
+    .filter(a => a.kind === 'attack' || a.kind === 'attackStructure' || a.kind === 'moveAttack')
+    .slice(0, width);
+}
+
+export function quiescence(
+  state: GameState, ctx: SearchCtx, alpha: number, beta: number,
+  mover: 'me' | 'opponent', lastActedPos: HexCoord, myPendingUnits: Unit[], qPlyLeft: number,
+): number {
+  ctx.nodes++;
+  if (state.phase === 'gameOver' || timeUp(ctx)) return evaluateState(state, ctx.aiPlayerId);
+  // "Stand pat": the side to move is never forced to keep trading — if
+  // every available follow-up attack is actually worse than just stopping
+  // here, stopping here is a legitimate, comparable option.
+  const standPat = evaluateState(state, ctx.aiPlayerId);
+  if (qPlyLeft <= 0) return standPat;
+
+  if (mover === 'opponent') {
+    if (standPat <= alpha) return standPat;
+    if (standPat < beta) beta = standPat;
+    const responders = respondersNear(state, ctx.aiPlayerId, lastActedPos, 2);
+    let value = standPat;
+    outer: for (const u of responders) {
+      for (const action of noisyCandidates(state, u, u.playerId, ctx.difficulty, QUIESCENCE_WIDTH)) {
+        if (timeUp(ctx)) break outer;
+        const { state: next, applied } = simulateAction(state, action);
+        if (!applied) continue;
+        const score = quiescence(next, ctx, alpha, beta, 'me', u.pos, myPendingUnits, qPlyLeft - 1);
+        if (score < value) value = score;
+        if (value < beta) beta = value;
+        if (beta <= alpha) break outer;
+      }
+    }
+    return value;
+  }
+
+  if (standPat >= beta) return standPat;
+  if (standPat > alpha) alpha = standPat;
+  let value = standPat;
+  // The unit whose action led into this node already spent its attack (a
+  // unit can't attack twice in one activation) — only its own STILL-PENDING
+  // teammates can extend the trade further.
+  for (const unit of myPendingUnits) {
+    if (unit.hp <= 0) continue;
+    for (const action of noisyCandidates(state, unit, ctx.aiPlayerId, ctx.difficulty, QUIESCENCE_WIDTH)) {
+      if (timeUp(ctx)) break;
+      const { state: next, applied } = simulateAction(state, action);
+      if (!applied) continue;
+      const score = quiescence(next, ctx, alpha, beta, 'opponent', unit.pos, myPendingUnits, qPlyLeft - 1);
+      if (score > value) value = score;
+      if (value > alpha) alpha = value;
+      if (alpha >= beta) return value;
+    }
+  }
+  return value;
+}
+
 function minimax(
   state: GameState, ctx: SearchCtx, plyLeft: number, alpha: number, beta: number,
   mover: 'me' | 'opponent', lastActedPos: HexCoord, myPendingUnits: Unit[],
 ): number {
   ctx.nodes++;
-  if (state.phase === 'gameOver' || plyLeft <= 0 || timeUp(ctx)) {
-    return evaluateState(state, ctx.aiPlayerId);
+  if (state.phase === 'gameOver') return evaluateState(state, ctx.aiPlayerId);
+  if (plyLeft <= 0 || timeUp(ctx)) {
+    return quiescence(state, ctx, alpha, beta, mover, lastActedPos, myPendingUnits, QUIESCENCE_MAX_PLIES);
   }
 
   const origAlpha = alpha;
