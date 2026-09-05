@@ -294,10 +294,11 @@ console.log('\n=== Mobile reserve: does NOT overreact to a distant, slow, easily
   // restraint, not that other rule's.
   const filler1 = createUnit('spearsman', 0, towardCenter(cap.pos, 3), techA, 'agrar');
   const filler2 = createUnit('spearsman', 0, towardCenter(cap.pos, 4), techA, 'agrar');
-  // A slow (speed 1, range 1 -> reach 2) Temple unit 6 hexes from the
-  // Capital — 3 turns to threaten, well past CREDIBLE_THREAT_TURNS. No
-  // reserve should be needed.
-  const slowEnemy = createUnit('warrior', 1, offToTheSide(cap.pos, 6), techB, 'temple');
+  // Even Temple's warrior (speed 2, range 1 -> reach 3, the faction's
+  // baseline mobility) needs 3 turns to threaten from 7 hexes out — past
+  // CREDIBLE_THREAT_TURNS. No reserve should be needed just because SOME
+  // enemy unit exists somewhere on the map.
+  const slowEnemy = createUnit('warrior', 1, offToTheSide(cap.pos, 7), techB, 'temple');
   state.units.push(nearGuard, farUnit, filler1, filler2, slowEnemy);
   state.currentPlayerIndex = 0;
   const distBefore = hexDistance(farUnit.pos, cap.pos);
@@ -324,6 +325,52 @@ console.log('\n=== Road arteries: Builder lays a multi-segment connected path, n
   }
   check('at least one Builder activation laid more than 1 Road segment at once',
     sawMultiSegment, `rounds checked=${rounds}`);
+}
+
+// Regression: DEFEND used to make the Builder prioritize Road over Farm —
+// but DEFEND (hasEmergency) fires easily against a naturally fast opponent
+// (practically any Temple unit within striking range reads as "credible"),
+// so that swap meant the Farm network could stop growing for most of a
+// real game, not just during a genuine emergency. Farm must always come
+// first regardless of plan.
+console.log('\n=== Agrar keeps building Farms even while a fast enemy is within striking range ===');
+{
+  const state = setup('agrar', 'temple');
+  for (const p of state.players) p.aura = 200;
+  let rounds = 0;
+  let sawFarm = false;
+  while (rounds < 30 && state.phase === 'playing' && !sawFarm) {
+    rounds++;
+    const seat = getCurrentPlayer(state).id;
+    runAiTurn(state, 'hard', seat);
+    if (state.farms.some(f => f.ownerId === 0)) sawFarm = true;
+    endTurn(state);
+  }
+  check('a Farm gets built within the first 30 rounds even against Temple',
+    sawFarm, `rounds checked=${rounds}`);
+}
+
+// Regression: pickObjective had NO priority at all for an unclaimed neutral/
+// ruined strategic site — besiege/hunt only ever considered structures the
+// ENEMY already owned, so a Temple unit never walked toward a neutral site
+// unless it happened to already be standing on one. Confirmed via actual
+// play, not just a synthetic scenario: Temple simply never captured either
+// neutral site over an entire game.
+console.log('\n=== Temple actively captures neutral strategic sites, not just by coincidence ===');
+{
+  const state = setup('temple', 'temple');
+  for (const p of state.players) p.aura = 200;
+  let rounds = 0;
+  let firstCaptureRound: number | null = null;
+  while (rounds < 30 && state.phase === 'playing' && firstCaptureRound === null) {
+    rounds++;
+    const seat = getCurrentPlayer(state).id;
+    runAiTurn(state, 'hard', seat);
+    if (state.strategicSites.some(s => s.state === 'temple' || s.founding)) firstCaptureRound = rounds;
+    endTurn(state);
+  }
+  check('at least one neutral site is claimed or under founding within 30 rounds',
+    firstCaptureRound !== null, `rounds checked=${rounds}`);
 }
 
 // ── No cheating: all 4 difficulties only ever act through canonical engine mutators ──

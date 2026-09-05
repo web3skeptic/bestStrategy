@@ -554,18 +554,6 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
     if (defenderValue < threatValue) return s.pos;
   }
 
-  // DEFEND plan (a confirmed emergency, not just "an enemy exists
-  // somewhere") — interior lines: don't leave the rest of the army scattered
-  // deep in enemy territory while home is under real pressure. Pulling back
-  // within reach of the Capital means the NEXT threatened structure actually
-  // has reinforcements available a turn or two away, not several turns of
-  // travel away. A tighter radius than the generic low-army rally below —
-  // this fires regardless of army size, because a big army split across the
-  // map is exactly as unable to respond in time as a small one.
-  if (plan === 'DEFEND' && capital && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS) {
-    return capital.pos;
-  }
-
   // v14 — a not-already-mine Fertile Site is a real objective (Agrar
   // mirror only; state.fertileSites is empty in every other matchup, so
   // this is a no-op there). Contested map control, not free — walking a
@@ -574,6 +562,22 @@ function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: A
   if (player?.faction === 'agrar') {
     const openFertile = state.fertileSites.find(f => f.ownerId !== aiPlayerId);
     if (openFertile) return openFertile.pos;
+  }
+
+  // An unclaimed (neutral or ruined, not already being founded/reconstructed
+  // by someone else) strategic site is a real objective for Temple — any
+  // Temple unit can found one (v15, no dedicated founder type), and there
+  // was previously NO explicit priority sending anyone toward one at all:
+  // besiege/hunt below only ever considers structures the ENEMY already
+  // owns, so a neutral site just sat there uncontested for the entire game
+  // unless a unit happened to wander onto it by coincidence. Low-risk,
+  // high-value economic development — exempt from the "mass before
+  // attacking" caution below, same as the Fertile Site check above.
+  if (player?.faction === 'temple') {
+    const openSite = bestBy(
+      state.strategicSites.filter(s => (s.state === 'neutral' || s.state === 'ruins') && !s.founding),
+      s => -hexDistance(unit.pos, s.pos));
+    if (openSite) return openSite.pos;
   }
 
   // RAID_ECONOMY plan — a Raider heading for an exposed enemy Farm takes
@@ -817,10 +821,15 @@ function actCombatUnit(
       // A whole path is picked toward an actual strategic destination (see
       // chooseRoadArteryDestination/planRoadArteryPath) and laid in one
       // activation via buildRoadPath, instead of one arbitrary adjacent hex
-      // at a time. Under DEFEND (a real threat is already active, not just
-      // anticipated) interior lines matter more than one more Farm right
-      // now, so Road takes priority over Farm; otherwise Farm-first as
-      // before (the faction's core economy).
+      // at a time. Farm always comes first — it's the faction's core
+      // economy (§6-9) — Road is only the fallback when no valid Farm hex
+      // exists this turn. An earlier version swapped this priority under
+      // DEFEND, but DEFEND (hasEmergency) fires easily against a naturally
+      // fast opponent — practically any Temple unit within striking range
+      // counts as a "credible" threat — and swapping the priority meant the
+      // Farm network could stop growing for most of a real game the moment
+      // any Temple unit came within a few hexes, not just during a genuine
+      // emergency.
       const capitalPos = getPlayerCapital(state, aiPlayerId)?.pos;
       const buildRoadNow = (): boolean => {
         if (getValidRoadHexes(state, unit).filter(h => canBuildRoad(state, unit, h)).length === 0) return false;
@@ -843,11 +852,7 @@ function actCombatUnit(
         actions.push({ type: 'upgrade', pos: { ...farmHex }, description: `${difficultyLabel(difficulty)} begins building a Farm at (${farmHex.q},${farmHex.r})` });
         return true;
       };
-      if (plan === 'DEFEND') {
-        if (buildRoadNow() || buildFarmNow()) return;
-      } else {
-        if (buildFarmNow() || buildRoadNow()) return;
-      }
+      if (buildFarmNow() || buildRoadNow()) return;
     }
   }
   if (unit.hasAttacked) return;
@@ -1137,16 +1142,22 @@ function enemyCanReachNextTurn(state: GameState, e: Unit, target: HexCoord): boo
 
 function hasEmergency(state: GameState, aiPlayerId: number): boolean {
   const capital = getPlayerCapital(state, aiPlayerId);
-  // The Capital never regenerates HP, so ANY damage on it is unambiguous
-  // proof an enemy already reached it once — not a hypothetical risk.
-  // Waiting for it to drop below 50% before treating this as an emergency
-  // was far too late for a slower faction to actually respond to: by the
-  // time a speed-1 army could travel back, the raid that did the first
-  // 20-30% of damage was long gone and the SAME raid (or its friends)
-  // finished the job before reinforcements arrived. Anticipate instead —
-  // one confirmed hit is reason enough to stay defensive for a while.
-  if (capital && capital.hp < capital.maxHp) return true;
+  // Substantial damage, OR a currently-active fast threat — NOT "ever took
+  // a single hit". The Capital never regenerates HP, so an "any damage"
+  // reading here was permanently stuck true for the rest of the game after
+  // one graze, since this feeds the DEFEND strategic plan — whose
+  // consequences are much heavier than the (separately, correctly, always-
+  // sensitive) garrison check in pickObjective: DEFEND makes the Builder
+  // stop building Farms in favour of Roads, and recalls ANY unit more than
+  // a few hexes from home regardless of what it's doing. That combination
+  // meant one early graze quietly froze the entire economy AND stopped
+  // Temple from ever advancing on a neutral site again for the rest of the
+  // match. Both conditions below are naturally transient — they stop being
+  // true again once the HP threshold is no longer crossed or the fast
+  // threat is gone/out of range, unlike "hp < maxHp" which never resets.
+  if (capital && capital.hp / capital.maxHp < 0.5) return true;
   const enemies = revealedEnemies(state, aiPlayerId);
+  if (capital && enemies.some(e => turnsToThreatenCapital(state, e, capital.pos) <= CREDIBLE_THREAT_TURNS)) return true;
   // See pickObjective's myStructures comment — Farms must be included here
   // too, or an Agrar economy under active raid would never count as an
   // emergency worth breaking resource reservation for.
