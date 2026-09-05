@@ -209,6 +209,10 @@ export const TEMPLE_II_PRODUCTION_BONUS = 1;
 export const ROAD_COST_PER_HEX = 1;
 export const ROAD_MOVEMENT_BONUS = 1;
 export const ROAD_PILLAGE_REBUILD_COST = 1;
+// A Builder may lay this many contiguous Road segments in a single
+// activation (see buildRoadPath in game.ts) — still 1⚡/hex, still one
+// activation total, just no longer one-hex-per-turn for the whole path.
+export const ROAD_SEGMENTS_PER_ACTIVATION = 3;
 
 // §32-36 — combat constants relevant to the data model (TECH_COST lives in
 // types.ts, next to TECH_NODES — the single source of truth for tech cost).

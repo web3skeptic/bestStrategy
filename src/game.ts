@@ -20,7 +20,7 @@ import {
   FERTILE_SITE_INCOME,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
-  ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
+  ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, ROAD_SEGMENTS_PER_ACTIVATION,
 } from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
@@ -1812,6 +1812,23 @@ export function getRoadAt(state: GameState, pos: HexCoord): Road | undefined {
 // not under a site/Capital/Farm, and itself adjacent to the Capital, an
 // active Farm, or an existing Road (all belonging to the Builder's own
 // player — the network only ever grows from its own infrastructure).
+// Every terrain/occupancy rule a Road hex must satisfy, independent of WHERE
+// it needs to connect from — split out from getValidRoadHexes so a
+// multi-segment path (buildRoadPath below) can reuse the exact same rules
+// for its 2nd/3rd segments without re-deriving them.
+export function isLegalRoadTile(state: GameState, hex: HexCoord): boolean {
+  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return false; // off-map
+  const key = hexKey(hex);
+  if (state.walls.has(key)) return false; // no roads over impassable mountains
+  if (getRoadAt(state, hex)) return false; // already a road here
+  if (getStrategicSiteAt(state, hex)) return false; // no roads under a site
+  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) return false; // no roads under a Fertile Site
+  if (state.capitals.some(c => hexEqual(c.pos, hex))) return false; // no roads under a Capital
+  if (state.farms.some(f => hexEqual(f.pos, hex))) return false; // no roads under a Farm (founding or active)
+  if (getUnitAt(state, hex)) return false;
+  return true;
+}
+
 export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return [];
@@ -1823,15 +1840,7 @@ export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
   ];
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
-    if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) continue; // off-map
-    const key = hexKey(hex);
-    if (state.walls.has(key)) continue; // no roads over impassable mountains
-    if (getRoadAt(state, hex)) continue; // already a road here
-    if (getStrategicSiteAt(state, hex)) continue; // no roads under a site
-    if (state.fertileSites.some(f => hexEqual(f.pos, hex))) continue; // no roads under a Fertile Site
-    if (state.capitals.some(c => hexEqual(c.pos, hex))) continue; // no roads under a Capital
-    if (state.farms.some(f => hexEqual(f.pos, hex))) continue; // no roads under a Farm (founding or active)
-    if (getUnitAt(state, hex)) continue;
+    if (!isLegalRoadTile(state, hex)) continue;
     if (!anchors.some(a => hexDistance(a, hex) === 1)) continue; // must be adjacent to the Capital, a Farm, or an existing Road
     result.push(hex);
   }
@@ -1860,6 +1869,49 @@ export function buildRoad(state: GameState, unitId: string, pos: HexCoord): bool
   unit.hasMoved = true;
   unit.hasAttacked = true;
   return true;
+}
+
+// A Road only pays off once it forms a useful connected route, not as one
+// isolated hex — so a Builder may lay up to ROAD_SEGMENTS_PER_ACTIVATION
+// contiguous segments in a single activation instead of needing one whole
+// turn per hex. Same per-hex cost/rules as buildRoad (this is not a new
+// legality system — the first segment must satisfy the exact same
+// canBuildRoad check, every later segment must satisfy the exact same
+// terrain/occupancy rules via isLegalRoadTile plus simple adjacency to the
+// previous segment); it just builds as many of the given path's hexes as
+// are legal AND affordable, stopping at the first one that isn't (never
+// auto-spends more than the caller's proposed path, and never requires
+// affording the whole path up front — see §6 partial-build). Returns
+// exactly the hexes actually built (empty if even the first was illegal —
+// the activation is only consumed if at least one segment was built).
+export function buildRoadPath(state: GameState, unitId: string, path: HexCoord[]): HexCoord[] {
+  const unit = state.units.find(u => u.id === unitId && u.hp > 0);
+  if (!unit || unit.hasMoved || unit.hasAttacked) return [];
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return [];
+  const built: HexCoord[] = [];
+  let prev: HexCoord | null = null;
+  for (let i = 0; i < path.length && i < ROAD_SEGMENTS_PER_ACTIVATION; i++) {
+    const hex = path[i]!;
+    const cost = state.pillagedRoadHexes.has(hexKey(hex)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+    if (i === 0) {
+      if (!canBuildRoad(state, unit, hex)) break;
+    } else {
+      if (!prev || hexDistance(prev, hex) !== 1) break; // must chain off the segment just placed
+      if (!isLegalRoadTile(state, hex)) break;
+      if (player.aura < cost) break;
+    }
+    player.aura -= cost;
+    state.pillagedRoadHexes.delete(hexKey(hex));
+    state.roads.push({ pos: { ...hex }, ownerId: player.id });
+    built.push(hex);
+    prev = hex;
+  }
+  if (built.length > 0) {
+    unit.hasMoved = true;
+    unit.hasAttacked = true;
+  }
+  return built;
 }
 
 // v14 — pillaging a Road is a real, deliberate action now, not an automatic

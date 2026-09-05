@@ -7,11 +7,11 @@
 //
 // Run with: npx tsx scripts/verify-roads.ts
 import {
-  createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, getRoadAt, getValidRoadHexes,
-  getEffectiveSpeed, selectUnit, moveUnit, getPlayerCapital, getStructureAt,
+  createGameState, endTurn, chooseFaction, canBuildRoad, buildRoad, buildRoadPath, getRoadAt, getValidRoadHexes,
+  isLegalRoadTile, getEffectiveSpeed, selectUnit, moveUnit, getPlayerCapital, getStructureAt,
   createUnit, canStartFarm, startFarm, canPillageRoad, pillageRoad,
 } from '../src/game';
-import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, AGRAR_FARM_COST } from '../src/factions';
+import { ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, ROAD_SEGMENTS_PER_ACTIVATION, AGRAR_FARM_COST } from '../src/factions';
 import { hexNeighbors, hexEqual, hexKey, hexDistance } from '../src/hex';
 import type { GameState, Unit } from '../src/types';
 
@@ -315,6 +315,115 @@ console.log('\n=== Pillage (§25, v14) ===');
   check('rebuilding charges ROAD_PILLAGE_REBUILD_COST, not the fresh-build cost', player.aura === before - ROAD_PILLAGE_REBUILD_COST, `aura ${before}->${player.aura}`);
   check('the hex is no longer marked pillaged', !state.pillagedRoadHexes.has(`${roadPos.q},${roadPos.r}`));
   check('the road is restored', !!getRoadAt(state, roadPos));
+}
+
+// Builds a straight-line chain of `len` hexes starting from a Builder's
+// first legal Road hex, walking outward away from the Capital one neighbour
+// at a time (clearRoadArea already guarantees the whole area is open, so
+// every step along the way is legal terrain).
+function straightRoadChain(state: GameState, builder: Unit, capitalPos: { q: number; r: number }, len: number): { q: number; r: number }[] {
+  const first = getValidRoadHexes(state, builder)[0]!;
+  // Fixed step direction (the single hex-step from Capital to `first`),
+  // applied repeatedly — recomputing the direction from the CURRENT hex each
+  // time would double the offset every step under axial coords (since
+  // "current - capital" grows every hex), producing a chain whose hexes
+  // aren't actually mutually adjacent past the 2nd one.
+  const step = { q: first.q - capitalPos.q, r: first.r - capitalPos.r };
+  const chain = [first];
+  let current = first;
+  while (chain.length < len) {
+    const next = { q: current.q + step.q, r: current.r + step.r };
+    if (!isLegalRoadTile(state, next)) break;
+    chain.push(next);
+    current = next;
+  }
+  return chain;
+}
+
+console.log('\n=== Builder may lay up to 3 contiguous Road segments in one activation (§35-38) ===');
+{
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  const path = straightRoadChain(state, builder, capital.pos, 3);
+  check('setup: found 3 legal contiguous candidate hexes', path.length === 3);
+  check('ROAD_SEGMENTS_PER_ACTIVATION caps at 3', ROAD_SEGMENTS_PER_ACTIVATION === 3);
+
+  const player = state.players[0]!;
+  const before = player.aura;
+  const built = buildRoadPath(state, builder.id, path);
+  check('all 3 segments were built', built.length === 3, `built=${built.length}`);
+  check('exactly 3⚡ was deducted (1 per hex)', player.aura === before - 3, `aura ${before}->${player.aura}`);
+  for (const hex of path) check(`Road now exists at (${hex.q},${hex.r})`, !!getRoadAt(state, hex));
+  check('the whole path consumed only ONE Builder activation', builder.hasMoved && builder.hasAttacked);
+  check('the Builder cannot lay another path this same activation',
+    buildRoadPath(state, builder.id, straightRoadChain(state, builder, capital.pos, 1)).length === 0);
+}
+
+console.log('\n=== A path longer than ROAD_SEGMENTS_PER_ACTIVATION is truncated, not spilled into a 2nd activation ===');
+{
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  const path = straightRoadChain(state, builder, capital.pos, 5);
+  check('setup: found 5 legal contiguous candidate hexes', path.length === 5);
+  const player = state.players[0]!;
+  const before = player.aura;
+  const built = buildRoadPath(state, builder.id, path);
+  check('only the first 3 segments were built, never all 5', built.length === 3, `built=${built.length}`);
+  check('only 3⚡ was deducted, not 5', player.aura === before - 3, `aura ${before}->${player.aura}`);
+  check('the 4th/5th hexes were never created', !getRoadAt(state, path[3]!) && !getRoadAt(state, path[4]!));
+}
+
+console.log('\n=== Partial Road-path build when Energy runs short (§6, §36) ===');
+{
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  const path = straightRoadChain(state, builder, capital.pos, 3);
+  const player = state.players[0]!;
+  player.aura = ROAD_COST_PER_HEX * 2; // enough for exactly 2, not 3
+  const built = buildRoadPath(state, builder.id, path);
+  check('only 2 of the 3 requested segments were built', built.length === 2, `built=${built.length}`);
+  check('aura is fully spent, never overdrawn', player.aura === 0, `aura=${player.aura}`);
+  check('the 3rd hex was never created', !getRoadAt(state, path[2]!));
+}
+
+console.log('\n=== Road-path segments must be contiguous (§37) ===');
+{
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  const first = getValidRoadHexes(state, builder)[0]!;
+  // A hex that's legal on its own terrain-wise but NOT adjacent to `first` —
+  // far on the opposite side of the Capital.
+  const disconnected = { q: capital.pos.q - (first.q - capital.pos.q) * 3, r: capital.pos.r - (first.r - capital.pos.r) * 3 };
+  const built = buildRoadPath(state, builder.id, [first, disconnected]);
+  check('the disconnected 2nd hex is rejected — only the 1st segment builds', built.length === 1, `built=${built.length}`);
+  check('the disconnected hex was never built', !getRoadAt(state, disconnected));
+}
+
+console.log('\n=== Road-path building never bypasses normal Road legality (§38) ===');
+{
+  const state = setup();
+  const capital = state.capitals.find(c => c.playerId === 0)!;
+  const builder = clearRoadArea(state, 0);
+  const [h1, h2] = straightRoadChain(state, builder, capital.pos, 2);
+
+  // Occupancy: an enemy unit sits on what would be the 2nd segment.
+  const blocker = createUnit('warrior', 1, h2!, state.playerTech[1], 'temple');
+  state.units.push(blocker);
+  const built = buildRoadPath(state, builder.id, [h1!, h2!]);
+  check('an occupied 2nd hex is rejected, same as single-hex buildRoad would reject it', built.length === 1);
+  check('the occupied hex was never built', !getRoadAt(state, h2!));
+
+  // Ownership: Temple has no founder-equivalent access to this API either.
+  const state2 = setup();
+  const capital2 = state2.capitals.find(c => c.playerId === 1)!;
+  const templeBuilder = state2.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  templeBuilder.pos = { ...hexNeighbors(capital2.pos)[0]! };
+  const builtTemple = buildRoadPath(state2, templeBuilder.id, [hexNeighbors(templeBuilder.pos)[0]!]);
+  check('a non-Builder / non-Agrar unit cannot use buildRoadPath either', builtTemple.length === 0);
 }
 
 console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);
