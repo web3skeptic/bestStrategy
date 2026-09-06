@@ -385,6 +385,34 @@ export function neutralSiteCountForPlayers(numPlayers: number): number {
   return numPlayers;
 }
 
+// ── Fixed 1v1 strategic geometry ─────────────────────────────────────────────
+// The competitive skeleton (Capitals + the 2 neutral-objective slots) is now
+// a hardcoded, canonical layout for every 2-player game, not randomized per
+// match — with two already-asymmetric factions, randomizing the most
+// important economic geography on top makes balance far harder to reason
+// about for no real replayability gain (every layout is still "two Capitals,
+// two objectives, 14 apart" — only which side of the map happened to get
+// which player changed). Terrain (hills/forests/mountains) stays procedural
+// around this fixed skeleton, so no two matches look identical, but the
+// competitive foundation itself is now stable and analyzable. Only used for
+// numPlayers === 2 (see placeSites in game.ts) — 3+ player games keep the
+// original spread-maximizing procedural placement, since "the" canonical
+// layout only means something for a clean 1v1.
+export const FIXED_1V1_CAPITAL_A: HexCoord = { q: -7, r: 0 };
+export const FIXED_1V1_CAPITAL_B: HexCoord = { q: 7, r: 0 };
+// Distance 8 from BOTH Capitals (not "your side" vs "their side"), and 4
+// apart from each other — a genuine first-turn choice of which to contest,
+// not "take your own". Used for every matchup except Agrar-vs-Agrar.
+export const FIXED_1V1_TEMPLE_SITES: [HexCoord, HexCoord] = [{ q: -1, r: 2 }, { q: 1, r: -2 }];
+// Agrar-vs-Agrar only (see resolveMatchupObjectives in game.ts) — much more
+// central than the Temple pair: 2 apart from each other with exactly one
+// hex between them (never adjacent — two antipodal integer hex coordinates
+// never can be — so controlling one doesn't trivially hand you the other),
+// and neither sitting on the map's true centre (0,0) itself, which stays a
+// neutral maneuvering/fighting tile rather than being occupied by an
+// objective.
+export const FIXED_1V1_FERTILE_SITES: [HexCoord, HexCoord] = [{ q: -1, r: 0 }, { q: 1, r: 0 }];
+
 export type GamePhase = 'playing' | 'gameOver';
 
 export type SelectionMode = 'unit' | 'site' | null;

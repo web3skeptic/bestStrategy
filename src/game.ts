@@ -6,6 +6,7 @@ import {
   TechId, TechNode, TECH_NODES, PlayerTech,
   TeleportBuilding, TELEPORT_BUILD_COST, TELEPORT_RADIUS, TELEPORT_MAX_PER_TEMPLE,
   PLAYER_COLORS, mapRadiusForPlayers, neutralSiteCountForPlayers,
+  FIXED_1V1_CAPITAL_A, FIXED_1V1_CAPITAL_B, FIXED_1V1_TEMPLE_SITES, FIXED_1V1_FERTILE_SITES,
   FactionId,
 } from './types';
 import {
@@ -661,6 +662,32 @@ function capitalHasOpenApproach(capital: HexCoord, walls: Set<string>, mapRadius
   return reached >= totalNonWall * minFraction;
 }
 
+// A genuine walkable (non-wall) path exists between `a` and `b` — used
+// alongside capitalHasOpenApproach's local-openness check to guarantee each
+// Capital actually has a viable route to each possible objective, not just
+// "isn't locally boxed in". Still a proxy, not a full disjoint-paths/max-flow
+// chokepoint analyzer (see capitalHasOpenApproach's own comment) — combined
+// with MAX_CONTIGUOUS_WALLS capping how large any single mountain range can
+// ever be, a bare connectivity requirement is enough to catch the case that
+// actually matters here: a wall formation that fully cuts a Capital off from
+// an objective it needs to reach.
+function hasRouteBetween(a: HexCoord, b: HexCoord, walls: Set<string>, mapRadius: number): boolean {
+  if (walls.has(hexKey(a)) || walls.has(hexKey(b))) return true; // never block on a wall sitting on a reserved tile itself
+  const visited = new Set<string>([hexKey(a)]);
+  const queue: HexCoord[] = [a];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (hexEqual(cur, b)) return true;
+    for (const n of hexNeighbors(cur)) {
+      const nk = hexKey(n);
+      if (visited.has(nk) || hexDistance({ q: 0, r: 0 }, n) > mapRadius || walls.has(nk)) continue;
+      visited.add(nk);
+      queue.push(n);
+    }
+  }
+  return false;
+}
+
 const TERRAIN_GEN_ATTEMPTS = 12; // bounded retry if a Capital ends up boxed in
 
 // ── Support boosts ──
@@ -1035,79 +1062,22 @@ function placeSites(mapRadius: number, numPlayers: number, numNeutral: number): 
   // corners of the map vary), but the SEPARATION itself is never anything
   // less than the map's full diameter, unlike the general N-player spread
   // below (which only maximizes, it doesn't guarantee the true max).
-  if (numPlayers === 2) {
-    const ring = all.filter(hex => hexDistance({ q: 0, r: 0 }, hex) === mapRadius);
-    const withRoom = shuffle(ring.filter(hex => freeNeighbors(hex, []).length >= STARTING_UNITS_PER_PLAYER));
-    const pool = withRoom.length > 0 ? withRoom : shuffle([...ring]);
-    for (const a of pool) {
-      const b: HexCoord = { q: -a.q, r: -a.r }; // antipodal — always on-map, always 2*mapRadius away
-      const starts = [a, b];
-      // §21 (v14 map-fairness pass) — 180° ROTATIONAL symmetry for the
-      // neutral objectives too, not just spread-maximization: place the
-      // first via the existing best-candidate algorithm, then force its
-      // exact antipodal counterpart as the second (numNeutral is always 2
-      // in a 1v1 match — see neutralSiteCountForPlayers). Since the two
-      // Capitals are themselves already an exact 180° pair (a/b above),
-      // rotating the whole board 180° maps player A's Capital+objective
-      // onto player B's, guaranteeing equal geographic access for both —
-      // not just "far enough apart" as the old spread-only heuristic gave.
-      // Falls back to the general spread algorithm if the naive rotation
-      // happens to collide with something (never hangs/crashes).
-      // NOTE — this deliberately does NOT bias toward the map centre: for a
-      // Temple-involved matchup these sites stay Temples, and Temples read
-      // right sitting out along the shared perpendicular "mid-line" between
-      // the two Capitals, not dead-center. The one matchup that DOES want a
-      // dead-center objective — Agrar vs Agrar's Fertile Sites — gets its
-      // own separate, dead-center reposition in resolveMatchupObjectives,
-      // entirely after this generic (matchup-blind) placement runs.
-      //
-      // Fully DETERMINISTIC given the Capital pair — no shuffling, no random
-      // sampling among tied candidates. Ranked by (1) maximize the minimum
-      // distance to BOTH Capitals, (2) among ties, minimize the ASYMMETRY
-      // between the two distances — hex lattices only have 60°-multiple
-      // rotational symmetry (not continuous), so the true perpendicular
-      // point doesn't always land exactly on a lattice hex; several
-      // candidates can tie on (1) while still differing in how evenly they
-      // split distance between the two Capitals (one lopsided 9-vs-12 pick
-      // used to slip through when a balanced 10-vs-10 candidate tied on
-      // just the raw minimum). (3) A final stable positional tie-break for
-      // full determinism. This is what actually guarantees "reachable by
-      // both parties at the same speed", not just "far enough from both".
-      let neutrals: HexCoord[] | null = null;
-      if (numNeutral === 2) {
-        const eligible = all.filter(hex =>
-          !starts.some(t => hexEqual(t, hex)) && minDistTo(hex, starts) >= MIN_TEMPLE_SEPARATION);
-        // `all` (generateHexMap) is itself already produced in a fixed,
-        // un-shuffled order for a given mapRadius, so scanning it in order
-        // with strict-better comparisons is already fully deterministic —
-        // no shuffle, no random sampling among tied candidates.
-        let bestMinDist = -Infinity;
-        let bestAsymmetry = Infinity;
-        let n0: HexCoord | null = null;
-        for (const hex of eligible) {
-          const dists = starts.map(s => hexDistance(s, hex));
-          const minDist = Math.min(...dists);
-          const asymmetry = Math.max(...dists) - minDist;
-          const better = minDist > bestMinDist || (minDist === bestMinDist && asymmetry < bestAsymmetry);
-          if (better) { bestMinDist = minDist; bestAsymmetry = asymmetry; n0 = hex; }
-        }
-        if (n0) {
-          const n1: HexCoord = { q: -n0.q, r: -n0.r };
-          const secondValid = hexDistance({ q: 0, r: 0 }, n1) <= mapRadius
-            && !hexEqual(n1, n0) && minDistTo(n1, [...starts, n0]) >= MIN_TEMPLE_SEPARATION;
-          if (secondValid) neutrals = [n0, n1];
-        }
-      }
-      if (!neutrals) neutrals = spread(numNeutral, starts, MIN_TEMPLE_SEPARATION, false);
-      if (!neutrals) continue;
-      const unitPositions = assignUnits(starts, neutrals);
-      if (!unitPositions) continue;
-      return { starts, neutrals, unitPositions };
-    }
-    // Falls through to the general spread/greedy logic below only if no
-    // boundary hex could also fit the neutral sites + starting-unit room
-    // (astronomically unlikely at the game's actual map sizes) — still
-    // guaranteed to never hang or crash.
+  if (numPlayers === 2 && mapRadius === 7) {
+    // Fixed competitive skeleton (see FIXED_1V1_CAPITAL_A/B in types.ts) —
+    // the ONLY randomization left is a coin flip for which player lands on
+    // which side, purely cosmetic (the board is symmetric either way, and
+    // ownership of each objective is decided by who claims it, not by which
+    // side of the map it's nominally on).
+    const flip = Math.random() < 0.5;
+    const starts = flip
+      ? [FIXED_1V1_CAPITAL_A, FIXED_1V1_CAPITAL_B]
+      : [FIXED_1V1_CAPITAL_B, FIXED_1V1_CAPITAL_A];
+    const neutrals: HexCoord[] = [...FIXED_1V1_TEMPLE_SITES];
+    const unitPositions = assignUnits(starts, neutrals);
+    if (unitPositions) return { starts, neutrals, unitPositions };
+    // Should never happen for the fixed layout (there's always room), but
+    // falls through to the general algorithm below rather than ever
+    // crashing if it somehow does.
   }
 
   // Build several complete layouts and keep the most spread-out one (largest
@@ -1197,7 +1167,23 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   // — a match starts with zero units, see §3), but the reserved-tile
   // computation is still passed into generateTerrain so those tiles around
   // each Capital stay clear/passable for the player's first recruits.
+  //
+  // For the fixed 1v1 layout, the eventual objective isn't decided until
+  // BOTH factions reveal (secrecy — §29, terrain must never be generated
+  // differently based on a hidden pick), so BOTH possible objective pairs —
+  // the Temple sites AND the Agrar-vs-Agrar Fertile sites — get the same
+  // mountain-free protection up front, regardless of which one actually
+  // ends up live. Fertile positions are otherwise unused here (they aren't
+  // added to strategicSites — see resolveMatchupObjectives/
+  // centralFertileSitePositions, which only reads them back out of terrain).
+  const fixed1v1 = numPlayers === 2 && mapRadius === 7
+    && layout.neutrals.length === 2 && hexEqual(layout.neutrals[0]!, FIXED_1V1_TEMPLE_SITES[0])
+    && hexEqual(layout.neutrals[1]!, FIXED_1V1_TEMPLE_SITES[1]);
+  const protectedSitePositions = fixed1v1
+    ? [...layout.neutrals, ...FIXED_1V1_FERTILE_SITES]
+    : layout.neutrals;
   const allSitePositions = [...layout.starts, ...layout.neutrals];
+  const terrainProtectedPositions = [...layout.starts, ...protectedSitePositions];
   const allUnitPositions = layout.unitPositions.flat();
   // §25/§28 (v14 map-fairness pass) — regenerate terrain (bounded attempts)
   // if either Capital OR neutral/Temple site ends up with a choked/boxed-in
@@ -1205,15 +1191,19 @@ export function createGameState(playerConfigs?: PlayerConfig[]): GameState {
   // now covering both) already guarantees an open IMMEDIATE neighbourhood
   // every time; this retry catches a wall ring forming a bit further out —
   // a Temple surrounded a few tiles further back reads just as "blocked" to
-  // the player as a boxed-in Capital would.
+  // the player as a boxed-in Capital would. Also requires an actual walkable
+  // route (not just local openness) from each Capital to each possible
+  // objective — "protected route corridors", not literally mountain-free,
+  // just never fully cut off.
   let hills: Set<string>, walls: Set<string>, forests: Set<string>;
   let terrainAttempt = 0;
   do {
-    ({ hills, walls, forests } = generateTerrain(mapRadius, allSitePositions, allUnitPositions, layout.starts));
+    ({ hills, walls, forests } = generateTerrain(mapRadius, terrainProtectedPositions, allUnitPositions, layout.starts));
     terrainAttempt++;
   } while (
     terrainAttempt < TERRAIN_GEN_ATTEMPTS
-    && !allSitePositions.every(site => capitalHasOpenApproach(site, walls, mapRadius))
+    && (!allSitePositions.every(site => capitalHasOpenApproach(site, walls, mapRadius))
+      || !layout.starts.every(capital => protectedSitePositions.every(site => hasRouteBetween(capital, site, walls, mapRadius))))
   );
 
   // §3 — a match starts with the Capital only: no neutral Warrior/Archer/
@@ -1315,6 +1305,16 @@ function centralFertileSitePositions(state: GameState, fallback: HexCoord[]): He
   // zone from seeding, but the bar is the same: every immediate neighbour
   // clear, not just the site's own hex.
   const openNeighborhood = (hex: HexCoord): boolean => hexNeighbors(hex).every(n => !blocked(n));
+  // Try the canonical fixed pair first (see FIXED_1V1_FERTILE_SITES in
+  // types.ts) — generateTerrain already keeps this exact pair mountain-free
+  // regardless of which matchup ends up live (the reveal is still secret at
+  // map-generation time, so both possible objective pairs are protected up
+  // front), so this succeeds essentially always; the search below is only a
+  // defensive fallback for the vanishingly unlikely case it doesn't.
+  const [fixed0, fixed1] = FIXED_1V1_FERTILE_SITES;
+  if (!blocked(fixed0) && !blocked(fixed1) && openNeighborhood(fixed0) && openNeighborhood(fixed1)) {
+    return [fixed0, fixed1];
+  }
   const minDistToSet = (hex: HexCoord, refs: HexCoord[]): number =>
     refs.length ? Math.min(...refs.map(r => hexDistance(r, hex))) : Infinity;
   // Same reasoning as placeSites' centring pick: a candidate's antipode sits
