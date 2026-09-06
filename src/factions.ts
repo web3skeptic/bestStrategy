@@ -166,7 +166,13 @@ export const SITE_ESTABLISH_COST = 6;
 // 2 apart is legal, 1 apart (touching) is not. A Farm costing 6⚡ against
 // +1⚡/round income is a deliberate 6-round payback — a meaningful
 // long-term investment, not something bought casually alongside a full army.
-export const AGRAR_FARM_COST = 6;
+// 6->3 (balance pass) — Agrar was underperforming in real play; a 6-round
+// payback per Farm was too slow to ever compound into a real economy before
+// a match was decided. No longer matches SITE_ESTABLISH_COST 1:1 (that
+// invariant was Temple-side parity, not a hard requirement elsewhere) — a
+// Farm is now a 3-round payback, letting the network build out and start
+// paying for itself while a match is still being contested.
+export const AGRAR_FARM_COST = 3;
 export const AGRAR_FARM_INCOME = 1;
 export const MAX_ACTIVE_FARMS = 4;
 export const FARM_MIN_SPACING = 2; // Farms may not be directly adjacent; exactly 2 apart is legal

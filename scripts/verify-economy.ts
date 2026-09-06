@@ -163,7 +163,7 @@ console.log('\n=== Agrar Farms: construction (§3) ===');
 {
   const state = setup();
   clearFarmArea(state, 0);
-  check('AGRAR_FARM_COST is 6 (was 5)', AGRAR_FARM_COST === 6, `got ${AGRAR_FARM_COST}`);
+  check('AGRAR_FARM_COST is 3 (was 6)', AGRAR_FARM_COST === 3, `got ${AGRAR_FARM_COST}`);
   check('flat income with no Farms yet', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND, `income=${getPlayerIncome(state, 0)}`);
 
   const builder = founderOf(state, 0);
@@ -454,7 +454,7 @@ console.log('\n=== Temple I -> Temple II upgrade (v11) ===');
   const temple = foundTemple(state, 1, 0);
   check('founding produces a Temple I for the Temple faction', temple.state === 'temple' && temple.templeLevel === 1, `got ${temple.state}/${temple.templeLevel}`);
   const player = state.players[1]!;
-  check('SITE_ESTABLISH_COST is 6 (matches AGRAR_FARM_COST)', SITE_ESTABLISH_COST === 6, `got ${SITE_ESTABLISH_COST}`);
+  check('SITE_ESTABLISH_COST is 6 (unchanged; no longer tied to AGRAR_FARM_COST — see its own balance-pass comment)', SITE_ESTABLISH_COST === 6, `got ${SITE_ESTABLISH_COST}`);
   check('Temple I income is +1 (total 4)', getPlayerIncome(state, 1) === BASE_INCOME_PER_ROUND + TEMPLE_LEVEL_INCOME[1], `income=${getPlayerIncome(state, 1)}`);
   check('Temple I grants no production slot', getProductionSlots(state, 1) === 2, `got ${getProductionSlots(state, 1)}`);
   check('TEMPLE_UPGRADE_COST is 6 (matches SITE_ESTABLISH_COST)', TEMPLE_UPGRADE_COST === 6, `got ${TEMPLE_UPGRADE_COST}`);
@@ -516,16 +516,25 @@ console.log('\n=== Macro investment equality (§28-29) ===');
   // measuring aura drift across foundFarm/foundTemple — those helpers
   // advance real rounds, so base/Temple income would accrue in between and
   // confound a "spent" measurement).
+  //
+  // Balance pass — AGRAR_FARM_COST 6->3: Agrar was underperforming in real
+  // play, so this is now a DELIBERATE asymmetry, not a bug: a Farm is
+  // cheaper per-unit than a fully-developed Temple's equivalent cost, while
+  // still producing the exact same income/production output (checked
+  // below, unaffected by this change) — Agrar's economy now compounds
+  // faster for the same Energy spent. Only the COST-equality checks are
+  // gone; the income/production-equality checks stay, since those are
+  // still true by design.
   const cost2Farms = AGRAR_FARM_COST * 2;
   const cost4Farms = AGRAR_FARM_COST * 4;
   const cost1Temple = SITE_ESTABLISH_COST + TEMPLE_UPGRADE_COST;
   const cost2Temples = cost1Temple * 2;
-  check('2 Agrar Farms cost exactly 12⚡', cost2Farms === 12, `got ${cost2Farms}`);
-  check('4 Agrar Farms cost exactly 24⚡', cost4Farms === 24, `got ${cost4Farms}`);
+  check('2 Agrar Farms cost exactly 6⚡', cost2Farms === 6, `got ${cost2Farms}`);
+  check('4 Agrar Farms cost exactly 12⚡', cost4Farms === 12, `got ${cost4Farms}`);
   check('1 Temple II costs exactly 12⚡ (6 found + 6 upgrade)', cost1Temple === 12, `got ${cost1Temple}`);
   check('2 Temple II sites cost exactly 24⚡', cost2Temples === 24, `got ${cost2Temples}`);
-  check('2 Farms and 1 fully-developed Temple represent EQUAL macro investment (cost)', cost2Farms === cost1Temple);
-  check('4 Farms and 2 fully-developed Temples represent EQUAL macro investment (cost)', cost4Farms === cost2Temples);
+  check('Farms are now cheaper per-unit than Temple\'s equivalent investment (deliberate Agrar buff)',
+    cost2Farms < cost1Temple && cost4Farms < cost2Temples);
 
   const stateA = setup();
   clearFarmArea(stateA, 0);
