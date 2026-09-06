@@ -1210,7 +1210,18 @@ function actCombatUnit(
         if (!target) {
           const anchors = [capitalPos, ...state.farms.filter(f => f.ownerId === aiPlayerId).map(f => f.pos)];
           const openRoom = (p: HexCoord) => hexNeighbors(p).filter(h => isLegalRoadTile(state, h)).length;
-          target = bestBy(anchors, p => openRoom(p) * 10 - hexDistance(unit.pos, p));
+          const bestAnchor = bestBy(anchors, p => openRoom(p) * 10 - hexDistance(unit.pos, p));
+          // Only worth walking toward if it actually has open Road room —
+          // otherwise every anchor is equally hopeless (Farms maxed AND the
+          // whole network fully packed) and "closest anchor anyway" was
+          // just an arbitrary, purposeless walk repeated every turn for the
+          // rest of the game (the exact same class of bug as the Farm-cap
+          // one above, just one level down: an always-non-null fallback
+          // target with nothing legal ever actually reachable through it).
+          // Falling through to the general combat/objective logic below
+          // instead — the Builder isn't defenseless, and standing around
+          // forever heading nowhere wasn't better.
+          if (bestAnchor && openRoom(bestAnchor) > 0) target = bestAnchor;
         }
         const dest = target ? bestBy(state.moveHexes, h => -hexDistance(h, target!)) : null;
         if (dest) {
