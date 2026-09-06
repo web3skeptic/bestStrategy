@@ -781,7 +781,20 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
   // threat exposure) regardless of whether there's an actual reason to
   // retreat — it ended up recalling units with no real threat around at
   // all, undoing real, tested "don't overreact" behavior.
-  if (capital && combatUnitsAll.length < MIN_ARMY_TO_ATTACK && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
+  //
+  // EXCEPT: destroying a Capital is the ONLY win condition (§11), and a
+  // Capital never regenerates HP — any damage already on it is permanent
+  // progress, never something regrouping "preserves". Observed directly: a
+  // small army would reach a critically damaged enemy Capital (built Roads
+  // the whole way there) and then just turn around and go home because its
+  // total unit count never crossed MIN_ARMY_TO_ATTACK, abandoning an
+  // almost-won siege indefinitely while the opponent used the free time to
+  // reinforce. A real player finishes a nearly-dead Capital regardless of
+  // how "thin" their force feels in the moment.
+  const finishableCapital = state.capitals.find(c =>
+    c.playerId !== aiPlayerId && c.hp / c.maxHp < 0.5 && hexDistance(unit.pos, c.pos) <= 8);
+  if (capital && !finishableCapital && combatUnitsAll.length < MIN_ARMY_TO_ATTACK
+    && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
     return capital.pos;
   }
 
