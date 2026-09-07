@@ -1881,7 +1881,14 @@ function confirmBuildFarm(): void {
   clearBuildFarm();
   sendOrCall({ type: 'action', action: 'build-farm', params: { unitId, pos: selected } }, () => {
     const started = startFarm(state, unitId, selected);
-    if (started) logCombat(`Began building a Farm at (${selected.q},${selected.r}) for ${AGRAR_FARM_COST}⚡`);
+    if (started) {
+      logCombat(`Began building a Farm at (${selected.q},${selected.r}) for ${AGRAR_FARM_COST}⚡`);
+      // Refresh move/attack highlights — the Builder just spent its activation,
+      // but nothing else re-derives state.moveHexes/attackHexes on its own, so
+      // without this the OLD (pre-build) move range would keep rendering and
+      // visually mask the new Farm/Road tile wherever the two happen to overlap.
+      selectUnit(state, unitId);
+    }
   });
   render();
 }
@@ -1952,7 +1959,7 @@ function roadCandidatesFor(unit: Unit, selected: HexCoord[]): HexCoord[] {
   return hexNeighbors(last).filter(h =>
     hexDistance({ q: 0, r: 0 }, h) <= state.mapRadius
     && !selected.some(s => hexEqual(s, h))
-    && isLegalRoadTile(state, h)
+    && isLegalRoadTile(state, h, player.id)
     && remaining >= roadHexCost(h));
 }
 
@@ -1988,7 +1995,11 @@ function confirmBuildRoad(): void {
   clearBuildRoad();
   sendOrCall({ type: 'action', action: 'build-road', params: { unitId, path: selected } }, () => {
     const built = buildRoadPath(state, unitId, selected);
-    if (built.length > 0) logCombat(`Built ${built.length} road segment${built.length > 1 ? 's' : ''} for ${totalCost}⚡`);
+    if (built.length > 0) {
+      logCombat(`Built ${built.length} road segment${built.length > 1 ? 's' : ''} for ${totalCost}⚡`);
+      // Refresh move/attack highlights — see the identical note in confirmBuildFarm.
+      selectUnit(state, unitId);
+    }
   });
   render();
 }
@@ -2370,6 +2381,7 @@ function doFound(): void {
     sendOrCall({ type: 'action', action: 'found', params: { unitId: unit.id } }, () => {
       if (startFounding(state, unit.id)) {
         logCombat(`Began founding a ${check.targetState} at (${unit.pos.q},${unit.pos.r})`);
+        selectUnit(state, unit.id); // refresh move/attack highlights — the unit just spent its activation
       }
     });
     return;
@@ -2378,13 +2390,19 @@ function doFound(): void {
   // Fertile Site (if standing on one) beats Build Road for a Builder.
   if (canClaimFertileSite(state, unit)) {
     sendOrCall({ type: 'action', action: 'claim-fertile-site', params: { unitId: unit.id } }, () => {
-      if (claimFertileSite(state, unit.id)) logCombat(`Claimed a Fertile Site at (${unit.pos.q},${unit.pos.r})`);
+      if (claimFertileSite(state, unit.id)) {
+        logCombat(`Claimed a Fertile Site at (${unit.pos.q},${unit.pos.r})`);
+        selectUnit(state, unit.id);
+      }
     });
     return;
   }
   if (canPillageRoad(state, unit)) {
     sendOrCall({ type: 'action', action: 'pillage-road', params: { unitId: unit.id } }, () => {
-      if (pillageRoad(state, unit.id)) logCombat(`Pillaged a Road at (${unit.pos.q},${unit.pos.r})`);
+      if (pillageRoad(state, unit.id)) {
+        logCombat(`Pillaged a Road at (${unit.pos.q},${unit.pos.r})`);
+        selectUnit(state, unit.id);
+      }
     });
     return;
   }

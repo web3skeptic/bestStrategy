@@ -1227,7 +1227,7 @@ function actCombatUnit(
         let target: HexCoord | null = bestBy(openFarmSpots, h => -hexDistance(unit.pos, h));
         if (!target) {
           const anchors = [capitalPos, ...state.farms.filter(f => f.ownerId === aiPlayerId).map(f => f.pos)];
-          const openRoom = (p: HexCoord) => hexNeighbors(p).filter(h => isLegalRoadTile(state, h)).length;
+          const openRoom = (p: HexCoord) => hexNeighbors(p).filter(h => isLegalRoadTile(state, h, aiPlayerId)).length;
           const bestAnchor = bestBy(anchors, p => openRoom(p) * 10 - hexDistance(unit.pos, p));
           // Only worth walking toward if it actually has open Road room —
           // otherwise every anchor is equally hopeless (Farms maxed AND the
@@ -1672,7 +1672,7 @@ function planRoadArteryPath(state: GameState, unit: Unit, destination: HexCoord)
   let current = first;
   while (path.length < ROAD_SEGMENTS_PER_ACTIVATION && !hexEqual(current, destination)) {
     const candidates = hexNeighbors(current).filter(h =>
-      isLegalRoadTile(state, h) && !path.some(p => hexEqual(p, h)));
+      isLegalRoadTile(state, h, unit.playerId) && !path.some(p => hexEqual(p, h)));
     const next = bestBy(candidates, h => -hexDistance(h, destination));
     if (!next || hexDistance(next, destination) >= hexDistance(current, destination)) break; // no longer closing the gap
     path.push(next);

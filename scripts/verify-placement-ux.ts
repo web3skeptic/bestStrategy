@@ -273,11 +273,23 @@ console.log('\n=== Road: invalid cells return a meaningful, specific reason ==='
   check('mountain-blocked reason is present for Roads', !wallResult.legal && wallResult.reasons.some(r => r.includes('ountain')), JSON.stringify(wallResult));
   state.walls.delete(hexKey(mountainHex));
 
+  // An ENEMY unit occupying the tile still blocks Road construction there.
   const occupiedHex = hexNeighbors(builder.pos)[1]!;
-  const blocker = createUnit('warrior', 0, occupiedHex, state.playerTech[0], 'agrar');
-  state.units.push(blocker);
+  const enemyBlocker = createUnit('warrior', 1, occupiedHex, state.playerTech[1], 'temple');
+  state.units.push(enemyBlocker);
   const occResult = getRoadPlacementResult(state, builder, occupiedHex, []);
-  check('occupied-tile reason is present for Roads', !occResult.legal && occResult.reasons.some(r => r.includes('occupied')), JSON.stringify(occResult));
+  check('an enemy unit occupying the tile blocks Road construction, with a reason',
+    !occResult.legal && occResult.reasons.some(r => r.includes('enemy')), JSON.stringify(occResult));
+  state.units = state.units.filter(u => u.id !== enemyBlocker.id);
+
+  // The BUILDING PLAYER'S OWN unit occupying the tile does NOT block —
+  // paving a Road under/through your own stationed unit is fine.
+  const ownBlocker = createUnit('warrior', 0, occupiedHex, state.playerTech[0], 'agrar');
+  state.units.push(ownBlocker);
+  const ownOccResult = getRoadPlacementResult(state, builder, occupiedHex, []);
+  check('the building player\'s OWN unit occupying the tile does NOT block Road construction',
+    !ownOccResult.reasons.some(r => r.includes('occupied') || r.includes('enemy')), JSON.stringify(ownOccResult));
+  state.units = state.units.filter(u => u.id !== ownBlocker.id);
 
   // Not connected to Capital/Farm/Road: a hex 2 away from the Builder can
   // never even reach the adjacency test, so use a Builder placed off to the

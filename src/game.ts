@@ -1932,7 +1932,14 @@ export function getRoadAt(state: GameState, pos: HexCoord): Road | undefined {
 // depend on WHERE it needs to connect from — see getRoadPlacementResult).
 // Empty array = legal. isLegalRoadTile below is a thin `.length===0` wrapper
 // kept for its existing callers (buildRoadPath, main.ts's road candidates).
-function roadHexReasons(state: GameState, hex: HexCoord): string[] {
+//
+// `forPlayerId` (optional) — a Road may be built on a hex occupied by the
+// BUILDING player's OWN unit (paving under/through a stationed garrison is
+// fine — nothing is physically in the way of the road itself); an ENEMY
+// unit still blocks it. Omit it to keep the conservative "any unit blocks"
+// behavior for callers with no specific acting player in mind (e.g. the AI's
+// rough "how much open Road room is nearby" heuristic).
+function roadHexReasons(state: GameState, hex: HexCoord, forPlayerId?: number): string[] {
   const reasons: string[] = [];
   if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) { reasons.push('outside the map'); return reasons; }
   const key = hexKey(hex);
@@ -1942,12 +1949,14 @@ function roadHexReasons(state: GameState, hex: HexCoord): string[] {
   if (state.fertileSites.some(f => hexEqual(f.pos, hex))) reasons.push('a Fertile Site is here');
   if (state.capitals.some(c => hexEqual(c.pos, hex))) reasons.push('the Capital is here');
   if (state.farms.some(f => hexEqual(f.pos, hex))) reasons.push('a Farm is here');
-  if (getUnitAt(state, hex)) reasons.push('tile is occupied');
+  const occupant = getUnitAt(state, hex);
+  if (occupant && forPlayerId === undefined) reasons.push('tile is occupied');
+  else if (occupant && occupant.playerId !== forPlayerId) reasons.push('an enemy unit is occupying this tile');
   return reasons;
 }
 
-export function isLegalRoadTile(state: GameState, hex: HexCoord): boolean {
-  return roadHexReasons(state, hex).length === 0;
+export function isLegalRoadTile(state: GameState, hex: HexCoord, forPlayerId?: number): boolean {
+  return roadHexReasons(state, hex, forPlayerId).length === 0;
 }
 
 export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
@@ -1961,7 +1970,7 @@ export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
   ];
   const result: HexCoord[] = [];
   for (const hex of hexNeighbors(unit.pos)) {
-    if (!isLegalRoadTile(state, hex)) continue;
+    if (!isLegalRoadTile(state, hex, player.id)) continue;
     if (!anchors.some(a => hexDistance(a, hex) === 1)) continue; // must be adjacent to the Capital, a Farm, or an existing Road
     result.push(hex);
   }
@@ -1997,7 +2006,7 @@ export function getRoadPlacementResult(state: GameState, unit: Unit, hex: HexCoo
   const alreadySpent = selected.reduce((sum, h) =>
     sum + (state.pillagedRoadHexes.has(hexKey(h)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX), 0);
   if (player.aura - alreadySpent < cost) reasons.push(`not enough Energy — need ${cost}⚡ more`);
-  reasons.push(...roadHexReasons(state, hex));
+  reasons.push(...roadHexReasons(state, hex, player.id));
   if (selected.length === 0) {
     if (hexDistance(unit.pos, hex) !== 1) reasons.push('not adjacent to the Builder');
     const capital = state.capitals.find(c => c.playerId === player.id);
@@ -2062,7 +2071,7 @@ export function buildRoadPath(state: GameState, unitId: string, path: HexCoord[]
       if (!canBuildRoad(state, unit, hex)) break;
     } else {
       if (!prev || hexDistance(prev, hex) !== 1) break; // must chain off the segment just placed
-      if (!isLegalRoadTile(state, hex)) break;
+      if (!isLegalRoadTile(state, hex, player.id)) break;
       if (player.aura < cost) break;
     }
     player.aura -= cost;
