@@ -2175,6 +2175,22 @@ export class Renderer3D {
       const base = (mesh.userData.pulseBaseOpacity as number) ?? 0.5;
       (mesh.material as THREE.MeshBasicMaterial).opacity = base * pulseOsc;
     }
+    // Capital occupants always face the camera (Polytopia-style presentation
+    // pass) — reads oddly to have a unit standing in the foreground of the
+    // Capital but facing some unrelated gameplay direction. Overrides the
+    // facing TARGET only; the actual rotation still glides toward it at the
+    // normal TURN_SPEED via the existing smoothing loop just below, same as
+    // every other facing change.
+    if (this.capitalOccupants.size > 0 && this.lastState) {
+      for (const [unitId, capHex] of this.capitalOccupants) {
+        const unit = this.lastState.units.find(u => u.id === unitId);
+        const f = this.unitFacing.get(unitId);
+        if (!unit || !f) continue;
+        const { x: cx, z: cz } = hexToWorld(capHex);
+        const player = this.lastState.players.find(p => p.id === unit.playerId);
+        f.tgt = Math.atan2(this.camera.position.x - cx, this.camera.position.z - cz) + forwardOffset(unit.type, player?.faction);
+      }
+    }
     // Smoothly rotate each unit toward its facing target (set by moves/attacks).
     if (this.unitFacing.size > 0) {
       const dt = Math.min((now - this.lastFacingNow) / 1000, 0.1);
