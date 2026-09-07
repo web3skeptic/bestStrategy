@@ -17,6 +17,14 @@ const UNIT_LAYER = 1; // extra layer lit by unit-only lights so units stay brigh
 const HILL_ELEV = 0.18;     // units on a hill sit slightly higher
 const STRUCTURE_ELEV = 0.5;    // units on a temple tile perch on its steps, not inside it
 const TURN_SPEED = 12;      // unit facing rotation speed (rad/s)
+// Polytopia-style Capital-occupant presentation — a unit standing on the
+// Capital's hex renders toward the camera-facing side of that SAME tile
+// instead of perched on the Capital's steps (STRUCTURE_ELEV) or buried
+// behind it. Fraction of HEX_R the display position is nudged toward the
+// camera; stays well inside the tile's own footprint (see getDisplayHexPos).
+const CAPITAL_OCCUPANT_OFFSET = 0.95;
+const CAPITAL_OCCUPANT_Y_EPSILON = 0.02; // just enough to avoid z-fighting with the ground
+const CAPITAL_OCCUPANT_TURN_SPEED = 4.5; // rad/s — how fast the foreground offset re-aims as the camera orbits
 const FOREST_FADE = 0.45;   // opacity of own units hidden in a forest
 // Explored-but-not-currently-visible tiles keep their real terrain, but every
 // material on the tile (prism + grass + trees + flowers) is dimmed to this
@@ -313,6 +321,19 @@ export class Renderer3D {
   private unitFacing = new Map<string, { cur: number; tgt: number }>(); // animated facing (rot.y)
   private unitFaded = new Map<string, boolean>(); // current forest-stealth fade state
   private lastFacingNow = 0;
+  // Polytopia-style Capital-occupant presentation (see CAPITAL_OCCUPANT_OFFSET
+  // above and getDisplayHexPos below). capitalOccupants tracks which unit ids
+  // currently sit on a Capital hex (repopulated in syncUnits every sync) so
+  // advanceAnimations can keep re-aiming their foreground offset toward the
+  // camera every frame, even with no other state change in flight (e.g. the
+  // player just orbiting the camera). capitalOccupantAngle is the smoothed
+  // current angle (radians) per unit id — animated toward the camera's true
+  // angle each frame instead of snapping, except on a unit's first-ever frame
+  // (no previous angle to smooth from), which resolves directly to the true
+  // angle so it's never briefly buried on the spawn/deploy frame.
+  private capitalOccupants = new Map<string, HexCoord>();
+  private capitalOccupantAngle = new Map<string, number>();
+  private lastCapitalAngleNow = 0;
   // Expanding ground rings shown when an attack splashes multiple units (AoE).
   private shockwaves: { start: number; mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; geo: THREE.RingGeometry }[] = [];
 
@@ -581,6 +602,8 @@ export class Renderer3D {
     this.moveAnims.clear();
     this.unitFacing.clear();
     this.unitFaded.clear();
+    this.capitalOccupants.clear();
+    this.capitalOccupantAngle.clear();
     for (const s of this.shockwaves) { this.overlayGroup.remove(s.mesh); s.geo.dispose(); s.mat.dispose(); }
     this.shockwaves = [];
     this.explosions = [];
@@ -1790,23 +1813,34 @@ export class Renderer3D {
       // forest (not revealed to the enemy); solid once spotted.
       this.applyForestFade(state, unit, mesh, playerId, omniscient);
 
-      let pos = hexToWorld(unit.pos);
-      let elev = this.elevationAt(state, unit.pos);
+      // Capital occupancy is tracked purely for advanceAnimations' per-frame
+      // camera-follow (see getDisplayHexPos) — never read for anything
+      // gameplay-affecting, which all keeps reading unit.pos straight off
+      // GameState like before.
+      const onCapital = state.capitals.some(c => hexKey(c.pos) === key);
+      if (onCapital) this.capitalOccupants.set(unit.id, { ...unit.pos });
+      else if (this.capitalOccupants.delete(unit.id)) this.capitalOccupantAngle.delete(unit.id);
+
+      let { x, y, z } = this.getDisplayHexPos(state, unit.pos, unit.id);
       const anim = this.moveAnims.get(unit.id);
       if (anim) {
         const t = Math.min((now - anim.start) / MOVE_ANIM_MS, 1);
         const ease = 1 - Math.pow(1 - t, 3);
-        const from = hexToWorld(anim.from);
-        pos = { x: from.x + (pos.x - from.x) * ease, z: from.z + (pos.z - from.z) * ease };
-        const fromElev = this.elevationAt(state, anim.from);
-        elev = fromElev + (elev - fromElev) * ease;
-        // Face the direction of travel.
-        const dx = hexToWorld(unit.pos).x - from.x, dz = hexToWorld(unit.pos).z - from.z;
+        const from = this.getDisplayHexPos(state, anim.from, unit.id);
+        x = from.x + (x - from.x) * ease;
+        y = from.y + (y - from.y) * ease;
+        z = from.z + (z - from.z) * ease;
+        // Face the direction of travel — always the LOGICAL hex-to-hex
+        // direction, regardless of either endpoint's display offset (facing
+        // and display position are separate concepts, see getDisplayHexPos).
+        const fromLogical = hexToWorld(anim.from);
+        const toLogical = hexToWorld(unit.pos);
+        const dx = toLogical.x - fromLogical.x, dz = toLogical.z - fromLogical.z;
         const f = this.unitFacing.get(unit.id);
         if (f && (dx || dz)) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type);
         if (t >= 1) this.moveAnims.delete(unit.id);
       }
-      mesh.position.set(pos.x, elev, pos.z);
+      mesh.position.set(x, y, z);
       mesh.userData.hexKey = key; // selection-reliability — see pickHex
       mesh.visible = true;
     }
@@ -1820,6 +1854,8 @@ export class Renderer3D {
         this.unitHpBars.delete(id);
         this.toMoveTintIds.delete(id);
         this.unitFacing.delete(id);
+        this.capitalOccupants.delete(id);
+        this.capitalOccupantAngle.delete(id);
         this.unitFaded.delete(id);
       }
     }
@@ -1832,6 +1868,51 @@ export class Renderer3D {
     const onStructure = state.capitals.some(c => hexKey(c.pos) === k) || state.strategicSites.some(s => hexKey(s.pos) === k);
     if (onStructure) y = Math.max(y, STRUCTURE_ELEV);
     return y;
+  }
+
+  // THE canonical world position a unit should actually render at for a
+  // given LOGICAL hex — never used to change occupancy/movement/combat/ZOC
+  // (those all keep reading the real hex straight off GameState). Every
+  // normal hex just resolves to its center, same as hexToWorld + elevationAt
+  // always did. A Capital hex is the one exception: Polytopia-style, the
+  // occupant renders toward the camera-facing side of that SAME tile instead
+  // of perched on the Capital's steps, so it reads clearly in front of the
+  // building instead of buried behind/inside it. Movement animations, HP
+  // bars, support auras, and spawn all go through this one function (see its
+  // callers in syncUnits/advanceAnimations) so nothing computes a separate,
+  // possibly-inconsistent Capital offset of its own.
+  private getDisplayHexPos(state: GameState, hex: HexCoord, unitId: string): { x: number; y: number; z: number } {
+    const capital = state.capitals.find(c => hexKey(c.pos) === hexKey(hex));
+    const { x: cx, z: cz } = hexToWorld(hex);
+    if (!capital) return { x: cx, y: this.elevationAt(state, hex), z: cz };
+    const angle = this.smoothedCapitalOccupantAngle(unitId, cx, cz);
+    const off = CAPITAL_OCCUPANT_OFFSET * HEX_R;
+    const groundY = (state.hills.has(hexKey(hex)) ? HILL_ELEV : 0) + CAPITAL_OCCUPANT_Y_EPSILON;
+    return { x: cx + Math.sin(angle) * off, y: groundY, z: cz + Math.cos(angle) * off };
+  }
+
+  // The camera-relative "foreground" angle (radians, same atan2(dx,dz)
+  // convention as unit facing elsewhere) for a Capital occupant, smoothed
+  // toward the camera's TRUE current angle each call rather than snapping —
+  // so orbiting the camera glides the unit around the tile instead of
+  // popping. A unit's first-ever call resolves directly to the true angle
+  // (nothing to smooth from yet), which is what keeps a freshly spawned/
+  // deployed/arrived unit from ever rendering buried for even one frame.
+  private smoothedCapitalOccupantAngle(unitId: string, capX: number, capZ: number): number {
+    const target = Math.atan2(this.camera.position.x - capX, this.camera.position.z - capZ);
+    const prev = this.capitalOccupantAngle.get(unitId);
+    if (prev === undefined) {
+      this.capitalOccupantAngle.set(unitId, target);
+      return target;
+    }
+    const now = performance.now();
+    const dt = Math.min((now - this.lastCapitalAngleNow) / 1000, 0.1);
+    this.lastCapitalAngleNow = now;
+    const step = CAPITAL_OCCUPANT_TURN_SPEED * dt;
+    const delta = Math.atan2(Math.sin(target - prev), Math.cos(target - prev)); // shortest path
+    const next = Math.abs(delta) <= step ? target : prev + Math.sign(delta) * step;
+    this.capitalOccupantAngle.set(unitId, next);
+    return next;
   }
 
   // Fade the viewer's own units while hidden in a forest (not revealed to the
@@ -2189,6 +2270,18 @@ export class Renderer3D {
         ? new Set(this.mapHexes.map(h => hexKey(h)))
         : (this.lastViewer !== undefined ? getPlayerVisible(this.lastState, this.lastViewer) : getCurrentPlayerVisible(this.lastState));
       this.syncUnits(this.lastState, playerId, visible, !!this.lastOmniscient, this.lastShowToMove);
+    }
+    // Capital occupants — keep the camera-relative foreground offset current
+    // as the camera orbits, even with nothing else animating this frame (a
+    // unit mid-move is already handled by the syncUnits re-run just above).
+    if (this.capitalOccupants.size > 0 && this.lastState) {
+      for (const [unitId, capHex] of this.capitalOccupants) {
+        if (this.moveAnims.has(unitId)) continue;
+        const mesh = this.unitMeshes.get(unitId);
+        if (!mesh) continue;
+        const { x, y, z } = this.getDisplayHexPos(this.lastState, capHex, unitId);
+        mesh.position.set(x, y, z);
+      }
     }
     if (this.explosions.length > 0) {
       this.explosions = this.explosions.filter(ex => {
