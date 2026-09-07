@@ -113,7 +113,10 @@ console.log('\n=== Placement: adjacent to Builder AND to Capital/Farm/Road ===')
   const builder = clearRoadArea(state, 0);
   const hexes = getValidRoadHexes(state, builder);
   check('valid road hexes exist adjacent to a Builder standing next to the Capital', hexes.length > 0);
-  check('every candidate is a direct neighbor of the Builder', hexes.every(h => hexDistance(h, builder.pos) === 1));
+  // Roster/placement pass — a Road may also be built on the Builder's OWN
+  // tile (distance 0), not just a neighbour (distance 1) — see getValidRoadHexes.
+  check('every candidate is the Builder\'s own tile or a direct neighbor of it', hexes.every(h => hexDistance(h, builder.pos) <= 1));
+  check('the Builder\'s own tile is itself offered here (it\'s adjacent to the Capital)', hexes.some(h => hexEqual(h, builder.pos)));
   check('every candidate is a direct neighbor of the Capital (or a Farm/Road — none built yet)', hexes.every(h => hexDistance(h, capital.pos) === 1));
   check('no candidate hex lands on the Capital itself', !hexes.some(h => hexEqual(h, capital.pos)));
 }

@@ -1905,14 +1905,16 @@ function resolveTempleUpgradeForPlayer(state: GameState, playerId: number): void
 //
 // Agrar-only physical road tiles, built by the Builder ('founder'-type unit,
 // mechanically identical either faction but only Agrar's flavor may build
-// roads — Temple's Acolyte has no equivalent, §25). A new Road hex must be a
-// direct NEIGHBOUR of the Builder (same as Farm placement — the Builder
-// picks an adjacent tile, not just its own) AND itself be directly adjacent
-// to the Capital, an active Farm, or another existing Road of that same
-// player — the network only extends link by link out from something real,
-// it can never appear disconnected in the middle of nowhere. Building
-// consumes the Builder's whole activation, same as founding, and resolves
-// immediately (no multi-round construction, unlike Farms).
+// roads — Temple's Acolyte has no equivalent, §25). A new Road hex must be
+// the Builder's OWN tile or a direct neighbour of it (unlike Farm placement,
+// which is neighbour-only — a Road is just pavement, nothing about the
+// Builder physically standing there gets in the way of it) AND itself be
+// directly adjacent to the Capital, an active Farm, or another existing
+// Road of that same player — the network only extends link by link out from
+// something real, it can never appear disconnected in the middle of
+// nowhere. Building consumes the Builder's whole activation, same as
+// founding, and resolves immediately (no multi-round construction, unlike
+// Farms).
 
 export function getRoadAt(state: GameState, pos: HexCoord): Road | undefined {
   return state.roads.find(r => hexEqual(r.pos, pos));
@@ -1969,7 +1971,7 @@ export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
     ...state.roads.filter(r => r.ownerId === player.id).map(r => r.pos),
   ];
   const result: HexCoord[] = [];
-  for (const hex of hexNeighbors(unit.pos)) {
+  for (const hex of [unit.pos, ...hexNeighbors(unit.pos)]) {
     if (!isLegalRoadTile(state, hex, player.id)) continue;
     if (!anchors.some(a => hexDistance(a, hex) === 1)) continue; // must be adjacent to the Capital, a Farm, or an existing Road
     result.push(hex);
@@ -2008,7 +2010,10 @@ export function getRoadPlacementResult(state: GameState, unit: Unit, hex: HexCoo
   if (player.aura - alreadySpent < cost) reasons.push(`not enough Energy — need ${cost}⚡ more`);
   reasons.push(...roadHexReasons(state, hex, player.id));
   if (selected.length === 0) {
-    if (hexDistance(unit.pos, hex) !== 1) reasons.push('not adjacent to the Builder');
+    // Unlike Farm placement, the Builder's OWN tile is a legal Road location
+    // too (distance 0), not just a neighbour (distance 1) — see the header
+    // comment above getRoadAt.
+    if (hexDistance(unit.pos, hex) > 1) reasons.push('not adjacent to (or on) the Builder');
     const capital = state.capitals.find(c => c.playerId === player.id);
     const anchors: HexCoord[] = [
       ...(capital ? [capital.pos] : []),

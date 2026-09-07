@@ -11,6 +11,7 @@ import {
   createGameState, chooseFaction, createUnit, getPlayerCapital,
   getFarmPlacementResult, getValidFarmHexes, canStartFarm, getAllValidFarmSpots, startFarm,
   getRoadPlacementResult, getValidRoadHexes, canBuildRoad, isLegalRoadTile,
+  buildRoadPath, getRoadAt,
 } from '../src/game';
 import { FARM_MIN_SPACING, ROAD_SEGMENTS_PER_ACTIVATION, ROAD_COST_PER_HEX, AGRAR_FARM_COST } from '../src/factions';
 import { hexDistance, hexNeighbors, hexKey } from '../src/hex';
@@ -191,6 +192,30 @@ console.log('\n=== Road: every highlighted first-tile candidate is actually lega
   check('every candidate passes canBuildRoad', candidates.every(h => canBuildRoad(state, builder, h)));
   check('every candidate has an empty reasons list from getRoadPlacementResult',
     candidates.every(h => getRoadPlacementResult(state, builder, h, []).reasons.length === 0));
+}
+
+console.log('\n=== Road: the Builder\'s OWN tile is a legal first Road location too ===');
+{
+  const state = setup();
+  clearArea(state, 0);
+  const cap = getPlayerCapital(state, 0)!;
+  // Standing directly adjacent to the Capital, so the Builder's own tile is
+  // itself anchor-adjacent (within 1 of the Capital) — a Road may be paved
+  // right where the Builder is standing, not just on a neighbouring hex.
+  const builder = createUnit('founder', 0, hexNeighbors(cap.pos)[0]!, state.playerTech[0], 'agrar');
+  state.units.push(builder);
+  const candidates = getValidRoadHexes(state, builder);
+  check('the Builder\'s own tile appears among the legal first-Road candidates',
+    candidates.some(h => hexEqual(h, builder.pos)), JSON.stringify(candidates));
+  check('canBuildRoad agrees the Builder\'s own tile is legal', canBuildRoad(state, builder, builder.pos));
+  const ownTileResult = getRoadPlacementResult(state, builder, builder.pos, []);
+  check('getRoadPlacementResult reports it as legal with no reasons', ownTileResult.legal, JSON.stringify(ownTileResult));
+
+  const auraBefore = state.players[0]!.aura;
+  const built = buildRoadPath(state, builder.id, [builder.pos]);
+  check('buildRoadPath actually builds a Road on the Builder\'s own tile', built.length === 1 && hexEqual(built[0]!, builder.pos));
+  check('the Road tile now exists there', !!getRoadAt(state, builder.pos));
+  check('exactly one Road segment\'s Energy was deducted', state.players[0]!.aura === auraBefore - ROAD_COST_PER_HEX);
 }
 
 console.log('\n=== Road: after Road 1, only legal continuations highlight ===');
