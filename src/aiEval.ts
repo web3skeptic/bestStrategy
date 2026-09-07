@@ -18,11 +18,11 @@ import type {
 } from './types';
 import { TECH_NODES } from './types';
 import { hexDistance } from './hex';
-import { calculateDamage, getTypeMultiplier, type UnitClass } from './combat';
+import { calculateDamage, getTypeMultiplier } from './combat';
 import {
   getPlayerCapital, getEffectiveAttack, getEffectiveDefense, getEffectiveRange, getEffectiveSpeed,
   getPlayerIncome, getPopulationCap, getPopulationCount, getProductionSlots, getUnitCost,
-  getAgrarTerritory, calculateEncirclement, isForestUnitRevealed,
+  getAgrarTerritory, calculateEncirclement, isForestUnitRevealed, getUnitClass,
 } from './game';
 import {
   AGRAR_FARM_COST, TEMPLE_UPGRADE_COST, SITE_ESTABLISH_COST, ROAD_MOVEMENT_BONUS,
@@ -69,15 +69,11 @@ export const AI_EVAL_WEIGHTS = {
 // ── Small, self-contained helpers (deliberately NOT imported from ai.ts —
 // this module must stay independent of it) ──────────────────────────────
 
-const UNIT_CLASS_BY_SLOT: Record<UnitType, UnitClass> = {
-  warrior: 'warrior', spearsman: 'pike', archer: 'archer', horserider: 'cavalry',
-  catapult: 'siege', heavyknight: 'heavy',
-  healer: 'support', damageBooster: 'support', rangeBooster: 'support', founder: 'support',
-};
-
 function estimateDamageQuick(state: GameState, attacker: Unit, target: Unit): number {
   const enc = calculateEncirclement(state, target);
-  const typeBonus = getTypeMultiplier(UNIT_CLASS_BY_SLOT[attacker.type], UNIT_CLASS_BY_SLOT[target.type]);
+  const attackerFaction = state.players.find(p => p.id === attacker.playerId)?.faction;
+  const targetFaction = state.players.find(p => p.id === target.playerId)?.faction;
+  const typeBonus = getTypeMultiplier(getUnitClass(attacker.type, attackerFaction), getUnitClass(target.type, targetFaction));
   const atk = getEffectiveAttack(state, attacker);
   const def = getEffectiveDefense(state, target);
   const hpFraction = attacker.hp / attacker.stats.maxHp;

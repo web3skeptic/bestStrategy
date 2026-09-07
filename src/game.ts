@@ -25,9 +25,11 @@ import {
 } from './factions';
 
 // Maps the current universal unit roster onto the shared soft-counter classes
-// (see ./combat.ts). The faction-specific v0.2 roster will assign its own
-// classes directly; this table exists so the single legacy roster keeps
-// working under the same rules engine in the meantime.
+// (see ./combat.ts). This is the GENERIC per-slot fallback — used directly
+// pre-reveal (no faction known yet) and for any slot with no faction-specific
+// override; getUnitClass below is the one everything else should call, since
+// it prefers a faction's own FactionUnitDef.unitClass when one differs from
+// this table (currently only the Warden — see factions.ts).
 export const UNIT_CLASS: Record<UnitType, UnitClass> = {
   warrior:       'warrior',
   archer:        'archer',
@@ -41,8 +43,24 @@ export const UNIT_CLASS: Record<UnitType, UnitClass> = {
   founder:       'support',
 };
 
-export function getUnitTypeMultiplier(attackerType: UnitType, defenderType: UnitType): number {
-  return getTypeMultiplier(UNIT_CLASS[attackerType], UNIT_CLASS[defenderType]);
+// Effective combat class for a (type, faction) pair. Prefers the faction's own
+// flavor of the slot (FactionUnitDef.unitClass — e.g. Farmer's Warden is
+// slot 'horserider' but classed 'warrior', not 'cavalry') and falls back to
+// the generic per-slot table when no faction is known yet or the slot has no
+// faction-specific entry (support/founder — identical either faction).
+export function getUnitClass(type: UnitType, faction?: FactionId | null): UnitClass {
+  if (faction) {
+    const def = factionUnitDef(faction, type);
+    if (def) return def.unitClass;
+  }
+  return UNIT_CLASS[type];
+}
+
+export function getUnitTypeMultiplier(
+  attackerType: UnitType, defenderType: UnitType,
+  attackerFaction?: FactionId | null, defenderFaction?: FactionId | null,
+): number {
+  return getTypeMultiplier(getUnitClass(attackerType, attackerFaction), getUnitClass(defenderType, defenderFaction));
 }
 
 // ── Unit stats ──
@@ -2436,7 +2454,9 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   // Sequential resolution: the attacker strikes first, scaled by its own current
   // health; a landed attack always deals at least 1.
   const attackerHpFrac = attacker.hp / attacker.stats.maxHp;
-  const typeBonus = getUnitTypeMultiplier(attacker.type, target.type);
+  const attackerFaction = state.players.find(p => p.id === attacker.playerId)?.faction;
+  const targetFaction = state.players.find(p => p.id === target.playerId)?.faction;
+  const typeBonus = getUnitTypeMultiplier(attacker.type, target.type, attackerFaction, targetFaction);
   let damageDealt = calculateDamage(getEffectiveAttack(state, attacker), targetDef, targetEncirclement.attackMultiplier, typeBonus, attackerHpFrac);
   if (damageDealt < 1) damageDealt = 1;
   target.hp -= damageDealt;
@@ -2482,7 +2502,7 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
       // just took), so a badly-wounded survivor counters weakly. A dead defender
       // never reaches here (guarded by !targetKilled above).
       const defenderHpFrac = target.hp / target.stats.maxHp;
-      const revengeTypeBonus = getUnitTypeMultiplier(target.type, attacker.type);
+      const revengeTypeBonus = getUnitTypeMultiplier(target.type, attacker.type, targetFaction, attackerFaction);
       damageReceived = calculateDamage(getEffectiveAttack(state, target), attackerDef, attackerEncirclement.attackMultiplier, revengeTypeBonus, defenderHpFrac);
       if (damageReceived < 1) damageReceived = 1;
       attacker.hp -= damageReceived;
@@ -2570,7 +2590,8 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
   // (canStartFounding) — standing on or merely attacking it never changes
   // ownership by itself.
 
-  const typeMult = getTypeMultiplier(UNIT_CLASS[attacker.type], 'structure');
+  const attackerFaction = state.players.find(p => p.id === attacker.playerId)?.faction;
+  const typeMult = getTypeMultiplier(getUnitClass(attacker.type, attackerFaction), 'structure');
   const attackerHpFrac = attacker.hp / attacker.stats.maxHp;
   // Structures don't participate in encirclement (they don't move or form
   // groups) — no bonus multiplier either way, just the base 1.0x.

@@ -31,7 +31,8 @@
     "test:ai-search-telemetry": "tsx scripts/verify-ai-search-telemetry.ts",
     "test:ai-macro-plan": "tsx scripts/verify-ai-macro-plan.ts",
     "test:agrar-balance": "tsx scripts/verify-agrar-balance.ts",
-    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence && npm run test:ai-benchmarks && npm run test:ai-search-activation-order && npm run test:ai-search-telemetry && npm run test:ai-macro-plan && npm run test:agrar-balance",
+    "test:farmer-roster": "tsx scripts/verify-farmer-roster.ts",
+    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence && npm run test:ai-benchmarks && npm run test:ai-search-activation-order && npm run test:ai-search-telemetry && npm run test:ai-macro-plan && npm run test:agrar-balance && npm run test:farmer-roster",
     "build:root": "vite build"
   },
   "keywords": [],

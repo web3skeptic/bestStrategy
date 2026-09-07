@@ -8,6 +8,7 @@ import * as B from './three/builders.gen';
 import { buildGuy } from './voxelWarrior';
 import { buildHorseRider } from './voxelHorserider';
 import { buildHeavyKnight } from './voxelHeavyKnight';
+import { buildWarden } from './voxelWarden';
 import { buildSword } from './voxelSword';
 import { buildSpear } from './voxelSpear';
 import { buildBow } from './voxelBow';
@@ -168,6 +169,18 @@ function placeUnit(type: UnitType, name: string, x: number, z: number): void {
   label(name, x, 1.9, z);
 }
 
+// Places an already-built model (for a faction-specific flavor of a shared
+// slot, e.g. the Warden, which buildUnitModel's generic per-type switch can't
+// reach — see voxelUnits.ts).
+function placeCustomModel(model: THREE.Object3D, scale: number, name: string, x: number, z: number): void {
+  seatTile(x, z);
+  model.scale.setScalar(scale);
+  setShadows(model);
+  model.position.set(x, 0, z);
+  scene.add(model);
+  label(name, x, 1.9, z);
+}
+
 // ── structures ────────────────────────────────────────────────────────────────
 function placeTemple(level: number, x: number, z: number, color = TEAM): void {
   seatTile(x, z);
@@ -194,20 +207,31 @@ label('TILES', -10.5, 2.4, Z_TILES, 'header');
 const tiles: [string, string][] = [['plain', 'Plain'], ['forest', 'Forest'], ['hill', 'Hill'], ['wall', 'Wall'], ['fog', 'Fog']];
 tiles.forEach(([kind, name], i) => { placeTile(kind, COL[i], Z_TILES); label(name, COL[i], 1.2, Z_TILES); });
 
-// Units rows (9 types → 5 + 4)
+// Units rows (9 generic types + the Farmer Warden → 5 + 5)
 label('UNITS', -10.5, 2.4, -4.5, 'header');
 const units: [UnitType, string][] = [
   ['warrior', 'Warrior'], ['archer', 'Archer'], ['spearsman', 'Spearsman'],
   ['horserider', 'Horserider'], ['heavyknight', 'Heavy Knight'], ['catapult', 'Cannon'],
   ['healer', 'Healer'], ['damageBooster', 'Damage Booster'], ['rangeBooster', 'Range Booster'],
 ];
+const UNIT_ROW_LEN = 5;
 units.forEach(([type, name], i) => {
-  const row = i < 5 ? 0 : 1;
-  const inRow = i < 5 ? 5 : units.length - 5;
-  const col = i < 5 ? i : i - 5;
+  const row = Math.floor(i / UNIT_ROW_LEN);
+  const inRow = Math.min(UNIT_ROW_LEN, units.length + 1 - row * UNIT_ROW_LEN);
+  const col = i - row * UNIT_ROW_LEN;
   const x = (col - (inRow - 1) / 2) * 3;
   placeUnit(type, name, x, -5 + row * 3.2);
 });
+// Farmer's own (unmounted) flavor of the 'horserider' slot — shown alongside
+// the generic Horserider/Heavy Knight above, not in place of either.
+{
+  const i = units.length;
+  const row = Math.floor(i / UNIT_ROW_LEN);
+  const inRow = Math.min(UNIT_ROW_LEN, units.length + 1 - row * UNIT_ROW_LEN);
+  const col = i - row * UNIT_ROW_LEN;
+  const x = (col - (inRow - 1) / 2) * 3;
+  placeCustomModel(buildWarden(TEAM), 0.2, 'Warden (Farmer)', x, -5 + row * 3.2);
+}
 
 // Structures: temples L1–10 + a portal pair
 label('STRUCTURES', -11.5, 2.6, 4, 'header');

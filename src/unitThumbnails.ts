@@ -2,14 +2,19 @@
 // unit-card UI, using a single shared offscreen WebGL renderer. Results are
 // cached per (type, team colour), so each model is rendered at most once.
 import * as THREE from 'three';
-import { UnitType } from './types';
+import { UnitType, FactionId } from './types';
 import { buildUnitModel } from './voxelUnits';
 import { buildTemple } from './voxelTemple';
 import { buildPortal } from './voxelPortal';
 
 let renderer: THREE.WebGLRenderer | null = null;
 let thumbSize = 0;
-const cache = new Map<string, Partial<Record<UnitType, string>>>();
+// Keyed by (color, `${type}:${faction}`) — faction matters because at least
+// one slot ('horserider') now renders a genuinely different model per
+// faction (Farmer's Warden vs Temple's Raider — see voxelUnits.ts), so a
+// cache keyed on type alone would leak one faction's thumbnail into the
+// other's card.
+const cache = new Map<string, Map<string, string>>();
 const upgradeCache = new Map<string, string>(); // keyed `${color}:${level}`
 const portalCache = new Map<string, string>(); // keyed by team colour
 
@@ -33,10 +38,11 @@ function disposeModel(model: THREE.Object3D): void {
 }
 
 // Render one unit model to a data-URL PNG. `color` is any CSS colour string.
-export function getUnitThumbnail(type: UnitType, color: string, size = 256): string {
+export function getUnitThumbnail(type: UnitType, color: string, faction?: FactionId | null, size = 256): string {
   let byColor = cache.get(color);
-  if (byColor && byColor[type]) return byColor[type]!;
-  if (!byColor) { byColor = {}; cache.set(color, byColor); }
+  const innerKey = `${type}:${faction ?? ''}`;
+  if (byColor && byColor.has(innerKey)) return byColor.get(innerKey)!;
+  if (!byColor) { byColor = new Map(); cache.set(color, byColor); }
 
   const r = getRenderer(size);
   const scene = new THREE.Scene();
@@ -48,7 +54,7 @@ export function getUnitThumbnail(type: UnitType, color: string, size = 256): str
   rim.position.set(-4, 3, -5);
   scene.add(rim);
 
-  const model = buildUnitModel(type, new THREE.Color(color).getHex());
+  const model = buildUnitModel(type, new THREE.Color(color).getHex(), faction);
   scene.add(model);
 
   // Frame the model: fit a bounding sphere into the view from a 3/4 front angle.
@@ -63,7 +69,7 @@ export function getUnitThumbnail(type: UnitType, color: string, size = 256): str
 
   r.render(scene, cam);
   const url = r.domElement.toDataURL('image/png');
-  byColor[type] = url;
+  byColor.set(innerKey, url);
   disposeModel(model);
   return url;
 }

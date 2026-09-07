@@ -4,10 +4,11 @@
 // renderer, the asset demo, and the unit-card thumbnail renderer so all three
 // always show the same models.
 import * as THREE from 'three';
-import { UnitType } from './types';
+import { UnitType, FactionId } from './types';
 import { buildGuy } from './voxelWarrior';
 import { buildHorseRider } from './voxelHorserider';
 import { buildHeavyKnight } from './voxelHeavyKnight';
+import { buildWarden } from './voxelWarden';
 import { buildSword } from './voxelSword';
 import { buildSpear } from './voxelSpear';
 import { buildBow } from './voxelBow';
@@ -29,13 +30,23 @@ function guy(color: number, weapon: THREE.Object3D, scale: number, x: number, y:
   return g;
 }
 
+// Generic "whole custom model, scaled + shadowed" helper — named for its
+// original mounted-unit use (horse rider/heavy knight) but reused as-is for
+// the unmounted Warden below, since the scale/shadow logic has nothing
+// actually rider-specific in it.
 function mounted(model: THREE.Group): THREE.Group {
   model.scale.setScalar(0.2); // model is ~8 units tall → ~1.6 on the tile
   model.traverse(o => { (o as THREE.Mesh).castShadow = true; });
   return model;
 }
 
-export function buildUnitModel(type: UnitType, color: number): THREE.Group {
+// `faction` disambiguates slots two factions flavor very differently in 3D:
+// the shared 'horserider' slot is Temple's mounted Raider, but Farmer's own
+// flavor (the Warden) is deliberately unmounted heavy infantry — see
+// factions.ts's AGRAR_UNITS comment on the Warden entry. Every other slot
+// currently shares one model between factions, so `faction` is optional and
+// only this one case branches on it.
+export function buildUnitModel(type: UnitType, color: number, faction?: FactionId | null): THREE.Group {
   const wrap = new THREE.Group();
   switch (type) {
     case 'catapult': wrap.add(buildCannon(color)); break; // cannon, muzzle faces +Z
@@ -45,7 +56,10 @@ export function buildUnitModel(type: UnitType, color: number): THREE.Group {
     case 'healer': wrap.add(guy(color, buildHealerStaff(), 0.58, 2.2, 2.2, 0.3)); break;
     case 'damageBooster': wrap.add(guy(color, buildDemonStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92])); break;
     case 'rangeBooster': wrap.add(guy(color, buildRuneStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92])); break;
-    case 'horserider': wrap.add(mounted(buildHorseRider(color))); break;
+    case 'horserider':
+      if (faction === 'agrar') wrap.add(mounted(buildWarden(color))); // unmounted — see header note
+      else wrap.add(mounted(buildHorseRider(color)));
+      break;
     case 'heavyknight': wrap.add(mounted(buildHeavyKnight(color))); break;
     default: { const g = buildGuy(color); g.scale.setScalar(0.2); g.position.y = 0.08; wrap.add(g); }
   }

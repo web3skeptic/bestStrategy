@@ -166,7 +166,9 @@ export function revealedEnemies(state: GameState, aiPlayerId: number): Unit[] {
 // helper, so the AI never drifts from the real combat math.
 export function estimateDamage(state: GameState, attacker: Unit, target: Unit): number {
   const enc = calculateEncirclement(state, target);
-  const typeBonus = getUnitTypeMultiplier(attacker.type, target.type);
+  const attackerFaction = state.players.find(p => p.id === attacker.playerId)?.faction;
+  const targetFaction = state.players.find(p => p.id === target.playerId)?.faction;
+  const typeBonus = getUnitTypeMultiplier(attacker.type, target.type, attackerFaction, targetFaction);
   const atk = getEffectiveAttack(state, attacker);
   const def = getEffectiveDefense(state, target);
   const hpFraction = attacker.hp / attacker.stats.maxHp;
@@ -550,7 +552,10 @@ function findCredibleMobilityThreats(state: GameState, aiPlayerId: number, capit
 function reserveSuitability(state: GameState, candidate: Unit, aiPlayerId: number, threats: Unit[]): number {
   const faction = state.players[aiPlayerId]?.faction;
   let score = getUnitCost(candidate.type, faction);
-  for (const t of threats) score += (getUnitTypeMultiplier(candidate.type, t.type) - 1) * 10;
+  for (const t of threats) {
+    const threatFaction = state.players.find(p => p.id === t.playerId)?.faction;
+    score += (getUnitTypeMultiplier(candidate.type, t.type, faction, threatFaction) - 1) * 10;
+  }
   return score;
 }
 

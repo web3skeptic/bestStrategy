@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
 import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory, getAgrarCultivation } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
@@ -47,8 +47,12 @@ type StructFade = { parts: StructPart[]; fromFactor: number; toFactor: number; s
 
 // A unit model's facing rotation (about Y) to point toward world direction
 // (dx, dz): atan2(dx, dz) for a +Z-forward model, plus a per-model offset. The
-// mounted models (horse/knight) face -X by default, so they need +90°.
-function forwardOffset(type: string): number {
+// mounted models (horse/knight) face -X by default, so they need +90°. The
+// Warden (Farmer's own unmounted flavor of the 'horserider' slot — see
+// buildUnitModel) is built on the same +Z-forward guy rig as every other foot
+// unit, so it needs no offset at all.
+function forwardOffset(type: string, faction?: FactionId | null): number {
+  if (type === 'horserider' && faction === 'agrar') return 0;
   return (type === 'horserider' || type === 'heavyknight') ? Math.PI / 2 : 0;
 }
 
@@ -1407,8 +1411,8 @@ export class Renderer3D {
     }
   }
 
-  private buildUnitMesh(unit: Unit, colorNum: number): THREE.Object3D {
-    const wrap = buildUnitModel(unit.type, colorNum);
+  private buildUnitMesh(unit: Unit, colorNum: number, faction?: FactionId | null): THREE.Object3D {
+    const wrap = buildUnitModel(unit.type, colorNum, faction);
     // Support units get pulsating range "circles" (rings only — tiles inside are
     // NOT highlighted). Green = healer, orange = damage, cyan = range.
     // Radius of the N-tile ring in world units (linear in tile count).
@@ -1662,8 +1666,8 @@ export class Renderer3D {
         // The model lives in an inner "facer" group that we rotate to face the
         // unit's heading; the outer group carries position + the HP bar (so the
         // billboarded HP bar never inherits the unit's facing rotation).
-        const model = this.buildUnitMesh(unit, colorNum);
-        const off = forwardOffset(unit.type);
+        const model = this.buildUnitMesh(unit, colorNum, player.faction);
+        const off = forwardOffset(unit.type, player.faction);
         model.rotation.y = off;
         mesh = new THREE.Group();
         mesh.add(model);

@@ -1753,11 +1753,13 @@ function updateUnitCards(): void {
     card.classList.toggle('disabled', !affordable);
 
     // Card art = a 3D render of the unit model, team-tinted to the current
-    // player. Regenerated only when the player colour changes (cached otherwise).
+    // player. Regenerated when the player colour OR faction changes (faction
+    // matters since reveal — e.g. the 'horserider' slot renders a completely
+    // different model for Farmer vs Raider — cached otherwise).
     const thumb = card.querySelector('.unit-card-thumb') as HTMLImageElement;
-    const thumbKey = player.color;
+    const thumbKey = `${player.color}:${player.faction ?? ''}`;
     if (thumb && thumb.dataset.thumbKey !== thumbKey) {
-      try { thumb.src = getUnitThumbnail(type, player.color); thumb.dataset.thumbKey = thumbKey; }
+      try { thumb.src = getUnitThumbnail(type, player.color, player.faction); thumb.dataset.thumbKey = thumbKey; }
       catch { /* keep the PNG fallback set in buildUnitCards */ }
     }
 
@@ -2130,8 +2132,8 @@ function renderTechTree(): void {
 // Siege model for its splash sub-upgrade. Rendered (team-coloured) the same
 // way as the build-card thumbnails, so the tech tree shows the actual model.
 function techNodeArt(node: typeof TECH_NODES[number], color: string): string | null {
-  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color);
-  if (node.id === 'agrar_siegecraft_splash' || node.id === 'temple_mobile_siege_splash') return getUnitThumbnail('catapult', color);
+  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color, node.faction);
+  if (node.id === 'agrar_siegecraft_splash' || node.id === 'temple_mobile_siege_splash') return getUnitThumbnail('catapult', color, node.faction);
   return null;
 }
 
