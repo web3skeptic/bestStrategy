@@ -61,12 +61,12 @@ function advanceOneRound(state: GameState): void {
 console.log('\n=== Agrar combat roster: new stats (elite/heavy pass) ===');
 {
   const expected: Record<string, { cost: number; hp: number; attack: number; defense: number; speed: number; range: number; commandCost: number }> = {
-    warrior:     { cost: 2, hp: 25, attack: 10, defense: 6, speed: 1, range: 1, commandCost: 2 },
-    archer:      { cost: 3, hp: 21, attack: 12, defense: 5, speed: 1, range: 2, commandCost: 2 },
-    spearsman:   { cost: 3, hp: 29, attack: 10, defense: 7, speed: 1, range: 1, commandCost: 2 }, // Pikeman
-    horserider:  { cost: 5, hp: 33, attack: 15, defense: 7, speed: 2, range: 1, commandCost: 3 }, // Knight
-    catapult:    { cost: 5, hp: 24, attack: 15, defense: 4, speed: 1, range: 3, commandCost: 3 },
-    heavyknight: { cost: 7, hp: 37, attack: 19, defense: 7, speed: 2, range: 1, commandCost: 3 },
+    warrior:     { cost: 2, hp: 20, attack: 9,  defense: 5, speed: 1, range: 1, commandCost: 2 },
+    archer:      { cost: 3, hp: 17, attack: 10, defense: 4, speed: 1, range: 2, commandCost: 2 },
+    spearsman:   { cost: 3, hp: 22, attack: 9,  defense: 6, speed: 1, range: 1, commandCost: 2 }, // Pikeman
+    horserider:  { cost: 5, hp: 25, attack: 13, defense: 6, speed: 2, range: 1, commandCost: 3 }, // Knight
+    catapult:    { cost: 5, hp: 20, attack: 13, defense: 3, speed: 1, range: 3, commandCost: 3 },
+    heavyknight: { cost: 7, hp: 29, attack: 16, defense: 6, speed: 2, range: 1, commandCost: 3 },
   };
   for (const [slot, want] of Object.entries(expected)) {
     const def = AGRAR_UNITS.find(u => u.slot === slot)!;
