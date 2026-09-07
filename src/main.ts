@@ -1443,6 +1443,9 @@ function updateUI(): void {
       // available at once. ALWAYS shown for a selected Agrar Builder, with an
       // explicit disabled-state reason rather than being hidden — see
       // farmBlockReason. Ring-pick hex mode, keyed off the Builder unit.
+      const ownUpgradeableSite = player.faction === 'temple' ? getStrategicSiteAt(state, unit.pos) : null;
+      const unitOnOwnTempleI = !!ownUpgradeableSite && ownUpgradeableSite.state === 'temple'
+        && ownUpgradeableSite.templeLevel === 1 && ownUpgradeableSite.ownerId === player.id;
       if (myTurn && isAgrarBuilder) {
         const picking = buildingFarm?.unitId === unit.id;
         const reason = picking ? null : farmBlockReason(state, unit);
@@ -1453,6 +1456,21 @@ function updateUI(): void {
         economyBtn.textContent = picking
           ? (buildingFarm!.selected ? `⚑ Confirm Farm (⚡${AGRAR_FARM_COST})` : '⚑ Tap a highlighted hex for the Farm…')
           : reason ? `⚑ Build Farm — ${reason}` : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
+      } else if (myTurn && unitOnOwnTempleI) {
+        // Temple-UX fix — the Upgrade action used to live ONLY on the site
+        // selection (below), so a friendly unit standing on your own Temple
+        // (spawned there, garrisoning it, etc.) hid the button behind an
+        // extra tap to switch selection from the unit to the site — easy to
+        // read as "can't upgrade while a unit is standing on it". Now shown
+        // directly from the unit's own selection too, same as Build Farm.
+        const reason = templeUpgradeBlockReason(state, ownUpgradeableSite!.id);
+        economyBtn.style.display = 'block';
+        economyBtn.classList.remove('active');
+        economyBtn.disabled = !!reason;
+        economyBtn.title = reason ?? '';
+        economyBtn.textContent = reason
+          ? `⛩ Upgrade to Temple II — ${reason}`
+          : `⛩ Upgrade to Temple II (${TEMPLE_UPGRADE_COST}⚡) — 1 round`;
       } else {
         economyBtn.style.display = 'none';
         if (buildingFarm) clearBuildFarm();
@@ -1903,6 +1921,19 @@ economyBtn.addEventListener('click', () => {
     const unit = state.units.find(u => u.id === state.selectedUnitId);
     if (unit && getValidFarmHexes(state, unit).some(h => canStartFarm(state, unit, h))) {
       enterBuildFarm(unit.id);
+      return;
+    }
+    // Temple: Upgrade to Temple II — triggered from a friendly unit standing
+    // on your own Temple I (mirrors the site-selection path below, so
+    // standing a unit on the Temple never blocks upgrading it).
+    const player = state.players.find(p => p.id === unit?.playerId);
+    const site = unit ? getStrategicSiteAt(state, unit.pos) : undefined;
+    if (unit && player?.faction === 'temple' && site && site.state === 'temple'
+      && site.templeLevel === 1 && site.ownerId === player.id) {
+      const siteId = site.id;
+      sendOrCall({ type: 'action', action: 'upgrade-temple', params: { templeId: siteId } }, () => {
+        if (startTempleUpgrade(state, siteId)) logCombat(`Started upgrading Temple to Temple II (${TEMPLE_UPGRADE_COST}⚡)`);
+      });
     }
     return;
   }
