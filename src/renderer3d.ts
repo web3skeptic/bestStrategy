@@ -273,6 +273,23 @@ export class Renderer3D {
   // concern, main.ts owns the actual selection list. Rendered with its own
   // strong pulsing "ghost" highlight, top priority over every other tint.
   private roadSelectionHexes: HexCoord[] = [];
+  // Farm-placement UX pass — the single hex the player has tentatively
+  // selected for a Farm (pending Confirm), analogous to roadSelectionHexes
+  // above but Farms are a one-tile placement, not a multi-segment path.
+  private farmSelectionHex: HexCoord | null = null;
+  // Ghost previews — semi-transparent "this is what would be built here"
+  // models, cleared whenever selection/placement mode changes (never left
+  // stale). The Farm ghost reuses the real buildFarm() model; Roads have no
+  // dedicated 3D model yet (see the roads note in actionDispatcher.ts's
+  // rules payload), so the Road ghost is a lightweight two-plank cross
+  // built from cached geometry/materials, one per selected Road tile.
+  private ghostFarmMesh: THREE.Group | null = null;
+  private ghostFarmKey: string | null = null;
+  private ghostFarmColor: number | null = null;
+  private ghostRoadMeshes: THREE.Group[] = [];
+  private ghostRoadMat: THREE.MeshStandardMaterial | null = null;
+  private ghostRoadGeoA: THREE.BoxGeometry | null = null;
+  private ghostRoadGeoB: THREE.BoxGeometry | null = null;
 
   private capGeo: THREE.CylinderGeometry;
   private highlightGeo: THREE.CylinderGeometry;
@@ -552,6 +569,10 @@ export class Renderer3D {
     this.lastUnitHp.clear();
     this.lastStructHp.clear();
     this.roadSelectionHexes = [];
+    this.ghostRoadMeshes = []; // disposed already via disposeGroup(overlayGroup) above
+    this.farmSelectionHex = null;
+    this.ghostFarmMesh = null;
+    this.ghostFarmKey = null;
     this.structHpBars.clear();
     this.structFlashUntil.clear();
     this.structureMeshes.clear();
@@ -590,8 +611,82 @@ export class Renderer3D {
   // (see syncHighlights) — replaces the whole list every call, empty array
   // clears it. main.ts calls this alongside its own local selection state,
   // never persisted in GameState itself (this is presentation only).
-  setRoadSelectionPreview(hexes: HexCoord[]): void {
+  setRoadSelectionPreview(hexes: HexCoord[], state?: GameState): void {
     this.roadSelectionHexes = hexes.map(h => ({ ...h }));
+    if (!state) { for (const m of this.ghostRoadMeshes) m.visible = false; return; }
+    // Ghost Road pieces — a lightweight two-plank cross per selected tile,
+    // built once from cached geometry/material and reused/repositioned on
+    // every call rather than allocating fresh THREE objects each time.
+    if (!this.ghostRoadGeoA) this.ghostRoadGeoA = new THREE.BoxGeometry(0.95, 0.09, 0.34);
+    if (!this.ghostRoadGeoB) this.ghostRoadGeoB = new THREE.BoxGeometry(0.34, 0.09, 0.95);
+    if (!this.ghostRoadMat) {
+      this.ghostRoadMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, transparent: true, opacity: 0.55, roughness: 0.55, metalness: 0, depthWrite: false });
+    }
+    for (let idx = 0; idx < this.roadSelectionHexes.length; idx++) {
+      const hex = this.roadSelectionHexes[idx]!;
+      let group = this.ghostRoadMeshes[idx];
+      if (!group) {
+        group = new THREE.Group();
+        group.add(new THREE.Mesh(this.ghostRoadGeoA, this.ghostRoadMat));
+        group.add(new THREE.Mesh(this.ghostRoadGeoB, this.ghostRoadMat));
+        this.overlayGroup.add(group);
+        this.ghostRoadMeshes[idx] = group;
+      }
+      const { x, z } = hexToWorld(hex);
+      group.position.set(x, this.elevationAt(state, hex) + 0.12, z);
+      group.visible = true;
+    }
+    for (let idx = this.roadSelectionHexes.length; idx < this.ghostRoadMeshes.length; idx++) {
+      this.ghostRoadMeshes[idx]!.visible = false;
+    }
+  }
+
+  // Farm-placement UX pass — the tentatively-selected Farm hex (or null to
+  // clear), rendered as a strong highlight (see syncHighlights) plus a
+  // semi-transparent ghost of the real Farm model on that tile. Rebuilds the
+  // ghost mesh only when the hex or team colour actually changes.
+  setFarmSelectionPreview(hex: HexCoord | null, color?: string, state?: GameState): void {
+    this.farmSelectionHex = hex ? { ...hex } : null;
+    if (!hex || color === undefined || !state) {
+      if (this.ghostFarmMesh) this.ghostFarmMesh.visible = false;
+      this.ghostFarmKey = null;
+      return;
+    }
+    const colorNum = new THREE.Color(color).getHex();
+    const key = hexKey(hex);
+    if (!this.ghostFarmMesh || this.ghostFarmKey !== key || this.ghostFarmColor !== colorNum) {
+      if (this.ghostFarmMesh) { this.overlayGroup.remove(this.ghostFarmMesh); this.disposeObject(this.ghostFarmMesh); }
+      const mesh = buildFarm(colorNum);
+      mesh.traverse(o => {
+        const mm = o as THREE.Mesh;
+        if (!mm.material) return;
+        const mats = Array.isArray(mm.material) ? mm.material : [mm.material];
+        for (const m of mats) {
+          const sm = m as THREE.MeshStandardMaterial;
+          sm.transparent = true;
+          sm.opacity = 0.45;
+          sm.depthWrite = false;
+        }
+      });
+      const { x, z } = hexToWorld(hex);
+      mesh.position.set(x, this.elevationAt(state, hex) + 0.03, z);
+      this.overlayGroup.add(mesh);
+      this.ghostFarmMesh = mesh;
+      this.ghostFarmKey = key;
+      this.ghostFarmColor = colorNum;
+    }
+    this.ghostFarmMesh.visible = true;
+  }
+
+  // Clears both ghost previews at once — called whenever Farm/Road placement
+  // mode ends for any reason (confirm, cancel, deselect, turn change,
+  // another action mode opening) so a stale ghost never lingers in the scene.
+  clearPlacementGhosts(): void {
+    this.farmSelectionHex = null;
+    if (this.ghostFarmMesh) this.ghostFarmMesh.visible = false;
+    this.ghostFarmKey = null;
+    this.roadSelectionHexes = [];
+    for (const m of this.ghostRoadMeshes) m.visible = false;
   }
 
   // Re-center the camera on a specific hex (e.g. the local player's home temple
@@ -1132,6 +1227,10 @@ export class Renderer3D {
     // priority of all, strong pulsing gold "ghost" tint so a committed
     // selection reads unmistakably differently from a mere candidate.
     const roadSelectionSet = new Set(this.roadSelectionHexes.map(h => hexKey(h)));
+    // Farm-placement UX pass — the tentatively-selected Farm hex (pending
+    // Confirm), same priority tier as roadSelectionSet above (both sit just
+    // under nothing — the strongest tint on the board while active).
+    const farmSelectionKey = this.farmSelectionHex ? hexKey(this.farmSelectionHex) : null;
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
     // §23-25 — roads are persistent world decoration, not a transient
     // selection highlight, but this pool already redraws every frame from
@@ -1207,10 +1306,11 @@ export class Renderer3D {
       // forest visibility, hasAttacked & cantShootAfterMove gating) — i.e. the
       // exact legal-target set combat validation uses, never re-derived here.
       if (roadSelectionSet.has(key)) place(hex, 0xffd23f, 0.7, true); // strong pulsing gold "ghost" — committed Road selection
+      else if (farmSelectionKey === key) place(hex, 0xf0ffb0, 0.78, true); // Farm-placement UX pass — much stronger pulse for the tentatively-selected Farm tile, above the plain candidate pulse
       else if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
       else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
       else if (buildSet.has(key) && state.buildKind === 'farm') place(hex, 0x2ee65a, 0.55, true); // pulsating agricultural green — see place()
-      else if (buildSet.has(key) && state.buildKind === 'road') place(hex, 0xd9944a, 0.45); // distinct road-specific tan/orange, static
+      else if (buildSet.has(key) && state.buildKind === 'road') place(hex, 0x22d0ff, 0.5, true); // Road-placement UX pass — pulsing cyan/blue, distinct from Farm's green
       else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4); // teleport / fallback
       else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
       else if (roadSet.has(key)) place(hex, 0xb98c50, 0.3);

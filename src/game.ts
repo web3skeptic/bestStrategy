@@ -1603,18 +1603,35 @@ function allFarmsOf(state: GameState, playerId: number): Farm[] {
 // connect from — split out from getValidFarmHexes so the AI can scan the
 // whole territory for ANY still-buildable spot (not just neighbours of the
 // Builder's current position) when deciding where to head next.
-function isLegalFarmTile(state: GameState, hex: HexCoord, territory: Set<string>, existingFarms: Farm[]): boolean {
-  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return false; // off-map
+//
+// Farm-placement UX pass — returns the list of human-readable reasons the
+// hex itself is illegal (terrain/occupancy/territory/spacing), NOT the
+// unit/player-level gates (activation used, faction, Energy, Farm cap —
+// those live in getFarmPlacementResult below, the one function the UI, the
+// real mutator (canStartFarm), and the AI's getAllValidFarmSpots all share,
+// so there is never a case where the UI/AI and the engine disagree about a
+// hex's legality). Empty array = legal.
+function farmHexReasons(state: GameState, hex: HexCoord, territory: Set<string>, existingFarms: Farm[]): string[] {
+  const reasons: string[] = [];
+  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) { reasons.push('outside the map'); return reasons; }
   const key = hexKey(hex);
-  if (state.hills.has(key) || state.walls.has(key)) return false;
-  if (getStrategicSiteAt(state, hex)) return false;
-  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) return false;
-  if (state.capitals.some(c => hexEqual(c.pos, hex))) return false;
-  if (state.farms.some(f => hexEqual(f.pos, hex))) return false;
-  if (getUnitAt(state, hex)) return false;
-  if (!territory.has(key)) return false; // must land inside existing Agrar Territory
-  if (!existingFarms.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) return false; // not adjacent to another Farm
-  return true;
+  if (state.walls.has(key)) reasons.push('mountain blocks construction');
+  else if (state.hills.has(key)) reasons.push('invalid terrain');
+  if (getStrategicSiteAt(state, hex)) reasons.push('a sacred site is here');
+  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) reasons.push('a Fertile Site is here');
+  if (state.capitals.some(c => hexEqual(c.pos, hex))) reasons.push('the Capital is here');
+  if (state.farms.some(f => hexEqual(f.pos, hex))) reasons.push('a Farm is already here');
+  const occupant = getUnitAt(state, hex);
+  if (occupant) reasons.push('tile is occupied');
+  if (!territory.has(key)) reasons.push('outside Farmer territory');
+  if (!existingFarms.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) {
+    reasons.push(`too close to another Farm — needs ${FARM_MIN_SPACING}+ hexes apart`);
+  }
+  return reasons;
+}
+
+function isLegalFarmTile(state: GameState, hex: HexCoord, territory: Set<string>, existingFarms: Farm[]): boolean {
+  return farmHexReasons(state, hex, territory, existingFarms).length === 0;
 }
 
 // Every hex, anywhere in the player's current Agrar Territory, that could
@@ -1650,16 +1667,41 @@ export function getValidFarmHexes(state: GameState, unit: Unit): HexCoord[] {
   return result;
 }
 
-export function canStartFarm(state: GameState, unit: Unit, pos: HexCoord): boolean {
-  if (isMatchSetupRestricted(state)) return false;
-  if (unit.playerId !== getCurrentPlayer(state).id) return false;
-  if (unit.hasMoved || unit.hasAttacked) return false; // needs an unused activation
-  if (unit.type !== 'founder') return false; // only the Builder
+export interface PlacementResult { legal: boolean; reasons: string[] }
+
+// Farm-placement UX pass — THE canonical Farm-legality check, covering both
+// the unit/player-level gates (activation used, faction, Energy, Farm cap)
+// AND the per-hex terrain/territory/spacing gates (farmHexReasons above),
+// enumerated instead of short-circuited so every applicable reason is
+// reported at once. canStartFarm below is now a thin `.legal` wrapper over
+// this — the real mutator (startFarm), the human placement UI, and any
+// future AI/headless caller all read the exact same result, so a tile the
+// UI highlights as legal can never be rejected at actual build time.
+export function getFarmPlacementResult(state: GameState, unit: Unit, hex: HexCoord): PlacementResult {
+  const reasons: string[] = [];
+  if (isMatchSetupRestricted(state)) reasons.push('the match hasn\'t started yet');
+  if (unit.playerId !== getCurrentPlayer(state).id) reasons.push('not your turn');
+  if (unit.hasMoved || unit.hasAttacked) reasons.push('the Builder has already acted this round');
+  if (unit.type !== 'founder') reasons.push('only the Builder can build a Farm');
   const player = state.players.find(p => p.id === unit.playerId);
-  if (!player || player.faction !== 'agrar') return false; // §28 — Temple has no equivalent
-  if (allFarmsOf(state, player.id).length >= MAX_ACTIVE_FARMS) return false;
-  if (player.aura < AGRAR_FARM_COST) return false;
-  return getValidFarmHexes(state, unit).some(h => hexEqual(h, pos));
+  if (!player || player.faction !== 'agrar') {
+    reasons.push('only the Farmer tribe can build Farms'); // §28 — Temple has no equivalent
+  } else {
+    if (allFarmsOf(state, player.id).length >= MAX_ACTIVE_FARMS) {
+      reasons.push(`Farm limit reached (${MAX_ACTIVE_FARMS}/${MAX_ACTIVE_FARMS})`);
+    }
+    if (player.aura < AGRAR_FARM_COST) reasons.push(`not enough Energy — need ${AGRAR_FARM_COST}⚡`);
+    if (hexDistance(unit.pos, hex) !== 1) reasons.push('not adjacent to the Builder');
+    if (!state.capitals.some(c => c.playerId === player.id)) reasons.push('no Capital to anchor Farm construction');
+    const territory = getAgrarTerritory(state, player.id);
+    const existingFarms = allFarmsOf(state, player.id);
+    reasons.push(...farmHexReasons(state, hex, territory, existingFarms));
+  }
+  return { legal: reasons.length === 0, reasons };
+}
+
+export function canStartFarm(state: GameState, unit: Unit, pos: HexCoord): boolean {
+  return getFarmPlacementResult(state, unit, pos).legal;
 }
 
 // Begin building: charges AGRAR_FARM_COST immediately (same "commit the
@@ -1885,17 +1927,27 @@ export function getRoadAt(state: GameState, pos: HexCoord): Road | undefined {
 // it needs to connect from — split out from getValidRoadHexes so a
 // multi-segment path (buildRoadPath below) can reuse the exact same rules
 // for its 2nd/3rd segments without re-deriving them.
-export function isLegalRoadTile(state: GameState, hex: HexCoord): boolean {
-  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return false; // off-map
+// Road-placement UX pass — human-readable reasons a Road hex's own
+// terrain/occupancy is illegal, independent of connectivity/adjacency (those
+// depend on WHERE it needs to connect from — see getRoadPlacementResult).
+// Empty array = legal. isLegalRoadTile below is a thin `.length===0` wrapper
+// kept for its existing callers (buildRoadPath, main.ts's road candidates).
+function roadHexReasons(state: GameState, hex: HexCoord): string[] {
+  const reasons: string[] = [];
+  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) { reasons.push('outside the map'); return reasons; }
   const key = hexKey(hex);
-  if (state.walls.has(key)) return false; // no roads over impassable mountains
-  if (getRoadAt(state, hex)) return false; // already a road here
-  if (getStrategicSiteAt(state, hex)) return false; // no roads under a site
-  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) return false; // no roads under a Fertile Site
-  if (state.capitals.some(c => hexEqual(c.pos, hex))) return false; // no roads under a Capital
-  if (state.farms.some(f => hexEqual(f.pos, hex))) return false; // no roads under a Farm (founding or active)
-  if (getUnitAt(state, hex)) return false;
-  return true;
+  if (state.walls.has(key)) reasons.push('mountain blocks Road construction');
+  if (getRoadAt(state, hex)) reasons.push('a Road is already here');
+  if (getStrategicSiteAt(state, hex)) reasons.push('a sacred site is here');
+  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) reasons.push('a Fertile Site is here');
+  if (state.capitals.some(c => hexEqual(c.pos, hex))) reasons.push('the Capital is here');
+  if (state.farms.some(f => hexEqual(f.pos, hex))) reasons.push('a Farm is here');
+  if (getUnitAt(state, hex)) reasons.push('tile is occupied');
+  return reasons;
+}
+
+export function isLegalRoadTile(state: GameState, hex: HexCoord): boolean {
+  return roadHexReasons(state, hex).length === 0;
 }
 
 export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
@@ -1916,14 +1968,57 @@ export function getValidRoadHexes(state: GameState, unit: Unit): HexCoord[] {
   return result;
 }
 
-export function canBuildRoad(state: GameState, unit: Unit, pos: HexCoord): boolean {
-  if (isMatchSetupRestricted(state)) return false;
-  if (unit.type !== 'founder' || unit.hasMoved || unit.hasAttacked) return false;
+// Road-placement UX pass — THE canonical Road-legality check, for both the
+// FIRST tile of an activation (selected=[]: must be adjacent to the Builder
+// AND itself adjacent to the Capital/an active Farm/an existing Road) and
+// any CONTINUATION tile (selected=[...already-picked hexes this activation]:
+// must chain directly off the last one, same terrain/occupancy rules, and
+// fit in the remaining Energy after what's already selected — mirrors
+// buildRoadPath's own per-segment branch exactly). canBuildRoad below is a
+// thin `.legal` wrapper over the selected=[] case — the real mutators
+// (buildRoad/buildRoadPath), the human placement UI, and the server
+// dispatcher all read from the exact same rules, so nothing the UI
+// highlights as legal can ever be rejected at actual build time.
+export function getRoadPlacementResult(state: GameState, unit: Unit, hex: HexCoord, selected: HexCoord[] = []): PlacementResult {
+  const reasons: string[] = [];
+  if (isMatchSetupRestricted(state)) reasons.push('the match hasn\'t started yet');
+  if (unit.type !== 'founder') reasons.push('only the Builder can lay a Road');
+  if (unit.hasMoved || unit.hasAttacked) reasons.push('the Builder has already acted this round');
   const player = state.players.find(p => p.id === unit.playerId);
-  if (!player || player.faction !== 'agrar') return false;
-  const cost = state.pillagedRoadHexes.has(hexKey(pos)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
-  if (player.aura < cost) return false;
-  return getValidRoadHexes(state, unit).some(h => hexEqual(h, pos));
+  if (!player || player.faction !== 'agrar') {
+    reasons.push('only the Farmer tribe can build Roads');
+    return { legal: false, reasons };
+  }
+  if (selected.length >= ROAD_SEGMENTS_PER_ACTIVATION) {
+    reasons.push(`already selected the maximum of ${ROAD_SEGMENTS_PER_ACTIVATION} Road tiles this activation`);
+    return { legal: false, reasons };
+  }
+  const cost = state.pillagedRoadHexes.has(hexKey(hex)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+  const alreadySpent = selected.reduce((sum, h) =>
+    sum + (state.pillagedRoadHexes.has(hexKey(h)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX), 0);
+  if (player.aura - alreadySpent < cost) reasons.push(`not enough Energy — need ${cost}⚡ more`);
+  reasons.push(...roadHexReasons(state, hex));
+  if (selected.length === 0) {
+    if (hexDistance(unit.pos, hex) !== 1) reasons.push('not adjacent to the Builder');
+    const capital = state.capitals.find(c => c.playerId === player.id);
+    const anchors: HexCoord[] = [
+      ...(capital ? [capital.pos] : []),
+      ...activeFarmsOf(state, player.id).map(f => f.pos),
+      ...state.roads.filter(r => r.ownerId === player.id).map(r => r.pos),
+    ];
+    if (!anchors.some(a => hexDistance(a, hex) === 1)) {
+      reasons.push('not connected to the Capital, an active Farm, or an existing Road');
+    }
+  } else {
+    const last = selected[selected.length - 1]!;
+    if (hexDistance(last, hex) !== 1) reasons.push('must continue directly from the last selected Road tile');
+    if (selected.some(s => hexEqual(s, hex))) reasons.push('already selected');
+  }
+  return { legal: reasons.length === 0, reasons };
+}
+
+export function canBuildRoad(state: GameState, unit: Unit, pos: HexCoord): boolean {
+  return getRoadPlacementResult(state, unit, pos, []).legal;
 }
 
 export function buildRoad(state: GameState, unitId: string, pos: HexCoord): boolean {

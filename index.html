@@ -899,6 +899,30 @@
       box-shadow: 0 0 10px rgba(0,200,255,0.4);
     }
 
+    /* ── Farm/Road placement mode: Cancel button + compact legend ── */
+    #placementCancelBtn {
+      border-color: #a33;
+      background: rgba(60,20,20,0.85);
+      color: #f88;
+    }
+    #placementCancelBtn:active { background: rgba(90,30,30,0.9); }
+    .placement-legend {
+      position: absolute;
+      left: 50%;
+      bottom: 118px;
+      transform: translateX(-50%);
+      background: rgba(10,10,20,0.82);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #cfd6e6;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 40;
+    }
+
     /* Settings button is styled as the small gear (.plaque-gear) inside the plaque. */
 
     /* ── Settings overlay ── */
@@ -1507,6 +1531,8 @@
       <button id="captureBtn">⚔ Capture Temple</button>
       <button id="teleportBtn">⬡ Teleport</button>
       <button id="economyBtn">⚑ Build Farm</button>
+      <button id="placementCancelBtn" class="action-btn" style="display:none;">✕ Cancel</button>
+      <div class="placement-legend" id="placementLegend" style="display:none;"></div>
       <div class="action-row">
         <button class="action-btn" id="endTurnBtn">End Turn</button>
         <button id="techTreeBtn">🔬 Research</button>

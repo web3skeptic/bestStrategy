@@ -51,6 +51,7 @@ import {
   canStartFarm,
   startFarm,
   getValidFarmHexes,
+  getFarmPlacementResult,
   getAgrarTerritory,
   isSiteCultivationBlocked,
   canStartTempleUpgrade,
@@ -58,6 +59,7 @@ import {
   canBuildRoad,
   buildRoadPath,
   getValidRoadHexes,
+  getRoadPlacementResult,
   isLegalRoadTile,
   canPillageRoad,
   pillageRoad,
@@ -190,6 +192,8 @@ const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButton
 const captureBtn = document.getElementById('captureBtn') as HTMLButtonElement;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
 const economyBtn = document.getElementById('economyBtn') as HTMLButtonElement;
+const placementCancelBtn = document.getElementById('placementCancelBtn') as HTMLButtonElement;
+const placementLegendEl = document.getElementById('placementLegend')!;
 
 // Two-tap confirm guard for the destroy/disband HUD slab. Holds the unit id the
 // slab is currently "armed" for; re-armed only when the SAME unit is tapped
@@ -994,26 +998,15 @@ function farmBlockReason(state: GameState, unit: Unit): string | null {
   return null;
 }
 
-// Farm-UX pass (§3) — WHY a specific candidate hex (a direct neighbour of
-// the Builder) can't take a Farm, mirroring getValidFarmHexes' checks one
-// by one instead of collapsing them into a single "not valid" no. Only
-// meaningful for a hex the player could reasonably expect to be a
-// candidate (a Builder neighbour) — see the buildingFarm click handler.
+// Farm-placement UX pass — WHY a specific tapped/clicked hex can't take a
+// Farm, read straight from the engine's own canonical getFarmPlacementResult
+// (game.ts) rather than re-deriving the rules here — the UI can never show a
+// reason (or a legal/illegal verdict) that disagrees with actual
+// construction. Returns every applicable reason, comma-joined, or null if
+// the hex is actually legal.
 function farmHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord): string | null {
-  if (hexDistance({ q: 0, r: 0 }, hex) > state.mapRadius) return 'outside the map';
-  const key = hexKey(hex);
-  if (state.hills.has(key) || state.walls.has(key)) return 'invalid terrain';
-  if (getStrategicSiteAt(state, hex)) return 'a sacred site is here';
-  if (state.fertileSites.some(f => hexEqual(f.pos, hex))) return 'a Fertile Site is here';
-  if (state.capitals.some(c => hexEqual(c.pos, hex))) return 'a structure is already here';
-  if (state.farms.some(f => hexEqual(f.pos, hex))) return 'a structure is already here';
-  const occupant = getUnitAt(state, hex);
-  if (occupant) return occupant.playerId === unit.playerId ? 'occupied by your own unit' : 'an enemy unit is here';
-  const player = state.players.find(p => p.id === unit.playerId)!;
-  if (!getAgrarTerritory(state, player.id).has(key)) return 'outside Agrar infrastructure territory';
-  const ownFarms = state.farms.filter(f => f.ownerId === player.id);
-  if (!ownFarms.every(f => hexDistance(f.pos, hex) >= FARM_MIN_SPACING)) return `too close to another Farm (need ${FARM_MIN_SPACING}+ hexes apart)`;
-  return null;
+  const { legal, reasons } = getFarmPlacementResult(state, unit, hex);
+  return legal ? null : reasons.join(', ');
 }
 
 function roadBlockReason(state: GameState, unit: Unit): string | null {
@@ -1023,6 +1016,18 @@ function roadBlockReason(state: GameState, unit: Unit): string | null {
   if (unit.hasMoved || unit.hasAttacked) return 'Builder has already acted this round';
   if (getValidRoadHexes(state, unit).length === 0) return 'no valid Road location next to this Builder and its network';
   return null;
+}
+
+// Road-placement UX pass — WHY a specific tapped/clicked Road tile is
+// illegal, read straight from the engine's own canonical
+// getRoadPlacementResult (game.ts), same principle as farmHexIllegalReason
+// above — `selected` is whatever's already been picked this activation, so
+// the SAME function reports the right reason for both the first tile and any
+// continuation tile. Returns every applicable reason, comma-joined, or null
+// if the hex is actually legal.
+function roadHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord, selected: HexCoord[]): string | null {
+  const { legal, reasons } = getRoadPlacementResult(state, unit, hex, selected);
+  return legal ? null : reasons.join(', ');
 }
 
 // WHY a Temple unit can't found/reconsecrate right now, mirroring
@@ -1269,6 +1274,7 @@ function updateUI(): void {
   } else if (!endTurnArmed) {
     renderer.setHudButtonPrice('endTurn', '');
   }
+  syncPlacementCancelAndLegend();
   // The 3rd slab starts founding/reconstruction for the selected unit (a
   // Temple Acolyte standing on a neutral/ruined site — §7-10, v13), OR
   // builds a road (Agrar only, §23-25) if founding isn't available but a
@@ -1445,7 +1451,7 @@ function updateUI(): void {
         economyBtn.title = reason ?? '';
         economyBtn.classList.toggle('active', picking);
         economyBtn.textContent = picking
-          ? '⚑ Pick a hex for the Farm…'
+          ? (buildingFarm!.selected ? `⚑ Confirm Farm (⚡${AGRAR_FARM_COST})` : '⚑ Tap a highlighted hex for the Farm…')
           : reason ? `⚑ Build Farm — ${reason}` : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
       } else {
         economyBtn.style.display = 'none';
@@ -1827,18 +1833,29 @@ buildTeleportBtn.addEventListener('click', () => {
 });
 
 // ── Build Farm (Builder-driven, §6-9) / Buy Devotion (site-driven, §15) ──
+//
+// Farm-placement UX pass — Farm placement is now select-then-confirm (like
+// Road below), not instant-on-click: tapping a legal hex selects it (ghost
+// Farm model + a much stronger highlight — see renderer.setFarmSelectionPreview),
+// tapping a different legal hex just moves the selection, and either
+// pressing Confirm or tapping the already-selected hex again actually builds.
+// Tapping an illegal hex always explains why (farmHexIllegalReason) and
+// stays in placement mode — only Cancel/deselect/turn-change/another-mode
+// actually exits it.
 
 interface BuildFarmState {
   unitId: string;
+  selected: HexCoord | null;
 }
 
 let buildingFarm: BuildFarmState | null = null;
 
 function enterBuildFarm(unitId: string): void {
   const unit = state.units.find(u => u.id === unitId);
-  buildingFarm = { unitId };
+  buildingFarm = { unitId, selected: null };
   state.buildHexes = unit ? getValidFarmHexes(state, unit) : [];
   state.buildKind = 'farm';
+  renderer.setFarmSelectionPreview(null);
   render();
 }
 
@@ -1847,6 +1864,7 @@ function clearBuildFarm(): void {
   buildingFarm = null;
   state.buildHexes = [];
   state.buildKind = null;
+  renderer.setFarmSelectionPreview(null);
 }
 
 function cancelBuildFarm(): void {
@@ -1854,9 +1872,23 @@ function cancelBuildFarm(): void {
   render();
 }
 
+// Confirms the tentatively-selected Farm tile as one Builder activation.
+// Pressing Confirm (or the Build Farm slab itself, mirroring Road's own
+// press-again-to-confirm) with nothing selected yet is just a cancel.
+function confirmBuildFarm(): void {
+  if (!buildingFarm || !buildingFarm.selected) { cancelBuildFarm(); return; }
+  const { unitId, selected } = buildingFarm;
+  clearBuildFarm();
+  sendOrCall({ type: 'action', action: 'build-farm', params: { unitId, pos: selected } }, () => {
+    const started = startFarm(state, unitId, selected);
+    if (started) logCombat(`Began building a Farm at (${selected.q},${selected.r}) for ${AGRAR_FARM_COST}⚡`);
+  });
+  render();
+}
+
 economyBtn.addEventListener('click', () => {
   if (buildingFarm) {
-    cancelBuildFarm();
+    if (buildingFarm.selected) confirmBuildFarm(); else cancelBuildFarm();
     return;
   }
   // Agrar: Build Farm — triggered from the Builder's own unit selection.
@@ -1959,6 +1991,31 @@ function confirmBuildRoad(): void {
     if (built.length > 0) logCombat(`Built ${built.length} road segment${built.length > 1 ? 's' : ''} for ${totalCost}⚡`);
   });
   render();
+}
+
+// Farm/Road placement UX pass — a visible Cancel button (works with no
+// hover, so touch always has a way out of placement mode) plus a compact,
+// unobtrusive legend explaining the highlight colors — kept in sync every
+// render, independent of whatever else is selected.
+function syncPlacementCancelAndLegend(): void {
+  if (buildingFarm) {
+    placementCancelBtn.style.display = 'block';
+    placementCancelBtn.onclick = () => cancelBuildFarm();
+    placementLegendEl.style.display = 'block';
+    placementLegendEl.textContent = buildingFarm.selected
+      ? 'Ghost + bright pulse = your selected Farm tile · tap it again or press Confirm to build'
+      : 'Pulsing green hex = legal Farm site · tap one to preview it · tap any other tile to see why it\'s invalid';
+  } else if (buildingRoad) {
+    placementCancelBtn.style.display = 'block';
+    placementCancelBtn.onclick = () => cancelBuildRoad();
+    placementLegendEl.style.display = 'block';
+    placementLegendEl.textContent = buildingRoad.selected.length === 0
+      ? 'Pulsing cyan hex = legal Road start · tap one to select (up to 2 tiles this activation)'
+      : 'Gold hex = selected Road · pulsing cyan = legal next tile · press Confirm when done';
+  } else {
+    placementCancelBtn.style.display = 'none';
+    placementLegendEl.style.display = 'none';
+  }
 }
 
 // ── Settings UI ──
@@ -2420,26 +2477,29 @@ function handleHexClick(clientX: number, clientY: number): void {
     }
   }
 
-  // ── Build Farm mode: place a Farm hex (UI is always local, only final action is sent) ──
+  // ── Build Farm mode: select a Farm hex, then Confirm (UI is always local,
+  // only the final confirmed action is sent). Tapping the tile already
+  // selected confirms immediately — a tap-tap gesture works with no hover,
+  // no separate Confirm press required, on both desktop and touch. Tapping
+  // any OTHER illegal tile always explains why and stays in placement mode
+  // (see farmHexIllegalReason — reads the same canonical engine result
+  // actual construction uses, never a UI-only re-derivation of the rules). ──
   if (buildingFarm) {
-    const builderUnitId = buildingFarm.unitId;
-    if (state.buildHexes.some(h => hexEqual(h, hex))) {
-      clearBuildFarm();
-      sendOrCall({ type: 'action', action: 'build-farm', params: { unitId: builderUnitId, pos: hex } }, () => {
-        const started = startFarm(state, builderUnitId, hex);
-        if (started) logCombat(`Began building a Farm at (${hex.q},${hex.r}) for ${AGRAR_FARM_COST}⚡`);
-      });
+    const bf = buildingFarm;
+    const builder = state.units.find(u => u.id === bf.unitId);
+    if (builder && state.buildHexes.some(h => hexEqual(h, hex))) {
+      if (bf.selected && hexEqual(bf.selected, hex)) {
+        confirmBuildFarm();
+        return;
+      }
+      bf.selected = hex;
+      renderer.setFarmSelectionPreview(hex, state.players.find(p => p.id === builder.playerId)?.color, state);
+      showToast(`Farm selected at (${hex.q},${hex.r}) — tap it again or press Confirm to build (⚡${AGRAR_FARM_COST})`, 'neutral');
+      render();
       return;
     } else {
-      // Farm-UX pass (§3) — a click on a hex adjacent to the Builder (a
-      // hex the player might reasonably expect to be buildable) explains
-      // WHY it's illegal instead of silently exiting build mode; any other
-      // click is a genuine "change my mind" and just cancels as before.
-      const builder = state.units.find(u => u.id === builderUnitId);
-      if (builder && hexDistance(builder.pos, hex) === 1) {
-        const reason = farmHexIllegalReason(state, builder, hex);
-        if (reason) { showToast(`Can't build a Farm here — ${reason}`, 'bad'); return; }
-      }
+      const reason = builder ? farmHexIllegalReason(state, builder, hex) : null;
+      if (reason) { showToast(`Can't build a Farm here — ${reason}`, 'bad'); return; }
       cancelBuildFarm();
       render();
       return;
@@ -2448,7 +2508,9 @@ function handleHexClick(clientX: number, clientY: number): void {
 
   // ── Build Road mode: accumulate up to ROAD_SEGMENTS_PER_ACTIVATION Road
   // tiles, then confirm as one Builder activation (UI is always local, only
-  // the final confirmed action is sent) ──
+  // the final confirmed action is sent). Tapping an illegal tile always
+  // explains why and stays in placement mode — same principle as Farm above,
+  // via roadHexIllegalReason (the same canonical engine result). ──
   if (buildingRoad) {
     const br = buildingRoad;
     const unit = state.units.find(u => u.id === br.unitId);
@@ -2456,19 +2518,21 @@ function handleHexClick(clientX: number, clientY: number): void {
       br.selected.push(hex);
       const nextCandidates = roadCandidatesFor(unit, br.selected);
       state.buildHexes = nextCandidates;
-      renderer.setRoadSelectionPreview([...br.selected]);
+      renderer.setRoadSelectionPreview([...br.selected], state);
       if (br.selected.length >= ROAD_SEGMENTS_PER_ACTIVATION || nextCandidates.length === 0) {
         // Maxed out, or nothing legal/affordable left to extend with.
         confirmBuildRoad();
         return;
       }
       showToast(
-        `Road ${br.selected.length}/${ROAD_SEGMENTS_PER_ACTIVATION} selected (${roadSelectionTotalCost(br.selected)}⚡ so far) — pick another tile or press Road again to confirm`,
+        `Road ${br.selected.length}/${ROAD_SEGMENTS_PER_ACTIVATION} selected (${roadSelectionTotalCost(br.selected)}⚡ so far) — pick another tile or press Confirm`,
         'neutral',
       );
       render();
       return;
     } else {
+      const reason = unit ? roadHexIllegalReason(state, unit, hex, br.selected) : null;
+      if (reason) { showToast(`Can't lay a Road here — ${reason}`, 'bad'); return; }
       cancelBuildRoad();
       render();
       return;
