@@ -54,13 +54,20 @@ export interface FactionUnitDef {
 // economic-expansion units aren't asymmetrical in basic travel speed. Roads
 // (Agrar-only +1 SPD) are how Agrar's ground forces reach Temple-equivalent
 // mobility on their own infrastructure — see ROAD_MOVEMENT_BONUS.
+// Balance pass — "elite/heavy" Agrar: fewer units, but each Agrar combat
+// unit is much harder to kill (higher HP/DEF, higher Command cost so the
+// population cap actually limits army SIZE more than before) rather than
+// competing on numbers the way Temple does. Cost/HP/ATK/DEF/SPD/RNG/Command
+// all changed; unitClass (and therefore counter multipliers), vision,
+// earlyUnlock, and ZOC projection are untouched. Temple's roster (below)
+// and support/Builder stats are deliberately NOT part of this pass.
 export const AGRAR_UNITS: FactionUnitDef[] = [
-  { id: 'agrar_warrior',  faction: 'agrar', slot: 'warrior',  displayName: 'Warrior',     earlyUnlock: true,  unitClass: 'warrior', cost: 1, hp: 15, attack: 9,  defense: 5, speed: 1, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'voxelWarrior',     placeholderAsset: false },
-  { id: 'agrar_archer',   faction: 'agrar', slot: 'archer',   displayName: 'Archer',      earlyUnlock: true,  unitClass: 'archer',  cost: 2, hp: 14, attack: 10, defense: 4, speed: 1, range: 2, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'archer_standing',  placeholderAsset: false },
-  { id: 'agrar_pikeman',  faction: 'agrar', slot: 'spearsman', displayName: 'Pikeman',    earlyUnlock: true,  unitClass: 'pike',    cost: 2, hp: 16, attack: 9,  defense: 6, speed: 1, range: 1, vision: 2, commandCost: 1, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'spearsman_standing', placeholderAsset: false },
-  { id: 'agrar_knight',   faction: 'agrar', slot: 'horserider', displayName: 'Knight',    earlyUnlock: true,  unitClass: 'cavalry', cost: 4, hp: 19, attack: 13, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
-  { id: 'agrar_catapult', faction: 'agrar', slot: 'catapult', displayName: 'Catapult',    earlyUnlock: false, unitClass: 'siege',   cost: 4, hp: 16, attack: 13, defense: 3, speed: 1, range: 3, vision: 4, commandCost: 2, isSupport: false, isSiege: true,  projectsZOC: false, assetReference: 'catapult_standing', placeholderAsset: false },
-  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Heavy Knight', earlyUnlock: false, unitClass: 'heavy', cost: 6, hp: 21, attack: 16, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
+  { id: 'agrar_warrior',  faction: 'agrar', slot: 'warrior',  displayName: 'Warrior',     earlyUnlock: true,  unitClass: 'warrior', cost: 2, hp: 25, attack: 10, defense: 6, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'voxelWarrior',     placeholderAsset: false },
+  { id: 'agrar_archer',   faction: 'agrar', slot: 'archer',   displayName: 'Archer',      earlyUnlock: true,  unitClass: 'archer',  cost: 3, hp: 21, attack: 12, defense: 5, speed: 1, range: 2, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'archer_standing',  placeholderAsset: false },
+  { id: 'agrar_pikeman',  faction: 'agrar', slot: 'spearsman', displayName: 'Pikeman',    earlyUnlock: true,  unitClass: 'pike',    cost: 3, hp: 29, attack: 10, defense: 7, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'spearsman_standing', placeholderAsset: false },
+  { id: 'agrar_knight',   faction: 'agrar', slot: 'horserider', displayName: 'Knight',    earlyUnlock: true,  unitClass: 'cavalry', cost: 5, hp: 33, attack: 15, defense: 7, speed: 2, range: 1, vision: 2, commandCost: 3, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
+  { id: 'agrar_catapult', faction: 'agrar', slot: 'catapult', displayName: 'Catapult',    earlyUnlock: false, unitClass: 'siege',   cost: 5, hp: 24, attack: 15, defense: 4, speed: 1, range: 3, vision: 4, commandCost: 3, isSupport: false, isSiege: true,  projectsZOC: false, assetReference: 'catapult_standing', placeholderAsset: false },
+  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Heavy Knight', earlyUnlock: false, unitClass: 'heavy', cost: 7, hp: 37, attack: 19, defense: 7, speed: 2, range: 1, vision: 2, commandCost: 3, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
   { id: 'agrar_healer',   faction: 'agrar', slot: 'healer',   displayName: 'Healer',      earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 6,  defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true,  isSiege: false, projectsZOC: false, assetReference: 'healer_standing',  placeholderAsset: false },
   { id: 'agrar_dmg_support', faction: 'agrar', slot: 'damageBooster', displayName: 'Drummer', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'damagebooster_standing', placeholderAsset: false },
   { id: 'agrar_rng_support', faction: 'agrar', slot: 'rangeBooster', displayName: 'Scout', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'rangebooster_standing', placeholderAsset: false },
@@ -218,7 +225,11 @@ export const ROAD_PILLAGE_REBUILD_COST = 1;
 // A Builder may lay this many contiguous Road segments in a single
 // activation (see buildRoadPath in game.ts) — still 1⚡/hex, still one
 // activation total, just no longer one-hex-per-turn for the whole path.
-export const ROAD_SEGMENTS_PER_ACTIVATION = 3;
+// 3->2 (Agrar balance pass) — tightened alongside the elite/heavy roster:
+// the single canonical cap, read by the human build-Road UI (main.ts), the
+// AI's road-artery planner (ai.ts), the server action dispatcher, and
+// headless play alike — nothing else hardcodes a segment limit anywhere.
+export const ROAD_SEGMENTS_PER_ACTIVATION = 2;
 
 // §32-36 — combat constants relevant to the data model (TECH_COST lives in
 // types.ts, next to TECH_NODES — the single source of truth for tech cost).

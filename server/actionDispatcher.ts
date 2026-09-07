@@ -33,7 +33,7 @@ import {
   chooseFaction, isAwaitingFactionReveal,
   getOwnedStructures,
   startFarm, canStartFarm, getValidFarmHexes, startTempleUpgrade,
-  canBuildRoad, buildRoad, getValidRoadHexes, canPillageRoad, pillageRoad,
+  canBuildRoad, buildRoad, buildRoadPath, getValidRoadHexes, canPillageRoad, pillageRoad,
   canClaimFertileSite, claimFertileSite,
 } from '../src/game';
 import {
@@ -47,7 +47,7 @@ import {
   AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, AGRAR_TERRITORY_RADIUS, CULTIVATION_RADIUS, FARM_MIN_SPACING,
   TEMPLE_UPGRADE_COST, TEMPLE_LEVEL_INCOME, TEMPLE_II_PRODUCTION_BONUS,
   COMMAND_TIERS, PRODUCTION_BASE_SLOTS, PRODUCTION_MAX_SLOTS, UNIT_TRAINING_ROUNDS,
-  ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST,
+  ROAD_COST_PER_HEX, ROAD_MOVEMENT_BONUS, ROAD_PILLAGE_REBUILD_COST, ROAD_SEGMENTS_PER_ACTIVATION,
   FERTILE_SITE_INCOME, FERTILE_SITE_COUNT,
 } from '../src/factions';
 import { hexKey, getReachableHexes, hexDistance } from '../src/hex';
@@ -377,6 +377,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       note: 'Agrar-only physical road tiles (phase 7, §23-25; movement bonus restricted to Agrar phase 11 §26; adjacency + network-connectivity placement added afterward). Only a Builder (a "founder"-type unit belonging to an Agrar player) can build one — consumes its whole activation, same as founding, and resolves immediately (no multi-round construction, unlike Farms). Temple has no equivalent way to build one.',
       placement: 'A new Road hex must be a direct NEIGHBOUR of the Builder (same as Farm placement — see economy.agrarFarms.placement) AND itself be directly adjacent to the Capital, an active Farm, or an existing Road belonging to that same player — the network only ever extends link by link out from something real, it can never appear disconnected in the middle of nowhere. See getValidRoadHexes.',
       costPerHex: ROAD_COST_PER_HEX,
+      segmentsPerActivation: ROAD_SEGMENTS_PER_ACTIVATION,
       movementBonus: { amount: ROAD_MOVEMENT_BONUS, note: 'Applies to Agrar units ONLY (only Agrar can build a Road in the first place). A Temple unit moving over an Agrar Road receives no bonus — it treats the tile as normal terrain.' },
       pillage: {
         note: 'v14 — pillaging is a real, deliberate action now, NOT an automatic side effect of movement. An enemy unit merely ending its move on an Agrar Road no longer destroys it. To actually destroy it, that unit must use the separate "pillage-road" action — { unitId } — while standing on it, with an unused activation; this consumes the unit\'s whole activation (same as founding/build-farm/build-road). A pillaged hex is cheaper to rebuild than to build fresh.',
@@ -460,7 +461,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         'found — { unitId } start founding/reconstruction at the neutral/ruined site this unit is standing on (same restriction, Temple only — any Temple unit, no dedicated founder-type unit — see strategicSites above).',
         'build-farm — { unitId, pos } the Builder starts building a Farm at a valid adjacent hex (same restriction) — Agrar only, see economy.agrarFarms above. Completes next round like founding.',
         'upgrade-temple — { templeId (owned Temple I id) } start the 6⚡/1-round upgrade to Temple II on that site (same restriction) — Temple faction only, see strategicSites.templeLevels above.',
-        'build-road — { unitId, pos } the Builder builds a road at a valid adjacent hex (same restriction) — Agrar faction only, see roads above. Resolves immediately (unlike build-farm).',
+        'build-road — { unitId, path: [pos, ...] } (up to ROAD_SEGMENTS_PER_ACTIVATION contiguous hexes — see roads.segmentsPerActivation above; the first must be a valid adjacent hex from the Builder/network, each later one adjacent to the previous and itself legal) or the legacy single-hex { unitId, pos } shorthand — Agrar faction only, see roads above. Resolves immediately (unlike build-farm), one Builder activation either way.',
         'pillage-road — { unitId } destroy the enemy-owned Road the unit is standing on (same restriction — unused activation) — see roads.pillage above. ANY faction/unit type, not just Agrar.',
         'claim-fertile-site — { unitId } claim the Fertile Site the unit is standing on (same restriction) — Agrar only, resolves instantly, see fertileSites above. Only ever legal in a 1v1 Agrar-vs-Agrar match.',
         'research — research a tech (same restriction). A tech node with a `faction` set (see techTree) may only be researched by a player of that faction.',
@@ -697,8 +698,23 @@ export function executeAction(
       }
 
       case 'build-road': {
-        const { unitId, pos } = params as { unitId?: string; pos?: HexCoord };
-        if (!unitId || !pos) return fail(state, playerSlot, action, 'Missing unitId or pos for road build');
+        // `path` (up to ROAD_SEGMENTS_PER_ACTIVATION contiguous hexes, the
+        // first legal from the Builder/network, each later one adjacent to
+        // the previous and itself legal) is the current, canonical shape —
+        // same buildRoadPath the AI/headless play already use, so a human
+        // player's multi-select Road UI resolves through the exact same
+        // rules. `pos` (single hex) is kept only as a backward-compatible
+        // shorthand for anything still calling the old one-hex-at-a-time
+        // shape; both consume exactly one Builder activation.
+        const { unitId, pos, path } = params as { unitId?: string; pos?: HexCoord; path?: HexCoord[] };
+        if (!unitId) return fail(state, playerSlot, action, 'Missing unitId for road build');
+        if (path && path.length > 0) {
+          const built = buildRoadPath(state, unitId, path);
+          if (built.length === 0) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a road along the given path (not a Builder, not Agrar, not adjacent to the Builder/network, tile occupied, already acted, or insufficient aura)`);
+          log.push(`Player ${playerSlot} built ${built.length} road segment(s) starting at (${built[0]!.q},${built[0]!.r}) with unit ${unitId}`);
+          return { ok: true, action, log, broadcastToBoth: true };
+        }
+        if (!pos) return fail(state, playerSlot, action, 'Missing pos or path for road build');
         const ok = buildRoad(state, unitId, pos);
         if (!ok) return fail(state, playerSlot, action, `Unit ${unitId} cannot build a road at (${pos.q},${pos.r}) (not a Builder, not Agrar, not adjacent to the Builder, not adjacent to the Capital/a Farm/an existing Road, tile occupied, already acted, or insufficient aura)`);
         log.push(`Player ${playerSlot} built a road at (${pos.q},${pos.r}) with unit ${unitId}`);

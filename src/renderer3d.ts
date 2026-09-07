@@ -263,6 +263,12 @@ export class Renderer3D {
   private structFlashUntil = new Map<string, number>(); // brief red hit-flash, cleared in advanceAnimations
   private teleportMeshes = new Map<string, THREE.Object3D>();
   private highlightPool: THREE.Mesh[] = [];
+  // Balance pass — Road multi-select UI: tiles the player has already picked
+  // in the current Build-Road activation (as opposed to state.buildHexes,
+  // which is only ever the NEXT-tile candidate set) — purely a rendering
+  // concern, main.ts owns the actual selection list. Rendered with its own
+  // strong pulsing "ghost" highlight, top priority over every other tint.
+  private roadSelectionHexes: HexCoord[] = [];
 
   private capGeo: THREE.CylinderGeometry;
   private highlightGeo: THREE.CylinderGeometry;
@@ -541,6 +547,7 @@ export class Renderer3D {
     this.structureTintIds.clear();
     this.lastUnitHp.clear();
     this.lastStructHp.clear();
+    this.roadSelectionHexes = [];
     this.structHpBars.clear();
     this.structFlashUntil.clear();
     this.structureMeshes.clear();
@@ -573,6 +580,15 @@ export class Renderer3D {
   pan(_dx: number, _dy: number): void { /* orbit controls handle panning (right-drag) */ }
   getHexSize(): number { return HEX_R; }
   getCenter(): { x: number; y: number } { return { x: 0, y: 0 }; }
+
+  // Balance pass — Road multi-select UI: which tiles the player has already
+  // picked this activation, purely for the strong pulsing "ghost" highlight
+  // (see syncHighlights) — replaces the whole list every call, empty array
+  // clears it. main.ts calls this alongside its own local selection state,
+  // never persisted in GameState itself (this is presentation only).
+  setRoadSelectionPreview(hexes: HexCoord[]): void {
+    this.roadSelectionHexes = hexes.map(h => ({ ...h }));
+  }
 
   // Re-center the camera on a specific hex (e.g. the local player's home temple
   // at game start), preserving the current view angle/distance, then apply a
@@ -1107,6 +1123,11 @@ export class Renderer3D {
     // resolved by what's actually standing on the tile when clicked.
     const attackSet = new Set([...state.attackHexes, ...state.structureAttackHexes].map(h => hexKey(h)));
     const buildSet = new Set(state.buildHexes.map(h => hexKey(h)));
+    // Balance pass — Road multi-select: tiles already picked this activation
+    // (as opposed to buildSet above, the NEXT-tile candidates) — highest
+    // priority of all, strong pulsing gold "ghost" tint so a committed
+    // selection reads unmistakably differently from a mere candidate.
+    const roadSelectionSet = new Set(this.roadSelectionHexes.map(h => hexKey(h)));
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
     // §23-25 — roads are persistent world decoration, not a transient
     // selection highlight, but this pool already redraws every frame from
@@ -1181,7 +1202,8 @@ export class Renderer3D {
       // engine's state.attackHexes (updateHighlights → getEffectiveRange, fog /
       // forest visibility, hasAttacked & cantShootAfterMove gating) — i.e. the
       // exact legal-target set combat validation uses, never re-derived here.
-      if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
+      if (roadSelectionSet.has(key)) place(hex, 0xffd23f, 0.7, true); // strong pulsing gold "ghost" — committed Road selection
+      else if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
       else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
       else if (buildSet.has(key) && state.buildKind === 'farm') place(hex, 0x2ee65a, 0.55, true); // pulsating agricultural green — see place()
       else if (buildSet.has(key) && state.buildKind === 'road') place(hex, 0xd9944a, 0.45); // distinct road-specific tan/orange, static

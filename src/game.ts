@@ -724,14 +724,33 @@ export function getSupportBoostsForUnit(state: GameState, unit: Unit): { damageB
 
 // ── Effective stats (with hill + support bonuses) ──
 
-// §9 (balance pass) — Agrar Territory is deliberately NOT a combat bonus.
-// Agrar's edge is structural (higher HP/DEF baselines, Roads, ZOC formations,
-// Farms, area denial) — a flat +DEF aura on top of that would be a huge,
-// invisible swing (DEF is subtractive: ATK10 vs DEF5 = 5 dmg, vs DEF7 = 3 dmg,
-// a ~40% cut) stacked on units that are already tankier by design.
+// §9 (original balance pass) had Agrar Territory deliberately grant NO
+// combat bonus, reasoning that Agrar's edge was already structural enough
+// (higher HP/DEF baselines, Roads, ZOC formations, Farms, area denial).
+// SUPERSEDED by the later "elite/heavy" Agrar pass below — real play showed
+// Agrar underperforming, and a small, non-stacking territorial bonus reads
+// right for a faction whose whole identity is "hard to dig out of its own
+// ground": a flat +1 DEF (not the old flat aura idea — this is much
+// smaller, and doesn't stack) while an Agrar unit stands within 1 hex (its
+// own tile or any of the 6 neighbours) of ITS OWNER's Capital or any of
+// that owner's ACTIVE Farms (a still-founding Farm doesn't count — it isn't
+// a real strongpoint yet). Overlapping Capital/Farm coverage never stacks
+// past that single +1. Temple units get nothing here regardless of
+// position — this is Agrar's own infrastructure, the same faction-locked
+// convention Road speed already uses (see getEffectiveSpeed).
+export const HOME_GROUND_DEFENSE_BONUS = 1;
+export function isOnAgrarHomeGround(state: GameState, unit: Unit): boolean {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (player?.faction !== 'agrar') return false;
+  const capital = getPlayerCapital(state, unit.playerId);
+  if (capital && hexDistance(unit.pos, capital.pos) <= 1) return true;
+  return state.farms.some(f => f.ownerId === unit.playerId && f.state === 'farm' && hexDistance(unit.pos, f.pos) <= 1);
+}
+
 export function getEffectiveDefense(state: GameState, unit: Unit): number {
   const onHill = state.hills.has(hexKey(unit.pos));
-  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0);
+  const homeGround = isOnAgrarHomeGround(state, unit) ? HOME_GROUND_DEFENSE_BONUS : 0;
+  return unit.stats.defense + (onHill ? HILL_DEFENSE_BONUS : 0) + homeGround;
 }
 
 export function getEffectiveAttack(state: GameState, unit: Unit): number {

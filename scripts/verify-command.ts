@@ -155,8 +155,14 @@ console.log('\n=== Population cost is commandCost-weighted, not flat 1-per-unit 
   sweepUnitsOffCapital(state, 0);
   state.currentPlayerIndex = 0;
 
-  check('a light unit (commandCost 1) still fits at cap-1', canAfford(state, 'warrior'));
-  check('a heavy unit (commandCost 2) does NOT fit at cap-1, even though count < cap', !canAfford(state, 'heavyknight'));
+  // Agrar elite/heavy balance pass — Warrior is commandCost 2 now (was 1),
+  // Heavy Knight is commandCost 3 now (was 2); founder (the Builder) is a
+  // support-slot unit untouched by this pass and stays commandCost 1, so it
+  // takes over as the "light unit" probe here — the property being tested
+  // (a commandCost-1 unit still fits at cap-1; nothing heavier does) is
+  // unaffected by which specific commandCost-1 unit type is used.
+  check('a light unit (commandCost 1) still fits at cap-1', canAfford(state, 'founder'));
+  check('a heavy unit (commandCost 3) does NOT fit at cap-1, even though count < cap', !canAfford(state, 'heavyknight'));
 }
 
 // ── Production slots (§19-20) ──

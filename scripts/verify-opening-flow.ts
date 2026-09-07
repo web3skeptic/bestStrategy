@@ -14,6 +14,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import WebSocket from 'ws';
+import { FACTION_UNITS } from '../src/factions';
 
 const tmpDb = path.join(os.tmpdir(), `gu-test-${randomBytes(6).toString('hex')}.db`);
 process.env.DB_PATH = tmpDb;
@@ -176,7 +177,14 @@ async function main(): Promise<void> {
   nowActing.send({ type: 'action', action: 'recruit', params: { unitType: 'warrior', templeId: actingCapital.id } });
   const [postRecruitA, postRecruitB] = await Promise.all([A.next('state_update'), B.next('state_update')]);
   check('the recruited unit does NOT exist on the battlefield immediately', postRecruitA.state.units.filter((u: any) => u.playerId === nowActingSlot).length === 0);
-  check('the recruiting player was charged the Warrior cost (1⚡, from 3⚡ starting)', postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 2, `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
+  // Cost is looked up dynamically per faction — the test deliberately
+  // doesn't care which faction goes first, and Agrar's Warrior no longer
+  // costs the same as Temple's (elite/heavy balance pass: Agrar Warrior
+  // 1->2⚡; Temple's is untouched).
+  const warriorCost = FACTION_UNITS[nowActingFaction as 'agrar' | 'temple'].find(u => u.slot === 'warrior')!.cost;
+  check(`the recruiting player (${nowActingFaction}) was charged the Warrior cost (${warriorCost}⚡, from 3⚡ starting)`,
+    postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura === 3 - warriorCost,
+    `got ${postRecruitA.state.players.find((p: any) => p.id === nowActingSlot).aura}`);
 
   // ── End this player's turn, then the opponent's — the order should deploy
   // at the start of the RECRUITING player's next round (their turn comes

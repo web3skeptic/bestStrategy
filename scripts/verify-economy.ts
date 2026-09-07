@@ -16,7 +16,7 @@ import {
   getPlayerIncome, getProductionSlots,
   canStartFarm, startFarm, getValidFarmHexes, getAgrarTerritory, getAgrarCultivation,
   canStartTempleUpgrade, startTempleUpgrade,
-  selectUnit, attackStructure, getStructureAt, getEffectiveDefense,
+  selectUnit, attackStructure, getStructureAt, getEffectiveDefense, HOME_GROUND_DEFENSE_BONUS,
   createUnit,
 } from '../src/game';
 import {
@@ -425,8 +425,14 @@ function allFarmSlotCount(state: GameState, playerId: number): number {
   return state.farms.filter(f => f.ownerId === playerId).length;
 }
 
-// ── Territory grants NO combat bonus (§9) ──
-console.log('\n=== Agrar Territory grants NO defense bonus (§9) ===');
+// ── Agrar "Home Ground" — §9's old "Territory grants no combat bonus" is
+// superseded by the Agrar elite/heavy balance pass: standing within 1 hex
+// of the Capital or an active Farm now grants a flat, non-stacking +1 DEF.
+// Full coverage (stacking, faction-locked, ownership) lives in
+// verify-home-ground.ts; this block just keeps the original off/on-Farm/
+// on-Capital cases that used to assert the opposite, in the same place
+// they've always lived alongside the rest of the Farm economy tests.
+console.log('\n=== Agrar "Home Ground" grants +1 defense near the Capital/an active Farm ===');
 {
   const state = setup();
   clearFarmArea(state, 0);
@@ -435,16 +441,18 @@ console.log('\n=== Agrar Territory grants NO defense bonus (§9) ===');
   const hex = getValidFarmHexes(state, builder)[0]!;
   foundFarm(state, 0, hex);
   const farm = state.farms.find(f => hexEqual(f.pos, hex))!;
+  advanceOneRound(state); // Farm must be ACTIVE, not still founding, to grant Home Ground
 
   const defender = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
   const baseDef = defender.stats.defense;
   defender.pos = { q: 500, r: 500 }; // far off any territory
-  check('off-territory defense is the base stat', getEffectiveDefense(state, defender) === baseDef);
-  defender.pos = { ...farm.pos }; // standing on its own Farm's hex
-  check('an Agrar unit on its OWN Farm hex gets NO defense bonus', getEffectiveDefense(state, defender) === baseDef, `got ${getEffectiveDefense(state, defender)}, base=${baseDef}`);
+  check('off Home Ground, defense is the base stat', getEffectiveDefense(state, defender) === baseDef);
+  defender.pos = { ...farm.pos }; // standing on its own active Farm's hex
+  check('an Agrar unit on its OWN active Farm hex gets +1 defense (Home Ground)',
+    getEffectiveDefense(state, defender) === baseDef + HOME_GROUND_DEFENSE_BONUS, `got ${getEffectiveDefense(state, defender)}, base=${baseDef}`);
   defender.pos = { ...capital.pos }; // standing on its own Capital
-  check('an Agrar unit on its OWN Capital hex gets NO defense bonus', getEffectiveDefense(state, defender) === baseDef);
-  check('effective DEF equals base DEF + terrain/support only (no territory term)', getEffectiveDefense(state, defender) === defender.stats.defense);
+  check('an Agrar unit on its OWN Capital hex gets +1 defense (Home Ground)',
+    getEffectiveDefense(state, defender) === baseDef + HOME_GROUND_DEFENSE_BONUS);
 }
 
 // ── Temple I -> Temple II upgrade (v11 Temple conquest/upgrade system) ──

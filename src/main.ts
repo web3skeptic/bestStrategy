@@ -1,6 +1,6 @@
 import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
-import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, FERTILE_SITE_INCOME, FARM_MIN_SPACING } from './factions';
-import { hexEqual, hexKey, hexDistance } from './hex';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, ROAD_SEGMENTS_PER_ACTIVATION, FERTILE_SITE_INCOME, FARM_MIN_SPACING } from './factions';
+import { hexEqual, hexKey, hexDistance, hexNeighbors } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
   createGameState,
@@ -26,6 +26,8 @@ import {
   getEffectiveDefense,
   getEffectiveAttack,
   getEffectiveRange,
+  isOnAgrarHomeGround,
+  HOME_GROUND_DEFENSE_BONUS,
   getCurrentPlayerVisible,
   getPlayerVisible,
   canAfford,
@@ -54,8 +56,9 @@ import {
   canStartTempleUpgrade,
   startTempleUpgrade,
   canBuildRoad,
-  buildRoad,
+  buildRoadPath,
   getValidRoadHexes,
+  isLegalRoadTile,
   canPillageRoad,
   pillageRoad,
   getRoadAt,
@@ -1342,10 +1345,16 @@ function updateUI(): void {
       const effDef = getEffectiveDefense(state, unit);
       const effAtk = getEffectiveAttack(state, unit);
       const effRng = getEffectiveRange(state, unit);
-      // Hill terrain is the only defense-bonus source now (Agrar Territory
-      // grants no combat bonus — see getEffectiveDefense).
+      // Two independent, stackable DEF sources: hill terrain (any faction),
+      // and Agrar's own Home Ground (+1 DEF within 1 hex of the Capital or
+      // an active Farm — see isOnAgrarHomeGround/getEffectiveDefense; never
+      // stacks with itself even if Capital/Farm coverage overlaps).
       const onHillNow = state.hills.has(hexKey(unit.pos));
-      const defStr = onHillNow ? `${effDef}(⛰+${HILL_DEFENSE_BONUS})` : `${effDef}`;
+      const onHomeGroundNow = isOnAgrarHomeGround(state, unit);
+      const defBonusNotes: string[] = [];
+      if (onHillNow) defBonusNotes.push(`⛰+${HILL_DEFENSE_BONUS}`);
+      if (onHomeGroundNow) defBonusNotes.push(`🏠+${HOME_GROUND_DEFENSE_BONUS}`);
+      const defStr = defBonusNotes.length > 0 ? `${effDef}(${defBonusNotes.join(' ')})` : `${effDef}`;
       const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
       let supportNote = '';
@@ -1414,7 +1423,9 @@ function updateUI(): void {
         captureBtn.title = reason ?? '';
         captureBtn.classList.toggle('active', picking);
         captureBtn.textContent = picking
-          ? '🛤 Pick a hex for the Road…'
+          ? (buildingRoad!.selected.length > 0
+            ? `🛤 Confirm ${buildingRoad!.selected.length}/${ROAD_SEGMENTS_PER_ACTIVATION} Road${buildingRoad!.selected.length > 1 ? 's' : ''} (⚡${roadSelectionTotalCost(buildingRoad!.selected)})`
+            : `🛤 Pick a hex for the Road… (up to ${ROAD_SEGMENTS_PER_ACTIVATION})`)
           : reason ? `🛤 Build Road — ${reason}` : `🛤 Build Road (⚡${ROAD_COST_PER_HEX})`;
       } else {
         captureBtn.style.display = 'none';
@@ -1867,22 +1878,56 @@ economyBtn.addEventListener('click', () => {
 
 // ── Build Road (Builder-driven, adjacency + network-connectivity §23-25) ──
 //
-// Same ring-pick pattern as Build Farm — a Road hex must be adjacent to the
-// Builder AND itself adjacent to the Capital/a Farm/an existing Road (see
-// getValidRoadHexes), so like Farms this is no longer a single-click instant
-// build on the Builder's own tile.
+// Balance pass (ROAD_SEGMENTS_PER_ACTIVATION 3->2) — a Road hex must be
+// adjacent to the Builder AND itself adjacent to the Capital/a Farm/an
+// existing Road for the FIRST tile (see getValidRoadHexes); every later
+// tile (up to ROAD_SEGMENTS_PER_ACTIVATION total) must chain directly off
+// the one just picked and stay legal/affordable — mirrors buildRoadPath's
+// own per-segment rules exactly (roadCandidatesFor below), so nothing the
+// preview offers can ever be rejected at confirm time. This used to
+// resolve instantly on the first click; it's now a genuine multi-select
+// (pick 1 or 2 tiles, then confirm) so a human's Road build goes through
+// the exact same buildRoadPath the AI/headless play already use, not a
+// separate single-hex-only path.
 
 interface BuildRoadState {
   unitId: string;
+  selected: HexCoord[];
 }
 
 let buildingRoad: BuildRoadState | null = null;
 
+function roadHexCost(hex: HexCoord): number {
+  return state.pillagedRoadHexes.has(hexKey(hex)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+}
+
+function roadSelectionTotalCost(selected: HexCoord[]): number {
+  return selected.reduce((sum, h) => sum + roadHexCost(h), 0);
+}
+
+// Legal candidates for the NEXT tile given what's already selected.
+function roadCandidatesFor(unit: Unit, selected: HexCoord[]): HexCoord[] {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return [];
+  if (selected.length === 0) {
+    return getValidRoadHexes(state, unit).filter(h => canBuildRoad(state, unit, h));
+  }
+  if (selected.length >= ROAD_SEGMENTS_PER_ACTIVATION) return [];
+  const remaining = player.aura - roadSelectionTotalCost(selected);
+  const last = selected[selected.length - 1]!;
+  return hexNeighbors(last).filter(h =>
+    hexDistance({ q: 0, r: 0 }, h) <= state.mapRadius
+    && !selected.some(s => hexEqual(s, h))
+    && isLegalRoadTile(state, h)
+    && remaining >= roadHexCost(h));
+}
+
 function enterBuildRoad(unitId: string): void {
   const unit = state.units.find(u => u.id === unitId);
-  buildingRoad = { unitId };
-  state.buildHexes = unit ? getValidRoadHexes(state, unit) : [];
+  buildingRoad = { unitId, selected: [] };
+  state.buildHexes = unit ? roadCandidatesFor(unit, []) : [];
   state.buildKind = 'road';
+  renderer.setRoadSelectionPreview([]);
   render();
 }
 
@@ -1891,10 +1936,26 @@ function clearBuildRoad(): void {
   buildingRoad = null;
   state.buildHexes = [];
   state.buildKind = null;
+  renderer.setRoadSelectionPreview([]);
 }
 
 function cancelBuildRoad(): void {
   clearBuildRoad();
+  render();
+}
+
+// Confirms whatever's currently selected (1 or up to ROAD_SEGMENTS_PER_
+// ACTIVATION tiles) as one Builder activation, through the exact same
+// buildRoadPath mutator the AI/headless play already use.
+function confirmBuildRoad(): void {
+  if (!buildingRoad || buildingRoad.selected.length === 0) { cancelBuildRoad(); return; }
+  const { unitId, selected } = buildingRoad;
+  const totalCost = roadSelectionTotalCost(selected);
+  clearBuildRoad();
+  sendOrCall({ type: 'action', action: 'build-road', params: { unitId, path: selected } }, () => {
+    const built = buildRoadPath(state, unitId, selected);
+    if (built.length > 0) logCombat(`Built ${built.length} road segment${built.length > 1 ? 's' : ''} for ${totalCost}⚡`);
+  });
   render();
 }
 
@@ -2234,7 +2295,14 @@ techOverlay.addEventListener('click', (e) => {
 // mode if that's available (Agrar only, §23-25) — mutually exclusive
 // per-selection states, so there's no ambiguity about which one fires.
 function doFound(): void {
-  if (buildingRoad) { cancelBuildRoad(); return; }
+  // Pressing the same slab again while mid-selection confirms whatever's
+  // picked so far (1 tile is a completely valid, deliberate choice — see
+  // §3's "allow building only one Road if the player chooses only one");
+  // with nothing selected yet it's still a plain cancel.
+  if (buildingRoad) {
+    if (buildingRoad.selected.length > 0) confirmBuildRoad(); else cancelBuildRoad();
+    return;
+  }
   if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
   const unit = state.units.find(u => u.id === state.selectedUnitId);
   if (!unit) return;
@@ -2376,16 +2444,27 @@ function handleHexClick(clientX: number, clientY: number): void {
     }
   }
 
-  // ── Build Road mode: place a Road hex (UI is always local, only final action is sent) ──
+  // ── Build Road mode: accumulate up to ROAD_SEGMENTS_PER_ACTIVATION Road
+  // tiles, then confirm as one Builder activation (UI is always local, only
+  // the final confirmed action is sent) ──
   if (buildingRoad) {
-    const builderUnitId = buildingRoad.unitId;
-    if (state.buildHexes.some(h => hexEqual(h, hex))) {
-      clearBuildRoad();
-      const cost = state.pillagedRoadHexes.has(hexKey(hex)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
-      sendOrCall({ type: 'action', action: 'build-road', params: { unitId: builderUnitId, pos: hex } }, () => {
-        const built = buildRoad(state, builderUnitId, hex);
-        if (built) logCombat(`Built a road at (${hex.q},${hex.r}) for ${cost}⚡`);
-      });
+    const br = buildingRoad;
+    const unit = state.units.find(u => u.id === br.unitId);
+    if (unit && state.buildHexes.some(h => hexEqual(h, hex))) {
+      br.selected.push(hex);
+      const nextCandidates = roadCandidatesFor(unit, br.selected);
+      state.buildHexes = nextCandidates;
+      renderer.setRoadSelectionPreview([...br.selected]);
+      if (br.selected.length >= ROAD_SEGMENTS_PER_ACTIVATION || nextCandidates.length === 0) {
+        // Maxed out, or nothing legal/affordable left to extend with.
+        confirmBuildRoad();
+        return;
+      }
+      showToast(
+        `Road ${br.selected.length}/${ROAD_SEGMENTS_PER_ACTIVATION} selected (${roadSelectionTotalCost(br.selected)}⚡ so far) — pick another tile or press Road again to confirm`,
+        'neutral',
+      );
+      render();
       return;
     } else {
       cancelBuildRoad();

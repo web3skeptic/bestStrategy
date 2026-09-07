@@ -145,17 +145,25 @@ console.log('\n=== Same slot, distinct faction flavor ===');
   const templeRaider = TEMPLE_UNITS.find(u => u.slot === 'horserider')!;
   check('Agrar Knight costs more than Temple Raider (tanky vs cheap-mobility asymmetry)', agrarKnight.cost > templeRaider.cost, `agrar=${agrarKnight.cost} temple=${templeRaider.cost}`);
   check('Temple Raider is faster than Agrar Knight', templeRaider.speed > agrarKnight.speed, `agrar=${agrarKnight.speed} temple=${templeRaider.speed}`);
-  // v14 balance pass — Raider Command 1->2: a speed-3, ZOC-projecting
-  // cavalry piece with strong attack shouldn't also field twice the bodies
-  // of Agrar's Knight (Command 2) under the same population cap. Energy
-  // cost/stats stay cheaper/lighter than the Knight — only Command matches.
-  check('Temple Raider commandCost is 2 (matches Agrar Knight)', templeRaider.commandCost === 2, `got ${templeRaider.commandCost}`);
+  // Agrar elite/heavy balance pass (Agrar Knight Command 2->3) — Temple's
+  // own commandCost is untouched by this pass (still 2, checked below); the
+  // two no longer match on purpose — Agrar's Command costs rose across the
+  // board as part of "fewer, harder-to-kill units", Temple's did not.
+  check('Temple Raider commandCost is still 2 (Temple untouched by the Agrar balance pass)', templeRaider.commandCost === 2, `got ${templeRaider.commandCost}`);
+  check('Agrar Knight commandCost is now 3 (elite/heavy pass), higher than Temple Raider\'s',
+    agrarKnight.commandCost === 3 && agrarKnight.commandCost > templeRaider.commandCost,
+    `agrar=${agrarKnight.commandCost} temple=${templeRaider.commandCost}`);
   check('Temple Raider is still cheaper in Energy than Agrar Knight', templeRaider.cost < agrarKnight.cost);
 }
 {
   const agrarHK = AGRAR_UNITS.find(u => u.slot === 'heavyknight')!;
   const templeChamp = TEMPLE_UNITS.find(u => u.slot === 'heavyknight')!;
-  check('Heavy Knight and Champion cost the same (symmetric slot)', agrarHK.cost === templeChamp.cost, `agrar=${agrarHK.cost} temple=${templeChamp.cost}`);
+  // Agrar elite/heavy balance pass — Heavy Knight/Champion used to cost the
+  // same (symmetric slot); Agrar's Heavy Knight is now deliberately pricier
+  // (7 vs Temple's untouched 6), matching HP/DEF well above Champion's.
+  check('Agrar Heavy Knight now costs more than Temple Champion (elite/heavy pass)',
+    agrarHK.cost > templeChamp.cost, `agrar=${agrarHK.cost} temple=${templeChamp.cost}`);
+  check('Temple Champion cost is untouched (6)', templeChamp.cost === 6, `got ${templeChamp.cost}`);
 }
 
 // ── Builder: Agrar-only now (v15 — the Acolyte is gone for good) ──

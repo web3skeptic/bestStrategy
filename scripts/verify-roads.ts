@@ -363,27 +363,46 @@ function straightRoadChain(state: GameState, builder: Unit, capitalPos: { q: num
   return chain;
 }
 
-console.log('\n=== Builder may lay up to 3 contiguous Road segments in one activation (§35-38) ===');
+// Agrar elite/heavy balance pass — ROAD_SEGMENTS_PER_ACTIVATION 3->2. Every
+// check below reads the constant dynamically rather than hardcoding either
+// number, so this file doesn't need touching again if it's ever retuned —
+// but it DOES assert the current value is exactly 2, per the balance pass.
+console.log(`\n=== Builder may lay up to ROAD_SEGMENTS_PER_ACTIVATION contiguous Road segments in one activation (§35-38, now capped at 2) ===`);
 {
+  check('ROAD_SEGMENTS_PER_ACTIVATION is now 2 (was 3)', ROAD_SEGMENTS_PER_ACTIVATION === 2, `got ${ROAD_SEGMENTS_PER_ACTIVATION}`);
+
   const state = setup();
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const builder = clearRoadArea(state, 0);
-  const path = straightRoadChain(state, builder, capital.pos, 3);
-  check('setup: found 3 legal contiguous candidate hexes', path.length === 3);
-  check('ROAD_SEGMENTS_PER_ACTIVATION caps at 3', ROAD_SEGMENTS_PER_ACTIVATION === 3);
+  const path = straightRoadChain(state, builder, capital.pos, ROAD_SEGMENTS_PER_ACTIVATION);
+  check(`setup: found ${ROAD_SEGMENTS_PER_ACTIVATION} legal contiguous candidate hexes`, path.length === ROAD_SEGMENTS_PER_ACTIVATION);
 
   const player = state.players[0]!;
   const before = player.aura;
   const built = buildRoadPath(state, builder.id, path);
-  check('all 3 segments were built', built.length === 3, `built=${built.length}`);
-  check('exactly 3⚡ was deducted (1 per hex)', player.aura === before - 3, `aura ${before}->${player.aura}`);
+  check(`all ${ROAD_SEGMENTS_PER_ACTIVATION} segments were built (2 contiguous Roads for 2⚡)`, built.length === ROAD_SEGMENTS_PER_ACTIVATION, `built=${built.length}`);
+  check(`exactly ${ROAD_SEGMENTS_PER_ACTIVATION}⚡ was deducted (1 per hex)`, player.aura === before - ROAD_SEGMENTS_PER_ACTIVATION, `aura ${before}->${player.aura}`);
   for (const hex of path) check(`Road now exists at (${hex.q},${hex.r})`, !!getRoadAt(state, hex));
   check('the whole path consumed only ONE Builder activation', builder.hasMoved && builder.hasAttacked);
   check('the Builder cannot lay another path this same activation',
     buildRoadPath(state, builder.id, straightRoadChain(state, builder, capital.pos, 1)).length === 0);
 }
 
-console.log('\n=== A path longer than ROAD_SEGMENTS_PER_ACTIVATION is truncated, not spilled into a 2nd activation ===');
+console.log('\n=== The Builder can still build just ONE Road (not forced to pick the max) ===');
+{
+  const state = setup();
+  const builder = clearRoadArea(state, 0);
+  const path = straightRoadChain(state, builder, state.capitals.find(c => c.playerId === 0)!.pos, 1);
+  check('setup: found 1 legal candidate hex', path.length === 1);
+  const player = state.players[0]!;
+  const before = player.aura;
+  const built = buildRoadPath(state, builder.id, path);
+  check('exactly 1 segment was built', built.length === 1, `built=${built.length}`);
+  check('exactly 1⚡ was deducted', player.aura === before - 1, `aura ${before}->${player.aura}`);
+  check('the single Builder activation is still fully consumed', builder.hasMoved && builder.hasAttacked);
+}
+
+console.log('\n=== A path longer than ROAD_SEGMENTS_PER_ACTIVATION is truncated (a 3rd Road can never be selected/built), not spilled into a 2nd activation ===');
 {
   const state = setup();
   const capital = state.capitals.find(c => c.playerId === 0)!;
@@ -393,23 +412,30 @@ console.log('\n=== A path longer than ROAD_SEGMENTS_PER_ACTIVATION is truncated,
   const player = state.players[0]!;
   const before = player.aura;
   const built = buildRoadPath(state, builder.id, path);
-  check('only the first 3 segments were built, never all 5', built.length === 3, `built=${built.length}`);
-  check('only 3⚡ was deducted, not 5', player.aura === before - 3, `aura ${before}->${player.aura}`);
-  check('the 4th/5th hexes were never created', !getRoadAt(state, path[3]!) && !getRoadAt(state, path[4]!));
+  check(`only the first ${ROAD_SEGMENTS_PER_ACTIVATION} segments were built, never all 5 (a 3rd Road is never allowed)`,
+    built.length === ROAD_SEGMENTS_PER_ACTIVATION, `built=${built.length}`);
+  check(`only ${ROAD_SEGMENTS_PER_ACTIVATION}⚡ was deducted, not 5`, player.aura === before - ROAD_SEGMENTS_PER_ACTIVATION, `aura ${before}->${player.aura}`);
+  check('the 3rd/4th/5th hexes were never created', [2, 3, 4].every(i => !getRoadAt(state, path[i]!)));
 }
 
 console.log('\n=== Partial Road-path build when Energy runs short (§6, §36) ===');
 {
+  // Deliberately requests exactly ROAD_SEGMENTS_PER_ACTIVATION hexes (the
+  // max the cap alone would allow) but funds only 1 of them — isolates
+  // "ran out of Energy mid-path" from the segment cap itself (§35-38's own
+  // test above), so this keeps testing the aura-shortfall path specifically
+  // rather than coincidentally passing because the cap would've stopped it
+  // at the same count anyway.
   const state = setup();
   const capital = state.capitals.find(c => c.playerId === 0)!;
   const builder = clearRoadArea(state, 0);
-  const path = straightRoadChain(state, builder, capital.pos, 3);
+  const path = straightRoadChain(state, builder, capital.pos, ROAD_SEGMENTS_PER_ACTIVATION);
   const player = state.players[0]!;
-  player.aura = ROAD_COST_PER_HEX * 2; // enough for exactly 2, not 3
+  player.aura = ROAD_COST_PER_HEX; // enough for exactly 1, not the full ROAD_SEGMENTS_PER_ACTIVATION
   const built = buildRoadPath(state, builder.id, path);
-  check('only 2 of the 3 requested segments were built', built.length === 2, `built=${built.length}`);
+  check(`only 1 of the ${ROAD_SEGMENTS_PER_ACTIVATION} requested segments were built`, built.length === 1, `built=${built.length}`);
   check('aura is fully spent, never overdrawn', player.aura === 0, `aura=${player.aura}`);
-  check('the 3rd hex was never created', !getRoadAt(state, path[2]!));
+  check('the 2nd hex was never created', !getRoadAt(state, path[1]!));
 }
 
 console.log('\n=== Road-path segments must be contiguous (§37) ===');
