@@ -292,7 +292,7 @@ export function buildRulesPayload(): Record<string, unknown> {
     units: unitTypes,
     factions: factionRosters,
     techTree: {
-      note: 'Tech-tree pacing pass — research is a real, single-slot, multi-round civilization investment: each player has exactly ONE active research slot at a time (see the "research" action). Starting a tech charges its full `cost` in aura immediately, same as Farm/Temple founding, but its effect (unlock/stat bonus/population cap raise) only applies once `researchTime` rounds have elapsed — banking Energy does not let a player bypass this, the slot itself is the limiter. Command II additionally requires Command I completed AND at least 2 other completed technologies (not expressible via `prereqs`), and the Iron Guard/Champion Rite final unlocks each require BOTH their faction\'s tier-1 tech AND Command I.',
+      note: 'Tech-tree pacing pass — research is a real, single-slot, multi-round civilization investment: each player has exactly ONE active research slot at a time (see the "research" action). Starting a tech charges its full `cost` in aura immediately, same as Farm/Temple founding, but its effect (unlock/stat bonus/population cap raise) only applies once `researchTime` rounds have elapsed — banking Energy does not let a player bypass this, the slot itself is the limiter. Command II additionally requires Command I completed AND at least 2 other completed technologies (not expressible via `prereqs`), and the Warden/Champion Rite final unlocks each require BOTH their faction\'s tier-1 tech AND Command I.',
       nodes: techTree,
     },
     strategicSites: {

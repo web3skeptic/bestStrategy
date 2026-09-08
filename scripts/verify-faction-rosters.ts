@@ -73,10 +73,12 @@ console.log('\n=== Early unlock (§39) ===');
   const state = setup();
   const agrarUnlocked = getUnlockedUnits(state.playerTech[0]!, 'agrar');
   const templeUnlocked = getUnlockedUnits(state.playerTech[1]!, 'temple');
-  for (const t of ['warrior', 'archer', 'spearsman', 'horserider'] as UnitType[]) {
+  for (const t of ['warrior', 'archer', 'spearsman'] as UnitType[]) {
     check(`Agrar unlocks ${t} immediately`, agrarUnlocked.has(t));
     check(`Temple unlocks ${t} immediately`, templeUnlocked.has(t));
   }
+  check('Temple unlocks horserider (Raider) immediately', templeUnlocked.has('horserider'));
+  check('Agrar never unlocks horserider — it has no unit in that slot (roster pass 2)', !agrarUnlocked.has('horserider'));
   // founder (the Builder) — Agrar-only since v15; Temple has no equivalent.
   check('Agrar unlocks founder immediately', agrarUnlocked.has('founder'));
   check('Temple does NOT unlock founder (no Acolyte anymore, v15)', !templeUnlocked.has('founder'));
@@ -141,30 +143,22 @@ console.log('\n=== Same slot, distinct faction flavor ===');
   check('Spearsman (Temple) name is correct', templeDef.displayName === 'Spearsman');
 }
 {
-  // Roster pass: Agrar's flavor of the shared 'horserider' slot is now the
-  // Warden — slow (SPD 1, unlike Temple's speed-3 Raider) and classed
-  // 'warrior', not 'cavalry' (see factions.ts) — but it still shares the
-  // same cost/commandCost asymmetry the old Knight had vs Temple's Raider.
-  const agrarWarden = AGRAR_UNITS.find(u => u.slot === 'horserider')!;
+  // Roster pass 2: Agrar has NO unit in the shared 'horserider' slot (the
+  // old Warden was deleted); Temple's Raider is untouched.
   const templeRaider = TEMPLE_UNITS.find(u => u.slot === 'horserider')!;
-  check('Warden displays as "Warden", not "Knight"', agrarWarden.displayName === 'Warden');
-  check('Warden is classed warrior, not cavalry (no cavalry counters)', agrarWarden.unitClass === 'warrior');
-  check('Warden costs more than Temple Raider (tanky vs cheap-mobility asymmetry)', agrarWarden.cost > templeRaider.cost, `agrar=${agrarWarden.cost} temple=${templeRaider.cost}`);
-  check('Temple Raider is faster than the Warden', templeRaider.speed > agrarWarden.speed, `agrar=${agrarWarden.speed} temple=${templeRaider.speed}`);
+  check('Agrar has no horserider-slot unit', !AGRAR_UNITS.some(u => u.slot === 'horserider'));
+  check('Temple Raider still exists, classed cavalry', templeRaider.unitClass === 'cavalry');
   check('Temple Raider commandCost is still 2 (Temple untouched by the Agrar balance/roster passes)', templeRaider.commandCost === 2, `got ${templeRaider.commandCost}`);
-  check('Warden commandCost is 3, higher than Temple Raider\'s',
-    agrarWarden.commandCost === 3 && agrarWarden.commandCost > templeRaider.commandCost,
-    `agrar=${agrarWarden.commandCost} temple=${templeRaider.commandCost}`);
-  check('Temple Raider is still cheaper in Energy than the Warden', templeRaider.cost < agrarWarden.cost);
+  check('Temple Raider speed is still 3', templeRaider.speed === 3, `got ${templeRaider.speed}`);
 }
 {
   const agrarHK = AGRAR_UNITS.find(u => u.slot === 'heavyknight')!;
   const templeChamp = TEMPLE_UNITS.find(u => u.slot === 'heavyknight')!;
-  // Roster pass: Agrar's flavor of the shared 'heavyknight' slot is now
-  // displayed as "Iron Guard" (rename only — stats/model/slot/class
-  // unchanged, still deliberately pricier than Temple's untouched Champion).
-  check('Iron Guard displays as "Iron Guard", not "Heavy Knight"', agrarHK.displayName === 'Iron Guard');
-  check('Iron Guard now costs more than Temple Champion (elite/heavy pass)',
+  // Roster pass 2: Agrar's flavor of the shared 'heavyknight' slot is the
+  // Warden (former Warden stats/slot/class, Warden name + unmounted
+  // model), still deliberately pricier than Temple's untouched Champion.
+  check('Warden displays as "Warden", not "Warden"', agrarHK.displayName === 'Warden');
+  check('Warden costs more than Temple Champion (elite/heavy pass)',
     agrarHK.cost > templeChamp.cost, `agrar=${agrarHK.cost} temple=${templeChamp.cost}`);
   check('Temple Champion cost is untouched (6)', templeChamp.cost === 6, `got ${templeChamp.cost}`);
 }
@@ -192,14 +186,14 @@ console.log('\n=== Tech gates faction recruiting (phase 11 Heavy-unit line, time
   const state = setup();
   state.players[0]!.aura = 200; // enough for the whole chain + the unit itself
   state.currentPlayerIndex = 0;
-  check('Agrar cannot recruit Iron Guard before tech', !canAfford(state, 'heavyknight'));
-  check('Agrar cannot research Iron Guard tech before its prereqs', !researchTech(state, 'agrar_heavy_knight_tech'));
+  check('Agrar cannot recruit Warden before tech', !canAfford(state, 'heavyknight'));
+  check('Agrar cannot research Warden tech before its prereqs', !researchTech(state, 'agrar_heavy_knight_tech'));
   check('Agrar can research + complete Heavy Armor (no prereq)', researchAndComplete(state, 0, 'agrar_heavy_armor'));
-  check('still cannot research Iron Guard tech — missing Command I', !researchTech(state, 'agrar_heavy_knight_tech'));
+  check('still cannot research Warden tech — missing Command I', !researchTech(state, 'agrar_heavy_knight_tech'));
   check('Agrar can research + complete Command I', researchAndComplete(state, 0, 'command_1'));
-  check('Iron Guard is NOT unlocked yet — still needs to be researched', !canAfford(state, 'heavyknight'));
-  check('Agrar can now research + complete Iron Guard tech (both prereqs met)', researchAndComplete(state, 0, 'agrar_heavy_knight_tech'));
-  check('Agrar can now recruit Iron Guard', canAfford(state, 'heavyknight'));
+  check('Warden is NOT unlocked yet — still needs to be researched', !canAfford(state, 'heavyknight'));
+  check('Agrar can now research + complete Warden tech (both prereqs met)', researchAndComplete(state, 0, 'agrar_heavy_knight_tech'));
+  check('Agrar can now recruit Warden', canAfford(state, 'heavyknight'));
 
   const cap = capitalId(state, 0);
   const before = state.players[0]!.aura;
@@ -209,7 +203,7 @@ console.log('\n=== Tech gates faction recruiting (phase 11 Heavy-unit line, time
   check('charged the Agrar-flavored cost immediately', state.players[0]!.aura === before - agrarDef.cost, `aura ${before}->${state.players[0]!.aura}`);
   advanceOneRound(state);
   const unit = state.units.find(u => u.playerId === 0 && u.type === 'heavyknight' && u.hp > 0);
-  check('recruited Iron Guard uses Agrar stats, not universal', !!unit && unit.stats.attack === agrarDef.attack, `got ${unit?.stats.attack}`);
+  check('recruited Warden uses Agrar stats, not universal', !!unit && unit.stats.attack === agrarDef.attack, `got ${unit?.stats.attack}`);
 }
 {
   // Faction gating: Temple cannot see/research Agrar's tech nodes and vice versa.

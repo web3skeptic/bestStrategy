@@ -29,7 +29,7 @@ import {
 // pre-reveal (no faction known yet) and for any slot with no faction-specific
 // override; getUnitClass below is the one everything else should call, since
 // it prefers a faction's own FactionUnitDef.unitClass when one differs from
-// this table (currently only the Warden — see factions.ts).
+// this table (none at the moment — see factions.ts).
 export const UNIT_CLASS: Record<UnitType, UnitClass> = {
   warrior:       'warrior',
   archer:        'archer',
@@ -44,8 +44,7 @@ export const UNIT_CLASS: Record<UnitType, UnitClass> = {
 };
 
 // Effective combat class for a (type, faction) pair. Prefers the faction's own
-// flavor of the slot (FactionUnitDef.unitClass — e.g. Farmer's Warden is
-// slot 'horserider' but classed 'warrior', not 'cavalry') and falls back to
+// flavor of the slot (FactionUnitDef.unitClass) and falls back to
 // the generic per-slot table when no faction is known yet or the slot has no
 // faction-specific entry (support/founder — identical either faction).
 export function getUnitClass(type: UnitType, faction?: FactionId | null): UnitClass {

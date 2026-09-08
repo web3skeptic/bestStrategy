@@ -479,8 +479,8 @@ export const TECH_NODES: TechNode[] = [
   // Heavy-unit line — faction-specific, genuinely gated (needs the tier-1
   // tech AND Command I, not a single flat unlock — §30). The final unlock
   // is a deliberate 3-round, 22⚡ late-game commitment — do not shorten it.
-  { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for Iron Guard.',                                                  cost: 16, researchTime: 2, prereqs: [], faction: 'agrar' },
-  { id: 'agrar_heavy_knight_tech', name: 'Iron Guard',      description: 'Unlock the Iron Guard — heavily armoured mounted unit with high HP and attack. Requires Heavy Armor and Command I.', cost: 22, researchTime: 3, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
+  { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for the Warden.',                                                  cost: 16, researchTime: 2, prereqs: [], faction: 'agrar' },
+  { id: 'agrar_heavy_knight_tech', name: 'Warden',          description: 'Unlock the Warden — heavily armoured infantry with high HP and attack. Requires Heavy Armor and Command I.', cost: 22, researchTime: 3, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
   { id: 'temple_warrior_rite',    name: 'Warrior Rite',     description: 'Prerequisite for Champion Rite.',                                               cost: 16, researchTime: 2, prereqs: [], faction: 'temple' },
   { id: 'temple_champion_rite',   name: 'Champion Rite',    description: 'Unlock the Champion — heavily armoured mounted unit with high HP and attack. Requires Warrior Rite and Command I.', cost: 22, researchTime: 3, prereqs: ['temple_warrior_rite', 'command_1'], unitUnlock: 'heavyknight', faction: 'temple' },
   // Branch: Stat Bonus (pick ONE) — shared by both factions. Infantry March

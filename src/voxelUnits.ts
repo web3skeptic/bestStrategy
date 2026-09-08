@@ -47,12 +47,9 @@ function mounted(model: THREE.Group): THREE.Group {
   return model;
 }
 
-// `faction` disambiguates slots two factions flavor very differently in 3D:
-// the shared 'horserider' slot is Temple's mounted Raider, but Farmer's own
-// flavor (the Warden) is deliberately unmounted heavy infantry — see
-// factions.ts's AGRAR_UNITS comment on the Warden entry. Every other slot
-// currently shares one model between factions, so `faction` is optional and
-// only this one case branches on it.
+// `faction` picks each tribe's own flavor of a slot: Nomads are all mounted
+// (see below), and Farmer's heavy 'heavyknight' unit is the unmounted Warden
+// (voxelWarden.ts) — see factions.ts's AGRAR_UNITS comment.
 // Per-tribe look (picked on /hair-proposals, /hat-proposals, /face-proposals):
 // Nomads wear a black ponytail with a team-coloured headband on every
 // humanoid rig, including the mounted Raider, and keep the angry face;
@@ -95,11 +92,11 @@ export function buildUnitModel(type: UnitType, color: number, faction?: FactionI
     case 'healer': wrap.add(guy(color, buildHealerStaff(), 0.58, 2.2, 2.2, 0.3, undefined, hairStyle, hairColor, faceStyle)); break;
     case 'damageBooster': wrap.add(guy(color, buildDemonStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92], hairStyle, hairColor, faceStyle)); break;
     case 'rangeBooster': wrap.add(guy(color, buildRuneStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92], hairStyle, hairColor, faceStyle)); break;
-    case 'horserider':
+    case 'horserider': wrap.add(mounted(buildHorseRider(color, hairStyle, hairColor, faceStyle))); break;
+    case 'heavyknight':
       if (faction === 'agrar') wrap.add(mounted(buildWarden(color, hairStyle, hairColor, faceStyle))); // unmounted — see header note
-      else wrap.add(mounted(buildHorseRider(color, hairStyle, hairColor, faceStyle)));
+      else wrap.add(mounted(buildHeavyKnight(color, hairStyle, hairColor, faceStyle)));
       break;
-    case 'heavyknight': wrap.add(mounted(buildHeavyKnight(color, hairStyle, hairColor, faceStyle))); break;
     default: { const g = buildGuy(color, hairStyle, hairColor, faceStyle); g.scale.setScalar(0.2); g.position.y = 0.08; wrap.add(g); }
   }
   return wrap;

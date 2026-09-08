@@ -58,11 +58,11 @@ type StructFade = { parts: StructPart[]; fromFactor: number; toFactor: number; s
 // A unit model's facing rotation (about Y) to point toward world direction
 // (dx, dz): atan2(dx, dz) for a +Z-forward model, plus a per-model offset. The
 // mounted models (horse/knight) face -X by default, so they need +90°. The
-// Warden (Farmer's own unmounted flavor of the 'horserider' slot — see
+// Warden (Farmer's own unmounted flavor of the 'heavyknight' slot — see
 // buildUnitModel) is built on the same +Z-forward guy rig as every other foot
 // unit, so it needs no offset at all.
 function forwardOffset(type: string, faction?: FactionId | null): number {
-  if (type === 'horserider' && faction === 'agrar') return 0;
+  if (type === 'heavyknight' && faction === 'agrar') return 0;
   // Nomads: every unit is mounted (see buildUnitModel), all -X-forward.
   if (faction === 'temple' && type !== 'founder') return Math.PI / 2;
   return (type === 'horserider' || type === 'heavyknight') ? Math.PI / 2 : 0;

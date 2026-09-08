@@ -61,29 +61,22 @@ export interface FactionUnitDef {
 // all changed; unitClass (and therefore counter multipliers), vision,
 // earlyUnlock, and ZOC projection are untouched. Temple's roster (below)
 // and support/Builder stats are deliberately NOT part of this pass.
-// Roster pass (later) — the Knight (former cavalry/heavy-armor slot, SPD 2)
-// was removed and replaced by the Warden: same 'horserider' slot, but SPD 1
-// and classed 'warrior', not 'cavalry' (see the Warden entry below) — Farmer
-// no longer has normal cavalry at all; Roads are now its only way to move a
-// frontline unit at speed. Heavy Knight was renamed Iron Guard (stats/model/
-// slot/class unchanged).
+// Roster pass (later) — the Knight (former cavalry slot) was removed; Farmer
+// has no unit in the shared 'horserider' slot at all now (no cavalry — Roads
+// are its only way to move a frontline unit at speed). Roster pass 2: the
+// heavy 'heavyknight' slot unit is the Warden (formerly Iron Guard — same
+// stats/slot/class, Warden name and unmounted model).
 export const AGRAR_UNITS: FactionUnitDef[] = [
   { id: 'agrar_warrior',  faction: 'agrar', slot: 'warrior',  displayName: 'Warrior',     earlyUnlock: true,  unitClass: 'warrior', cost: 2, hp: 20, attack: 9,  defense: 5, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'voxelWarrior',     placeholderAsset: false },
   { id: 'agrar_archer',   faction: 'agrar', slot: 'archer',   displayName: 'Archer',      earlyUnlock: true,  unitClass: 'archer',  cost: 3, hp: 17, attack: 10, defense: 4, speed: 1, range: 2, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: false, assetReference: 'archer_standing',  placeholderAsset: false },
   { id: 'agrar_pikeman',  faction: 'agrar', slot: 'spearsman', displayName: 'Pikeman',    earlyUnlock: true,  unitClass: 'pike',    cost: 3, hp: 22, attack: 9,  defense: 6, speed: 1, range: 1, vision: 2, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'spearsman_standing', placeholderAsset: false },
-  // Warden (balance pass — replaces the Knight): slow, durable heavy infantry
-  // that leans on Farmer Roads for mobility rather than native cavalry speed.
-  // Keeps the shared 'horserider' slot (engine-wide UnitType — see the slot
-  // comment above) but is classed 'warrior', not 'cavalry' — getUnitClass in
-  // game.ts prefers this per-faction override over the generic per-slot
-  // table, so it never gets cavalry's attacker bonuses/weaknesses in the
-  // counter matrix, and its own visual model (voxelWarden.ts) is picked by
-  // faction, not slot, so it never renders mounted.
-  { id: 'agrar_warden',   faction: 'agrar', slot: 'horserider', displayName: 'Warden',    earlyUnlock: true,  unitClass: 'warrior', cost: 5, hp: 25, attack: 13, defense: 6, speed: 1, range: 1, vision: 2, commandCost: 3, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'warden_standing', placeholderAsset: false },
   { id: 'agrar_catapult', faction: 'agrar', slot: 'catapult', displayName: 'Catapult',    earlyUnlock: false, unitClass: 'siege',   cost: 5, hp: 20, attack: 13, defense: 3, speed: 1, range: 3, vision: 4, commandCost: 3, isSupport: false, isSiege: true,  projectsZOC: false, assetReference: 'catapult_standing', placeholderAsset: false },
-  // Iron Guard (rename only — same slot/model/stats as before; see item 5 of
-  // the roster-change pass: it may keep the mounted Heavy Knight model).
-  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Iron Guard', earlyUnlock: false, unitClass: 'heavy', cost: 7, hp: 29, attack: 16, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 3, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'heavyknight_standing', placeholderAsset: false },
+  // Warden (roster pass 2): Farmer's heavy unit — the former Iron Guard's
+  // slot/stats/class, now carrying the Warden name and the unmounted
+  // leather-armoured Warden model (voxelWarden.ts, picked by faction in
+  // voxelUnits.ts). The old SPD-1 Warden that sat in the shared 'horserider'
+  // slot is gone: Farmer has NO unit in that slot at all now.
+  { id: 'agrar_heavyknight', faction: 'agrar', slot: 'heavyknight', displayName: 'Warden', earlyUnlock: false, unitClass: 'heavy', cost: 7, hp: 29, attack: 16, defense: 6, speed: 2, range: 1, vision: 2, commandCost: 3, isSupport: false, isSiege: false, projectsZOC: true, assetReference: 'warden_standing', placeholderAsset: false },
   { id: 'agrar_healer',   faction: 'agrar', slot: 'healer',   displayName: 'Healer',      earlyUnlock: false, unitClass: 'support', cost: 3, hp: 15, attack: 6,  defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true,  isSiege: false, projectsZOC: false, assetReference: 'healer_standing',  placeholderAsset: false },
   { id: 'agrar_dmg_support', faction: 'agrar', slot: 'damageBooster', displayName: 'Drummer', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'damagebooster_standing', placeholderAsset: false },
   { id: 'agrar_rng_support', faction: 'agrar', slot: 'rangeBooster', displayName: 'Scout', earlyUnlock: false, unitClass: 'support', cost: 3, hp: 14, attack: 6, defense: 3, speed: 1, range: 1, vision: 3, commandCost: 1, isSupport: true, isSiege: false, projectsZOC: false, assetReference: 'rangebooster_standing', placeholderAsset: false },
@@ -98,7 +91,7 @@ export const TEMPLE_UNITS: FactionUnitDef[] = [
   // Balance pass — Raider Command 1->2: a speed-3, ZOC-projecting cavalry
   // piece with strong attack and encirclement value shouldn't also field
   // twice as many bodies under the same population cap as Agrar's Knight
-  // (Command 2, since renamed to the Warden — see AGRAR_UNITS above).
+  // (Command 2 — Farmer has no unit in this slot any more, see AGRAR_UNITS above).
   // Energy cost/stats unchanged — Temple keeps the cheaper,
   // faster, lighter cavalry, just not doubled cavalry count too.
   { id: 'temple_raider',    faction: 'temple', slot: 'horserider', displayName: 'Raider',  earlyUnlock: true,  unitClass: 'cavalry', cost: 3, hp: 14, attack: 13, defense: 4, speed: 3, range: 1, vision: 3, commandCost: 2, isSupport: false, isSiege: false, projectsZOC: true,  assetReference: 'horserider_standing', placeholderAsset: false },
