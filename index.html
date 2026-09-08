@@ -699,36 +699,54 @@
     }
     .lobby-back:hover { color: var(--cream); }
 
-    /* AI difficulty picker — same dark-navy beveled-stone language as .lobby-btn,
-       one accent color per tier so the four options read apart at a glance. */
-    .difficulty-list { display: flex; flex-direction: column; gap: 10px; }
-    .difficulty-btn {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 2px;
-      padding: 12px 16px;
-      border: 1px solid rgba(255,244,220,.14);
-      border-left-width: 4px;
-      border-radius: 14px;
-      background: rgba(255,244,220,.06);
-      box-shadow: 0 4px 0 rgba(0,0,0,.35);
-      cursor: pointer;
-      text-align: left;
-      font: inherit; color: var(--cream);
+    /* ── Choose your opponent: a sheet of four opponent cards ── */
+    .opp-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      width: auto; max-width: none;
+      border-radius: 26px 26px 0 0; border-width: 1px 0 0;
+      padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 12px);
+      gap: 12px;
     }
-    .difficulty-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
-    .difficulty-name { font-size: 16px; font-weight: 900; }
-    .difficulty-sub  { font-size: 12px; font-weight: 700; color: rgba(255,244,220,.7); }
-    .difficulty-desc { font-size: 11px; font-weight: 600; color: rgba(255,244,220,.5); }
-    .difficulty-easy   { border-color: #4a8f5c; }
-    .difficulty-easy   .difficulty-name { color: #8fe0a3; }
-    .difficulty-normal { border-color: #4a7f9f; }
-    .difficulty-normal .difficulty-name { color: #8fc8f0; }
-    .difficulty-hard   { border-color: #9f4a6a; }
-    .difficulty-hard   .difficulty-name { color: #f08fae; }
-    .difficulty-expert { border-color: #a98a3a; }
-    .difficulty-expert .difficulty-name { color: #f0d28f; }
+    .opp-sheet::before { content: ''; width: 44px; height: 5px; border-radius: 3px; background: rgba(255,244,220,.25); margin: -2px auto 0; }
+    .opp-head { display: flex; flex-direction: column; gap: 1px; padding: 0 2px; }
+    .opp-kicker { font-size: 10.5px; font-weight: 900; letter-spacing: .28em; text-transform: uppercase; color: rgba(255,244,220,.5); }
+    .opp-head .lobby-title { margin: 0; }
+    .opp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .opp-card {
+      --tint: #8fe0a3;
+      position: relative; display: grid; grid-template-columns: 1fr; justify-items: start; gap: 2px;
+      padding: 12px 12px 12px; min-height: 172px;
+      border: 1px solid rgba(255,244,220,.12); border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,244,220,.07), rgba(255,244,220,.03));
+      box-shadow: 0 5px 0 rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+      color: var(--cream); font: inherit; text-align: left; cursor: pointer; overflow: hidden;
+      transition: transform .06s, box-shadow .06s, border-color .15s;
+    }
+    .opp-card::before { content: ''; position: absolute; right: -28px; top: -28px; width: 120px; height: 120px; border-radius: 50%;
+      background: radial-gradient(circle, color-mix(in srgb, var(--tint) 45%, transparent), transparent 70%); pointer-events: none; }
+    .opp-card:active { transform: translateY(4px); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
+    .opp-card:hover { border-color: color-mix(in srgb, var(--tint) 60%, transparent); }
+    .opp-art { position: absolute; right: -6px; top: 4px; width: 92px; height: 92px; object-fit: contain; filter: drop-shadow(0 6px 8px rgba(0,0,0,.5)); pointer-events: none; }
+    .opp-name { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: 18px; letter-spacing: .02em; color: var(--tint); margin-top: 2px; max-width: 62%; line-height: 1.05; }
+    .opp-tier { font-size: 10.5px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; color: rgba(255,244,220,.75);
+      background: rgba(0,0,0,.28); border: 1px solid rgba(255,244,220,.12); border-radius: 999px; padding: 2px 8px; margin-top: 4px; }
+    .opp-desc { font-size: 11.5px; font-weight: 700; line-height: 1.3; color: rgba(255,244,220,.72); margin-top: auto; padding-top: 34px; }
+    .opp-meter { display: flex; gap: 4px; margin-top: 8px; }
+    .opp-meter i { width: 14px; height: 12px; background: rgba(255,244,220,.14); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+    .opp-easy   { --tint: #8fe0a3; } .opp-easy   .opp-meter i:nth-child(-n+1) { background: var(--tint); }
+    .opp-normal { --tint: #8fc8f0; } .opp-normal .opp-meter i:nth-child(-n+2) { background: var(--tint); }
+    .opp-hard   { --tint: #f08fae; } .opp-hard   .opp-meter i:nth-child(-n+3) { background: var(--tint); }
+    .opp-expert { --tint: #f5c451; } .opp-expert .opp-meter i:nth-child(-n+4) { background: var(--tint); box-shadow: 0 0 6px var(--tint); }
+    @media (min-width: 761px) {
+      .opp-sheet { left: 5vw; right: auto; bottom: 7vh; width: 480px; border-radius: 26px; border-width: 1px; padding: 18px; }
+      .opp-sheet::before { display: none; }
+      .opp-card { min-height: 180px; }
+    }
+    @media (max-width: 360px) {
+      .opp-grid { grid-template-columns: 1fr; }
+      .opp-card { min-height: 0; }
+      .opp-desc { padding-top: 6px; }
+    }
 
     /* Menu button is styled as the plaque tab (.plaque-menu-tab) on the top edge. */
 
@@ -1486,29 +1504,40 @@
         <div class="lobby-back" id="setupBack">← Back</div>
       </div>
 
-      <!-- AI difficulty picker (vs AI entry point) -->
-      <div class="lobby-panel hidden" id="lobbyDifficulty">
-        <div class="lobby-title">Choose Opponent</div>
-        <div class="difficulty-list">
-          <button class="difficulty-btn difficulty-easy" data-difficulty="easy">
-            <span class="difficulty-name">🌱 Easy</span>
-            <span class="difficulty-sub">Relaxed opponent</span>
-            <span class="difficulty-desc">Basic tactics and some randomness</span>
+      <!-- AI difficulty picker (vs AI entry point) — opponent cards over the living board -->
+      <div class="lobby-panel opp-sheet hidden" id="lobbyDifficulty">
+        <div class="opp-head">
+          <div class="opp-kicker">Play vs AI</div>
+          <div class="lobby-title">Choose your opponent</div>
+        </div>
+        <div class="opp-grid">
+          <button class="difficulty-btn opp-card opp-easy" data-difficulty="easy" data-art="warrior:agrar">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Farmhand</span>
+            <span class="opp-tier">Easy</span>
+            <span class="opp-desc">Basic tactics, a little random. Learn the ropes.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
           </button>
-          <button class="difficulty-btn difficulty-normal" data-difficulty="normal">
-            <span class="difficulty-name">🧠 Normal</span>
-            <span class="difficulty-sub">Balanced opponent</span>
-            <span class="difficulty-desc">Uses threat awareness and sensible economy</span>
+          <button class="difficulty-btn opp-card opp-normal" data-difficulty="normal" data-art="archer:temple">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Captain</span>
+            <span class="opp-tier">Normal</span>
+            <span class="opp-desc">Reads threats, runs a sensible economy.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
           </button>
-          <button class="difficulty-btn difficulty-hard" data-difficulty="hard">
-            <span class="difficulty-name">💀 Hard</span>
-            <span class="difficulty-sub">Strong opponent</span>
-            <span class="difficulty-desc">Plans ahead and coordinates its army</span>
+          <button class="difficulty-btn opp-card opp-hard" data-difficulty="hard" data-art="heavyknight:agrar">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Warlord</span>
+            <span class="opp-tier">Hard</span>
+            <span class="opp-desc">Plans ahead and moves as one army.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
           </button>
-          <button class="difficulty-btn difficulty-expert" data-difficulty="expert">
-            <span class="difficulty-name">♛ Expert</span>
-            <span class="difficulty-sub">Maximum challenge</span>
-            <span class="difficulty-desc">Searches responses and evaluates future positions</span>
+          <button class="difficulty-btn opp-card opp-expert" data-difficulty="expert" data-art="catapult:temple">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Oracle</span>
+            <span class="opp-tier">Expert</span>
+            <span class="opp-desc">Searches your replies and judges the future.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
           </button>
         </div>
         <div class="lobby-back" id="difficultyBack">← Back</div>

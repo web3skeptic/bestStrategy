@@ -358,7 +358,22 @@ function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup' 
   lobbySetup.classList.toggle('hidden', panel !== 'setup');
   lobbyDifficulty.classList.toggle('hidden', panel !== 'difficulty');
   if (panel === 'main') updateContinueButton(); // reflect any saved local game
+  if (panel === 'difficulty') fillOpponentPortraits();
   if (panel === 'setup') renderSetupSlots();
+}
+
+// Opponent cards carry a rendered 3D portrait (same thumbnails as the unit
+// cards), tinted to the card's colour. Rendered once, on first open.
+let opponentPortraitsDone = false;
+function fillOpponentPortraits(): void {
+  if (opponentPortraitsDone) return;
+  opponentPortraitsDone = true;
+  for (const card of Array.from(document.querySelectorAll<HTMLElement>('#lobbyDifficulty .opp-card'))) {
+    const [type, faction] = (card.dataset.art ?? 'warrior:temple').split(':') as [UnitType, FactionId];
+    const tint = getComputedStyle(card).getPropertyValue('--tint').trim() || '#f5c451';
+    const img = card.querySelector<HTMLImageElement>('.opp-art');
+    if (img) img.src = getUnitThumbnail(type, tint, faction);
+  }
 }
 
 // ── sendOrCall: in multiplayer mode send action to server; locally call fn ──
