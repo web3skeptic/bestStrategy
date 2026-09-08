@@ -521,12 +521,29 @@ function capContiguousComponents(cells: Set<string>, maxSize: number, onOverflow
   }
 }
 
+// Map-fairness follow-up — a hex ring at radius r has 6r tiles (vs. 1 at the
+// very centre), so picking seeds uniformly over the FULL hex list is itself
+// radius-biased: it overwhelmingly favors the outer rings purely by tile
+// count, leaving the map's centre looking emptier than the edges by
+// construction, not by design ("the map looks too empty in the middle").
+// Picking a radius uniformly first, then a random hex AT that radius, evens
+// this out — still fully random placement, just no longer skewed away from
+// the middle. Cluster size stays capped exactly as before (see
+// MAX_CONTIGUOUS_*) — only WHERE seeds land changes.
+function pickSeedHex(hexesByRadius: HexCoord[][]): HexCoord {
+  const nonEmptyRings = hexesByRadius.filter(ring => ring.length > 0);
+  const ring = nonEmptyRings[Math.floor(Math.random() * nonEmptyRings.length)]!;
+  return ring[Math.floor(Math.random() * ring.length)]!;
+}
+
 function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPositions: HexCoord[], capitalPositions: HexCoord[] = []): { hills: Set<string>; walls: Set<string>; forests: Set<string> } {
   const hills = new Set<string>();
   const walls = new Set<string>();
   const forests = new Set<string>();
   const allHexes = generateHexMap(mapRadius);
   const allKeys = new Set(allHexes.map(h => hexKey(h)));
+  const hexesByRadius: HexCoord[][] = Array.from({ length: mapRadius + 1 }, () => []);
+  for (const h of allHexes) hexesByRadius[hexDistance({ q: 0, r: 0 }, h)]!.push(h);
   const reserved = new Set([
     ...templePositions.map(p => hexKey(p)),
     ...unitPositions.map(p => hexKey(p)),
@@ -575,7 +592,7 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
 
   const wallSeeds = 3 + Math.floor(Math.random() * 3);
   for (let i = 0; i < wallSeeds; i++) {
-    const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
+    const seed = pickSeedHex(hexesByRadius);
     if (reservedBuffer.has(hexKey(seed)) || capitalExclusion.has(hexKey(seed))) continue;
     growCluster(seed, walls, 3 + Math.floor(Math.random() * 4), 0.55);
   }
@@ -593,7 +610,7 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
 
   const hillSeeds = 4 + Math.floor(Math.random() * 4);
   for (let i = 0; i < hillSeeds; i++) {
-    const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
+    const seed = pickSeedHex(hexesByRadius);
     if (reservedBuffer.has(hexKey(seed)) || capitalExclusion.has(hexKey(seed)) || used.has(hexKey(seed))) continue;
     growCluster(seed, hills, 3 + Math.floor(Math.random() * 5), 0.6);
   }
@@ -619,7 +636,7 @@ function generateTerrain(mapRadius: number, templePositions: HexCoord[], unitPos
 
   const forestSeeds = 5 + Math.floor(Math.random() * 4);
   for (let i = 0; i < forestSeeds; i++) {
-    const seed = allHexes[Math.floor(Math.random() * allHexes.length)]!;
+    const seed = pickSeedHex(hexesByRadius);
     const sk = hexKey(seed);
     if (reserved.has(sk) || walls.has(sk) || hills.has(sk) || forests.has(sk)) continue;
     const queue: HexCoord[] = [seed];

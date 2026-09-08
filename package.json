@@ -16,6 +16,7 @@
     "test:faction-rosters": "tsx scripts/verify-faction-rosters.ts",
     "test:command": "tsx scripts/verify-command.ts",
     "test:roads": "tsx scripts/verify-roads.ts",
+    "test:terrain": "tsx scripts/verify-terrain.ts",
     "test:move-attack-order": "tsx scripts/verify-move-attack-order.ts",
     "test:zoc": "tsx scripts/verify-zoc.ts",
     "test:tech": "tsx scripts/verify-tech.ts",
@@ -34,7 +35,7 @@
     "test:agrar-balance": "tsx scripts/verify-agrar-balance.ts",
     "test:farmer-roster": "tsx scripts/verify-farmer-roster.ts",
     "test:placement-ux": "tsx scripts/verify-placement-ux.ts",
-    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:move-attack-order && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence && npm run test:ai-benchmarks && npm run test:ai-search-activation-order && npm run test:ai-search-telemetry && npm run test:ai-macro-plan && npm run test:agrar-balance && npm run test:farmer-roster && npm run test:placement-ux",
+    "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:terrain && npm run test:move-attack-order && npm run test:zoc && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence && npm run test:ai-benchmarks && npm run test:ai-search-activation-order && npm run test:ai-search-telemetry && npm run test:ai-macro-plan && npm run test:agrar-balance && npm run test:farmer-roster && npm run test:placement-ux",
     "build:root": "vite build"
   },
   "keywords": [],
