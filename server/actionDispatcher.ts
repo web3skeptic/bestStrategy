@@ -310,7 +310,7 @@ export function buildRulesPayload(): Record<string, unknown> {
       states: ['neutral', 'foundingTemple', 'temple', 'upgradingTemple', 'ruins'],
       foundingRules: [
         'Any Temple-faction unit (no dedicated founder-type unit — v15 removed the Acolyte) standing on a neutral or ruined site (NEVER an active enemy Temple — that must be destroyed to Ruins first, see structures.temple), with an unused activation, no enemy on the site, >= establishCost aura, and the site NOT inside enemy Agrar cultivated territory (see economy.agrarFarms.cultivation), may start founding/reconstruction via the "found" action. Agrar can never found/reconstruct a site at all.',
-        'Starting it charges establishCost immediately and consumes the founding unit\'s whole activation — no waiting until completion to pay.',
+        'Starting it charges establishCost immediately and consumes the founding unit\'s whole activation — BOTH its action and its move, so the founder is pinned on the site until the founding resolves (the one exception to the agnostic move/action order). No waiting until completion to pay.',
         'Resolves automatically at the start of the founding player\'s NEXT round: succeeds only if the founding unit is still alive and on the site, no enemy unit is on the site, and no enemy unit is adjacent to it. Otherwise it fails with no refund, and the site reverts to its prior state (neutral/ruins).',
         'A founding/reconstructing site provides zero income/production while in a foundingTemple state. On success it always becomes an active Temple — see templeLevels for which level.',
       ],

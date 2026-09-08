@@ -1519,9 +1519,14 @@ export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | 
 // Begin founding/reconstruction: charges SITE_ESTABLISH_COST immediately
 // ("do not wait until completion to charge it, otherwise the player can
 // start construction without actually committing resources") and consumes
-// the Acolyte's whole activation. Resolves automatically at the start of
-// the founder's next round — see resolveFoundingForPlayer, called from
-// endTurn().
+// the founder's WHOLE activation — action AND move. This is the one
+// deliberate exception to the agnostic move/action order: the founding only
+// resolves if the founder is still standing on the site next round, so
+// leaving the move slot open let a player found and then immediately walk
+// away, silently failing their own founding a round later. Locking the unit
+// down is what the rule always meant by "consumes the whole activation".
+// Resolves automatically at the start of the founder's next round — see
+// resolveFoundingForPlayer, called from endTurn().
 export function startFounding(state: GameState, unitId: string): boolean {
   const unit = state.units.find(u => u.id === unitId && u.hp > 0);
   if (!unit) return false;
@@ -1542,6 +1547,7 @@ export function startFounding(state: GameState, unitId: string): boolean {
     completesRound: state.turnNumber + 1,
   };
   unit.hasAttacked = true;
+  unit.hasMoved = true; // pinned to the site until the founding resolves
   updateHighlights(state);
   return true;
 }
@@ -1580,10 +1586,10 @@ function failFounding(site: StrategicSite): void {
 // A founding resolves successfully only if, at this exact moment: the
 // founder is alive AND still standing on the site AND no enemy unit occupies
 // the site AND no enemy unit is adjacent to it. Any one of those failing
-// (founder killed, founder moved off — structurally the founder can never
-// move before this check since starting founding spends its whole
-// activation and this resolves before the founder's next one — enemy moved
-// onto or next to the site) fails the founding. This gives the opponent a
+// (founder killed, founder moved off — startFounding pins the founder by
+// spending its move as well as its action, so in practice only death or a
+// forced displacement can do this — enemy moved onto or next to the site)
+// fails the founding. This gives the opponent a
 // real interrupt window without needing a ZOC system.
 function resolveFoundingForPlayer(state: GameState, playerId: number): void {
   for (const site of state.strategicSites) {
