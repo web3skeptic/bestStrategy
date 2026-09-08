@@ -77,13 +77,35 @@ function block(
   return m;
 }
 
+// A hair style is a function that adds hair meshes around the head (head box
+// is 2.2 x 1.9 x 2.1 centred at y = 4.1, face on +Z — so anything below
+// y ~ 4.5 on the front covers the eyebrows). `hair` is the shared brown hair
+// material; `teamColor` lets a style carry an owner-tinted band/tie.
+export type HairBuilder = (g: THREE.Group, hair: THREE.Material, teamColor: number) => void;
+
+// Today's hair: a blocky helmet around the whole head.
+export const defaultHair: HairBuilder = (g, hair) => {
+  g.add(block(2.50, 0.75, 2.45, hair, 0, 5.375, 0));      // crown slab
+  g.add(block(1.70, 0.50, 1.70, hair, 0, 6.000, -0.10));  // stepped top
+  g.add(block(2.40, 2.00, 0.45, hair, 0, 4.250, -1.20));  // back of hair
+  g.add(block(0.35, 1.50, 2.10, hair, -1.20, 4.550, 0));  // left side
+  g.add(block(0.35, 1.50, 2.10, hair, 1.20, 4.550, 0));   // right side
+  g.add(block(2.20, 0.45, 0.30, hair, 0, 4.850, 1.15));   // front fringe / hairline
+};
+
+export function hairMaterial(): THREE.MeshStandardMaterial { return mat(0x5e3b1e, 0.85); }
+export function guyBlock(w: number, h: number, d: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  return block(w, h, d, material, x, y, z);
+}
+
 // bodyColor tints the torso to the owning player's team color (red/blue);
 // defaults to the original yellow when omitted (e.g. the standalone sprite).
-export function buildGuy(bodyColor = 0xf1cb16): THREE.Group {
+// hairStyle defaults to today's hair — see /hair-proposals for alternatives.
+export function buildGuy(bodyColor = 0xf1cb16, hairStyle: HairBuilder = defaultHair): THREE.Group {
   const g = new THREE.Group();
 
   const skin = mat(0xd9b97f, 0.95);
-  const hair = mat(0x5e3b1e, 0.85); // brown hair (was green)
+  const hair = hairMaterial();
   const body = mat(bodyColor, 0.80);
   const feet = mat(0x5d3b1e, 0.90);
 
@@ -101,13 +123,7 @@ export function buildGuy(bodyColor = 0xf1cb16): THREE.Group {
   head.position.set(0, 4.1, 0);
   g.add(head);
 
-  // green hair, built as a blocky helmet around the head
-  g.add(block(2.50, 0.75, 2.45, hair, 0, 5.375, 0));      // crown slab
-  g.add(block(1.70, 0.50, 1.70, hair, 0, 6.000, -0.10));  // stepped top
-  g.add(block(2.40, 2.00, 0.45, hair, 0, 4.250, -1.20));  // back of hair
-  g.add(block(0.35, 1.50, 2.10, hair, -1.20, 4.550, 0));  // left side
-  g.add(block(0.35, 1.50, 2.10, hair, 1.20, 4.550, 0));   // right side
-  g.add(block(2.20, 0.45, 0.30, hair, 0, 4.850, 1.15));   // front fringe / hairline
+  hairStyle(g, hair, bodyColor);
 
   return g;
 }

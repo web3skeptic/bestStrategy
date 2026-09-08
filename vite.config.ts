@@ -20,6 +20,7 @@ export default defineConfig({
         techProposal: resolve(__dirname, "tech-proposal.html"),
         menuProposals: resolve(__dirname, "menu-proposals.html"),
         capitalProposals: resolve(__dirname, "capital-proposals.html"),
+        hairProposals: resolve(__dirname, "hair-proposals.html"),
       },
     },
   },
