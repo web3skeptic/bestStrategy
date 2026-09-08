@@ -76,6 +76,15 @@ export const ponytail: HairBuilder = (g, hair) => {
   g.add(block(0.6, 1.5, 0.45, hair, 0, 3.45, -1.35));
 };
 
+// Ponytail + team headband (the Nomad pick): the ponytail above with a
+// team-coloured band across the brow and its tails hanging at the back.
+export const ponytailHeadband: HairBuilder = (g, hair, teamColor) => {
+  ponytail(g, hair, teamColor);
+  g.add(block(2.36, 0.3, 2.3, tint(teamColor), 0, 5.0, 0));
+  g.add(block(0.4, 0.7, 0.1, tint(teamColor), -0.75, 4.6, -1.35));
+  g.add(block(0.4, 0.55, 0.1, tint(teamColor), -0.35, 4.68, -1.38));
+};
+
 // Braids: skull cap + two braids hanging behind the ears.
 const braids: HairBuilder = (g, hair) => {
   g.add(block(2.4, 0.5, 2.35, hair, 0, 5.28, 0));

@@ -6,7 +6,8 @@
 import * as THREE from 'three';
 import { UnitType, FactionId } from './types';
 import { buildGuy, HairBuilder, FaceStyle } from './voxelWarrior';
-import { ponytail } from './proposals/hairStyles';
+import { ponytailHeadband } from './proposals/hairStyles';
+import { sunny } from './proposals/faces';
 import { wideBrimHat } from './proposals/strawHats';
 import { buildHorseRider } from './voxelHorserider';
 import { buildHeavyKnight } from './voxelHeavyKnight';
@@ -49,14 +50,14 @@ function mounted(model: THREE.Group): THREE.Group {
 // currently shares one model between factions, so `faction` is optional and
 // only this one case branches on it.
 // Per-tribe look (picked on /hair-proposals, /hat-proposals, /face-proposals):
-// Nomads wear a black ponytail on every humanoid rig, including the mounted
-// Raider; Farmers wear the wide-brim straw hat. Faces stay the default until
-// chosen.
+// Nomads wear a black ponytail with a team-coloured headband on every
+// humanoid rig, including the mounted Raider, and keep the angry face;
+// Farmers wear the wide-brim straw hat with the sunny face.
 export const NOMAD_HAIR_COLOR = 0x1c1a18;
 interface TribeLook { hairStyle?: HairBuilder; hairColor?: number; faceStyle?: FaceStyle; }
 function tribeLook(faction: FactionId | null | undefined): TribeLook {
-  if (faction === 'temple') return { hairStyle: ponytail, hairColor: NOMAD_HAIR_COLOR };
-  if (faction === 'agrar') return { hairStyle: wideBrimHat };
+  if (faction === 'temple') return { hairStyle: ponytailHeadband, hairColor: NOMAD_HAIR_COLOR };
+  if (faction === 'agrar') return { hairStyle: wideBrimHat, faceStyle: sunny };
   return {};
 }
 

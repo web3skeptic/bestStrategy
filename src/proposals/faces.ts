@@ -32,7 +32,7 @@ function bigEye(x: CanvasRenderingContext2D, s: number, cx: number, cy: number, 
 export interface FaceOption { id: string; name: string; blurb: string; draw: FaceStyle; }
 
 // A · Sunny: dot eyes with a glint, big open smile, blush.
-const sunny: FaceStyle = (x, s) => {
+export const sunny: FaceStyle = (x, s) => {
   dot(x, s * 0.36, s * 0.42, s * 0.055); dot(x, s * 0.64, s * 0.42, s * 0.055);
   glint(x, s * 0.345, s * 0.405, s * 0.018); glint(x, s * 0.625, s * 0.405, s * 0.018);
   smile(x, s, 0.5, 0.66, 0.34, 0.09, 0.05);
