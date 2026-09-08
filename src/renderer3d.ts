@@ -7,6 +7,7 @@ import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H }
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
 import { buildTemple } from './voxelTemple';
+import { buildCapital } from './voxelCapital';
 import { buildFarm, buildFertileSite } from './voxelFarm';
 import { buildRoad as buildRoadModel } from './voxelRoad';
 import { buildUnitModel } from './voxelUnits';
@@ -281,7 +282,7 @@ export class Renderer3D {
   private structureAttackTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
   private lastStructHp = new Map<string, number>(); // Capital/Temple/Farm — same purpose, structure combat pass
-  private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number; stage: number }>();
+  private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number; stage: number; faction: FactionId | null }>();
   private structHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number }>();
   private structFlashUntil = new Map<string, number>(); // brief red hit-flash, cleared in advanceAnimations
   private teleportMeshes = new Map<string, THREE.Object3D>();
@@ -1421,7 +1422,7 @@ export class Renderer3D {
     // stays visible), only structureAttackHexes.
     const attackableStructSet = new Set(state.structureAttackHexes.map(h => hexKey(h)));
 
-    interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; }
+    interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; faction: FactionId | null; }
     const structures: StructureVisual[] = [];
     for (const capital of state.capitals as Capital[]) {
       const owner = state.players.find(p => p.id === capital.playerId);
@@ -1431,6 +1432,9 @@ export class Renderer3D {
         colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
         canPendingFound: false,
         hp: capital.hp, maxHp: capital.maxHp,
+        // Faction-specific Capital model (voxelCapital.ts) — null until the
+        // owner's pick is revealed, which keeps the shared ziggurat.
+        faction: owner?.faction ?? null,
       });
     }
     for (const site of state.strategicSites as StrategicSite[]) {
@@ -1446,6 +1450,7 @@ export class Renderer3D {
           : this.P.colors.neutral,
         canPendingFound: site.state === 'neutral' || site.state === 'ruins',
         hp: site.hp, maxHp: site.maxHp,
+        faction: null,
       });
     }
     // Farms — Agrar's physical income buildings, own dedicated low-profile
@@ -1458,6 +1463,7 @@ export class Renderer3D {
         colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
         canPendingFound: false,
         hp: farm.hp, maxHp: farm.maxHp,
+        faction: null,
       });
     }
 
@@ -1473,6 +1479,7 @@ export class Renderer3D {
         colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
         canPendingFound: false,
         hp: 0, maxHp: 0,
+        faction: null,
       });
     }
 
@@ -1500,16 +1507,17 @@ export class Renderer3D {
       const stage: number = st.maxHp <= 0 ? 0 : st.hp / st.maxHp > 0.66 ? 0 : st.hp / st.maxHp > 0.33 ? 1 : 2;
       let entry = this.structureMeshes.get(st.id);
       let rebuilt = false;
-      if (!entry || entry.color !== st.colorNum || entry.level !== st.tier || (st.kind === 'farm' && entry.stage !== stage)) {
+      if (!entry || entry.color !== st.colorNum || entry.level !== st.tier || entry.faction !== st.faction || (st.kind === 'farm' && entry.stage !== stage)) {
         if (entry) { this.structureGroup.remove(entry.mesh); this.disposeObject(entry.mesh); }
         const mesh = st.kind === 'farm' ? buildFarm(st.colorNum, stage as 0 | 1 | 2)
           : st.kind === 'fertile' ? buildFertileSite(st.colorNum === this.P.colors.neutral ? null : st.colorNum)
+          : st.kind === 'capital' ? buildCapital(st.colorNum, st.faction)
           : buildTemple(st.colorNum, st.tier);
         const { x, z } = hexToWorld(st.pos);
         mesh.position.set(x, 0, z);
         mesh.userData.hexKey = key; // selection-reliability — see pickHex
         this.structureGroup.add(mesh);
-        entry = { mesh, color: st.colorNum, level: st.tier, stage };
+        entry = { mesh, color: st.colorNum, level: st.tier, stage, faction: st.faction };
         this.structureMeshes.set(st.id, entry);
         rebuilt = true;
       } else {
