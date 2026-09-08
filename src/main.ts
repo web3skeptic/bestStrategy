@@ -667,6 +667,7 @@ function showMenu(): void {
   saveGame(); // snapshot the local game before leaving to the menu (no-op online)
   menuOverlay.classList.remove('hidden');
   ensureMenuScene();
+  factionChoiceOverlay.classList.add('hidden'); // sits above the menu (z 210) — hide it while the menu is up; hideMenu restores it
   // Clear any turn indicators so they don't linger over the menu.
   handoffPending = false;
   opponentTurnOverlay.classList.add('hidden');
@@ -696,6 +697,7 @@ function showMenu(): void {
 function hideMenu(): void {
   menuOverlay.classList.add('hidden');
   disposeMenuScene();
+  if (gameStarted) updateFactionOverlay(); // bring the faction pick back if it was mid-flight
 }
 
 // ── Save / resume (LOCAL modes only) ──────────────────────────────────────
