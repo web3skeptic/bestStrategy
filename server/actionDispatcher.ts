@@ -471,10 +471,9 @@ export function buildRulesPayload(): Record<string, unknown> {
         'choose-faction — { faction: "agrar" | "temple" }. Legal immediately at match start, before any other action, for either player independently — see openingFlow below.',
       ],
       constraints: [
-        'A unit can move then attack, or attack then move, or just one, or neither — order is agnostic, one move and one attack are independent per-round allowances.',
-        'Attacking (unit or structure) does NOT itself spend the move, unless a melee kill triggers follow-through onto the target\'s tile (that repositioning does spend it).',
+        'Every unit gets exactly one move and one action per round — order is agnostic, either can come first, and doing one never spends the other. "Action" means whichever single one of attack / attack-structure / found / build-farm / build-road / pillage-road / claim-fertile-site the unit does that round (only one of these per round, same as attacking).',
+        'None of these actions itself spends the move, with one exception: a melee kill triggers follow-through onto the target\'s tile, and that repositioning IS a real move, so it spends it.',
         'A structure may have MULTIPLE recruit orders queued against it over time — there is no per-structure spawn gate. What actually caps recruiting is aura, the population cap (commandCost-weighted, see command block — queued-but-undeployed orders count against it too), and the player\'s overall production-slot pool (see command.productionSlots).',
-        'Founding is a separate action from move/attack — it consumes the founder\'s WHOLE activation (both move and attack) the instant it starts.',
       ],
     },
     openingFlow: {

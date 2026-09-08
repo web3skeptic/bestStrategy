@@ -994,7 +994,7 @@ function farmBlockReason(state: GameState, unit: Unit): string | null {
   if (player.aura < AGRAR_FARM_COST) return `not enough Energy (need ⚡${AGRAR_FARM_COST})`;
   const activeFarms = state.farms.filter(f => f.ownerId === player.id).length;
   if (activeFarms >= MAX_ACTIVE_FARMS) return `maximum Farms reached (${MAX_ACTIVE_FARMS}/${MAX_ACTIVE_FARMS})`;
-  if (unit.hasMoved || unit.hasAttacked) return 'Builder has already acted this round';
+  if (unit.hasAttacked) return 'Builder has already used its action this round';
   if (getValidFarmHexes(state, unit).length === 0) return 'no valid Farm location adjacent to this Builder';
   return null;
 }
@@ -1014,7 +1014,7 @@ function roadBlockReason(state: GameState, unit: Unit): string | null {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return 'not your unit';
   if (player.aura < ROAD_COST_PER_HEX) return `not enough Energy (need ⚡${ROAD_COST_PER_HEX})`;
-  if (unit.hasMoved || unit.hasAttacked) return 'Builder has already acted this round';
+  if (unit.hasAttacked) return 'Builder has already used its action this round';
   if (getValidRoadHexes(state, unit).length === 0) return 'no valid Road location next to this Builder and its network';
   return null;
 }
@@ -1035,10 +1035,11 @@ function roadHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord, selec
 // farmBlockReason/roadBlockReason: the Found button used to just vanish
 // with zero explanation whenever canStartFounding returned null, which is
 // exactly what made "can't conquer a Temple" look broken (an active enemy
-// Temple must be destroyed to Ruins FIRST — standing on it never works,
-// and even a valid Ruins/neutral site needs the unit's fully unused
-// activation, so arriving and founding are always two separate turns). Any
-// Temple unit may found — there's no dedicated founder-type unit anymore.
+// Temple must be destroyed to Ruins FIRST — standing on it never works).
+// Founding only needs the unit's action slot unused (move/action order is
+// agnostic — § agnostic activation order), so a unit CAN move onto a valid
+// Ruins/neutral site and found it the very same turn. Any Temple unit may
+// found — there's no dedicated founder-type unit anymore.
 function foundBlockReason(state: GameState, unit: Unit): string | null {
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return 'not your unit';
@@ -1048,7 +1049,7 @@ function foundBlockReason(state: GameState, unit: Unit): string | null {
     return site.ownerId === player.id ? 'you already own this Temple' : 'destroy it first — attack it down to Ruins, then reconsecrate';
   }
   if (site.state === 'foundingTemple' || site.founding) return 'already being founded/reconstructed';
-  if (unit.hasMoved || unit.hasAttacked) return 'this unit has already acted — wait until your next round';
+  if (unit.hasAttacked) return 'this unit has already used its action — wait until your next round';
   const enemyOnSite = state.units.some(u => u.hp > 0 && u.id !== unit.id && u.playerId !== unit.playerId && hexEqual(u.pos, site.pos));
   if (enemyOnSite) return 'an enemy unit is on this site';
   if (player.aura < SITE_ESTABLISH_COST) return `not enough Energy (need ⚡${SITE_ESTABLISH_COST})`;
@@ -1072,7 +1073,7 @@ function fertileSiteBlockReason(state: GameState, unit: Unit): string | null {
   const site = state.fertileSites.find(f => hexEqual(f.pos, unit.pos));
   if (!site) return null; // caller already checked this — defensive only
   if (site.ownerId === unit.playerId) return 'you already control this site';
-  if (unit.hasMoved || unit.hasAttacked) return 'already acted — needs a fully unused activation';
+  if (unit.hasAttacked) return 'already used its action this round';
   return null;
 }
 
@@ -1256,8 +1257,8 @@ function updateUI(): void {
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
   // End-round notification (§21-23) — only while it's genuinely the local
   // player's turn and no ring-pick placement mode is left dangling; a unit
-  // still counts as "has an action left" until it's actually attacked (the
-  // only activation that fully spends a unit, per hasMoved/hasAttacked).
+  // still counts as "has an action left" until BOTH its move and its action
+  // slot are spent (order-agnostic — see unactedUnitCount above).
   if (myTurn && !spectatorMode && state.phase === 'playing' && !buildingFarm && !buildingRoad && !buildingTeleport) {
     const remaining = unactedUnitCount(state, player.id);
     if (remaining === 0) {

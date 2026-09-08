@@ -301,7 +301,7 @@ console.log('\n=== Builder builds exactly 2 contiguous Roads for 2⚡ in one act
   check('exactly 2 Road segments were built', built.length === 2, `built=${built.length}`);
   check(`exactly ${2 * ROAD_COST_PER_HEX}⚡ was deducted`, state.players[0]!.aura === auraBefore - 2 * ROAD_COST_PER_HEX);
   check('both Road tiles exist', path.every(h => !!getRoadAt(state, h)));
-  check('the whole build consumed exactly one Builder activation', builder.hasMoved && builder.hasAttacked);
+  check('the whole build consumed the Builder\'s action slot, but not its move', builder.hasAttacked && !builder.hasMoved);
 }
 
 console.log('\n=== Server action dispatcher: build-road with a 2-hex path uses buildRoadPath (same rules as AI/headless) ===');

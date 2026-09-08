@@ -174,7 +174,45 @@ console.log('\n=== Cost + activation (§23) ===');
   const before = player.aura;
   buildRoad(state, builder.id, hex);
   check('buildRoad charges ROAD_COST_PER_HEX', player.aura === before - ROAD_COST_PER_HEX, `aura ${before}->${player.aura}`);
-  check('building consumes the whole activation', builder.hasMoved && builder.hasAttacked);
+  check('building consumes the action slot (hasAttacked), but leaves the move free (move/action order is agnostic)',
+    builder.hasAttacked && !builder.hasMoved);
+}
+
+// ── Move/action order agnosticism, end-to-end (a Builder gets one move AND
+// one action per round, either order — reported bug: building a Road/Farm
+// used to silently eat the move too, or require it unused up front) ──
+console.log('\n=== Build then move: the Builder can still move after laying a Road ===');
+{
+  const state = setup();
+  const builder = clearRoadArea(state, 0);
+  state.currentPlayerIndex = 0;
+  const hex = getValidRoadHexes(state, builder)[0]!;
+  const built = buildRoad(state, builder.id, hex);
+  check('the Road was built', built);
+  selectUnit(state, builder.id);
+  check('a move is still offered after building', state.moveHexes.length > 0, `moveHexes.length=${state.moveHexes.length}`);
+  const moveResult = moveUnit(state, state.moveHexes[0]!);
+  check('the Builder can actually move after building', moveResult.moved === true);
+}
+console.log('\n=== Move then build: the Builder can still build a Road after moving ===');
+{
+  const state = setup();
+  const builder = clearRoadArea(state, 0);
+  const cap = getPlayerCapital(state, 0)!;
+  state.currentPlayerIndex = 0;
+  selectUnit(state, builder.id);
+  // Move to another hex still adjacent to the Capital, so it stays anchored
+  // and can immediately build again from its new position.
+  const dest = state.moveHexes.find(h => hexDistance(h, cap.pos) === 1 && !hexEqual(h, builder.pos));
+  check('setup: the Builder has somewhere to move that stays anchored to the Capital', !!dest);
+  const moveResult = moveUnit(state, dest!);
+  check('the move landed', moveResult.moved === true);
+  const hex = getValidRoadHexes(state, builder)[0];
+  check('setup: a legal Road hex still exists from the new position', !!hex);
+  if (hex) {
+    const built = buildRoad(state, builder.id, hex);
+    check('the Builder can still build a Road after moving', built);
+  }
 }
 {
   const state = setup();
@@ -455,7 +493,7 @@ console.log(`\n=== Builder may lay up to ROAD_SEGMENTS_PER_ACTIVATION contiguous
   check(`all ${ROAD_SEGMENTS_PER_ACTIVATION} segments were built (2 contiguous Roads for 2⚡)`, built.length === ROAD_SEGMENTS_PER_ACTIVATION, `built=${built.length}`);
   check(`exactly ${ROAD_SEGMENTS_PER_ACTIVATION}⚡ was deducted (1 per hex)`, player.aura === before - ROAD_SEGMENTS_PER_ACTIVATION, `aura ${before}->${player.aura}`);
   for (const hex of path) check(`Road now exists at (${hex.q},${hex.r})`, !!getRoadAt(state, hex));
-  check('the whole path consumed only ONE Builder activation', builder.hasMoved && builder.hasAttacked);
+  check('the whole path consumed the Builder\'s action slot, but not its move', builder.hasAttacked && !builder.hasMoved);
   check('the Builder cannot lay another path this same activation',
     buildRoadPath(state, builder.id, straightRoadChain(state, builder, capital.pos, 1)).length === 0);
 }
@@ -471,7 +509,7 @@ console.log('\n=== The Builder can still build just ONE Road (not forced to pick
   const built = buildRoadPath(state, builder.id, path);
   check('exactly 1 segment was built', built.length === 1, `built=${built.length}`);
   check('exactly 1⚡ was deducted', player.aura === before - 1, `aura ${before}->${player.aura}`);
-  check('the single Builder activation is still fully consumed', builder.hasMoved && builder.hasAttacked);
+  check('the single Builder activation still consumes the action slot, not the move', builder.hasAttacked && !builder.hasMoved);
 }
 
 console.log('\n=== A path longer than ROAD_SEGMENTS_PER_ACTIVATION is truncated (a 3rd Road can never be selected/built), not spilled into a 2nd activation ===');

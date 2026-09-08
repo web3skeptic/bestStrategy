@@ -51,7 +51,7 @@ console.log('\n=== Agrar vs Agrar: Fertile Sites replace Temple sites ===');
   check('claiming succeeds', claimed);
   check('ownership is set immediately (no multi-round delay)', site.ownerId === 0);
   check('claiming costs NO Energy', state.players[0]!.aura === auraBefore);
-  check('claiming consumes the unit\'s whole activation', unit.hasMoved && unit.hasAttacked);
+  check('claiming consumes the unit\'s action slot, but not its move', unit.hasAttacked && !unit.hasMoved);
 }
 {
   // +1 income while owned; a Builder can claim too (any Agrar unit, not just combat).

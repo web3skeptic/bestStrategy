@@ -16,8 +16,8 @@ import {
   getPlayerIncome, getProductionSlots,
   canStartFarm, startFarm, getValidFarmHexes, getAgrarTerritory, getAgrarCultivation,
   canStartTempleUpgrade, startTempleUpgrade,
-  selectUnit, attackStructure, getStructureAt, getEffectiveDefense, HOME_GROUND_DEFENSE_BONUS,
-  createUnit,
+  selectUnit, moveUnit, attackStructure, getStructureAt, getEffectiveDefense, HOME_GROUND_DEFENSE_BONUS,
+  createUnit, getPlayerCapital,
 } from '../src/game';
 import {
   BASE_INCOME_PER_ROUND, AGRAR_FARM_COST, AGRAR_FARM_INCOME, MAX_ACTIVE_FARMS, FARM_MIN_SPACING,
@@ -179,7 +179,7 @@ console.log('\n=== Agrar Farms: construction (§3) ===');
   const started = startFarm(state, builder.id, targetHex);
   check('startFarm succeeds at a valid hex', started);
   check('startFarm charges AGRAR_FARM_COST immediately', player.aura === auraBefore - AGRAR_FARM_COST, `aura=${player.aura}`);
-  check('the Builder\'s whole activation is consumed', builder.hasMoved && builder.hasAttacked);
+  check('the Builder\'s action slot is consumed, but its move is still free', builder.hasAttacked && !builder.hasMoved);
 
   const founding = state.farms.find(f => hexEqual(f.pos, targetHex))!;
   check('the Farm exists in a founding state', founding.state === 'foundingFarm');
@@ -191,6 +191,44 @@ console.log('\n=== Agrar Farms: construction (§3) ===');
   check('the Farm completes uncontested (Builder stayed adjacent)', completed.state === 'farm');
   check('income increases by AGRAR_FARM_INCOME once active', getPlayerIncome(state, 0) === BASE_INCOME_PER_ROUND + AGRAR_FARM_INCOME, `income=${getPlayerIncome(state, 0)}`);
   check('an active Farm is now attackable', getStructureAt(state, targetHex)?.kind === 'farm');
+}
+
+// ── Move/action order agnosticism, end-to-end (reported bug: a Builder that
+// builds a Farm used to be unable to move afterward, and one that had
+// already moved couldn't build at all — each unit gets one move AND one
+// action per round, either order) ──
+console.log('\n=== Build then move: the Builder can still move after starting a Farm ===');
+{
+  const state = setup();
+  clearFarmArea(state, 0);
+  const builder = founderOf(state, 0);
+  state.currentPlayerIndex = 0;
+  const hex = getValidFarmHexes(state, builder)[0]!;
+  const started = startFarm(state, builder.id, hex);
+  check('the Farm was started', started);
+  selectUnit(state, builder.id);
+  check('a move is still offered after starting a Farm', state.moveHexes.length > 0, `moveHexes.length=${state.moveHexes.length}`);
+  const moveResult = moveUnit(state, state.moveHexes[0]!);
+  check('the Builder can actually move after starting a Farm', moveResult.moved === true);
+}
+console.log('\n=== Move then build: the Builder can still start a Farm after moving ===');
+{
+  const state = setup();
+  clearFarmArea(state, 0);
+  const builder = founderOf(state, 0);
+  const cap = getPlayerCapital(state, 0)!;
+  state.currentPlayerIndex = 0;
+  selectUnit(state, builder.id);
+  const dest = state.moveHexes.find(h => hexDistance(h, cap.pos) <= AGRAR_TERRITORY_RADIUS && !hexEqual(h, builder.pos));
+  check('setup: the Builder has somewhere to move that stays inside its territory', !!dest);
+  const moveResult = moveUnit(state, dest!);
+  check('the move landed', moveResult.moved === true);
+  const hex = getValidFarmHexes(state, builder)[0];
+  check('setup: a legal Farm hex still exists from the new position', !!hex);
+  if (hex) {
+    const started = startFarm(state, builder.id, hex);
+    check('the Builder can still start a Farm after moving', started);
+  }
 }
 {
   // Insufficient aura blocks the build.

@@ -1465,12 +1465,16 @@ export interface FoundingCheck {
 
 // §7 — everything that must hold true to START founding/reconstruction.
 // The Acolyte unit is gone entirely — ANY Temple unit that steps onto a
-// neutral/Ruins site with a fully unused activation may consecrate/restore
-// it, exactly like any other Temple action. No dedicated founder-type gate.
+// neutral/Ruins site with its action unused may consecrate/restore it,
+// exactly like any other Temple action. No dedicated founder-type gate.
+// Every unit gets one move AND one action per round, order-agnostic (§
+// agnostic activation order) — founding only spends the action slot, so a
+// unit that already moved can still found, and one that founds can still
+// move afterward.
 export function canStartFounding(state: GameState, unit: Unit): FoundingCheck | null {
   if (isMatchSetupRestricted(state)) return null;
   if (unit.playerId !== getCurrentPlayer(state).id) return null;
-  if (unit.hasMoved || unit.hasAttacked) return null; // needs a fully unused activation
+  if (unit.hasAttacked) return null; // needs its action slot unused
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || !player.faction) return null;
   if (player.faction !== 'temple') return null; // §28 — Agrar never founds/reconstructs a site
@@ -1512,7 +1516,6 @@ export function startFounding(state: GameState, unitId: string): boolean {
     startedRound: state.turnNumber,
     completesRound: state.turnNumber + 1,
   };
-  unit.hasMoved = true;
   unit.hasAttacked = true;
   updateHighlights(state);
   return true;
@@ -1692,7 +1695,7 @@ export function getFarmPlacementResult(state: GameState, unit: Unit, hex: HexCoo
   const reasons: string[] = [];
   if (isMatchSetupRestricted(state)) reasons.push('the match hasn\'t started yet');
   if (unit.playerId !== getCurrentPlayer(state).id) reasons.push('not your turn');
-  if (unit.hasMoved || unit.hasAttacked) reasons.push('the Builder has already acted this round');
+  if (unit.hasAttacked) reasons.push('the Builder has already used its action this round');
   if (unit.type !== 'founder') reasons.push('only the Builder can build a Farm');
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || player.faction !== 'agrar') {
@@ -1716,8 +1719,9 @@ export function canStartFarm(state: GameState, unit: Unit, pos: HexCoord): boole
 }
 
 // Begin building: charges AGRAR_FARM_COST immediately (same "commit the
-// resource up front" rule as site founding, §7/§9) and consumes the
-// Builder's whole activation. Resolves at the start of Agrar's next round —
+// resource up front" rule as site founding, §7/§9) and consumes only the
+// Builder's action slot — its move (before or after) is unaffected (§
+// agnostic activation order). Resolves at the start of Agrar's next round —
 // see resolveFarmFoundingForPlayer, called from endTurn().
 export function startFarm(state: GameState, unitId: string, pos: HexCoord): boolean {
   const unit = state.units.find(u => u.id === unitId && u.hp > 0);
@@ -1732,7 +1736,6 @@ export function startFarm(state: GameState, unitId: string, pos: HexCoord): bool
     founding: { playerId: player.id, unitId: unit.id, startedRound: state.turnNumber, completesRound: state.turnNumber + 1 },
     hp: 0, maxHp: 0, defense: 0,
   });
-  unit.hasMoved = true;
   unit.hasAttacked = true;
   return true;
 }
@@ -1823,16 +1826,16 @@ export function isSiteCultivationBlocked(state: GameState, pos: HexCoord, temple
 //
 // Only ever non-empty in a 1v1 Agrar mirror (see resolveMatchupObjectives).
 // A pure occupation objective: no HP, no founding delay, no level — stand
-// on it with ANY Agrar unit (combat or Builder) and spend a full,
-// completely unused activation to claim it, no Energy cost. Since only one
-// unit can ever occupy a hex, a site's current owner is automatically safe
-// from reclaim for as long as their own unit physically sits there — a
-// rival can only reclaim it once that unit moves away (or dies), then walks
-// on and spends their own activation, per §8 of the design brief.
+// on it with ANY Agrar unit (combat or Builder) and spend its action (order-
+// agnostic with the move, like every other action — § agnostic activation
+// order) to claim it, no Energy cost. Since only one unit can ever occupy a
+// hex, a site's current owner is automatically safe from reclaim for as long
+// as their own unit physically sits there — a rival can only reclaim it once
+// that unit moves away (or dies), then walks on and spends their own action.
 export function canClaimFertileSite(state: GameState, unit: Unit): FertileSite | null {
   if (isMatchSetupRestricted(state)) return null;
   if (unit.playerId !== getCurrentPlayer(state).id) return null;
-  if (unit.hasMoved || unit.hasAttacked) return null; // needs a fully unused activation
+  if (unit.hasAttacked) return null; // needs its action slot unused
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || player.faction !== 'agrar') return null; // Agrar only
   const site = state.fertileSites.find(f => hexEqual(f.pos, unit.pos));
@@ -1853,7 +1856,6 @@ export function claimFertileSite(state: GameState, unitId: string): boolean {
   const site = canClaimFertileSite(state, unit);
   if (!site) return false;
   site.ownerId = unit.playerId;
-  unit.hasMoved = true;
   unit.hasAttacked = true;
   return true;
 }
@@ -2005,7 +2007,7 @@ export function getRoadPlacementResult(state: GameState, unit: Unit, hex: HexCoo
   const reasons: string[] = [];
   if (isMatchSetupRestricted(state)) reasons.push('the match hasn\'t started yet');
   if (unit.type !== 'founder') reasons.push('only the Builder can lay a Road');
-  if (unit.hasMoved || unit.hasAttacked) reasons.push('the Builder has already acted this round');
+  if (unit.hasAttacked) reasons.push('the Builder has already used its action this round');
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player || player.faction !== 'agrar') {
     reasons.push('only the Farmer tribe can build Roads');
@@ -2055,7 +2057,6 @@ export function buildRoad(state: GameState, unitId: string, pos: HexCoord): bool
   player.aura -= cost;
   state.pillagedRoadHexes.delete(key);
   state.roads.push({ pos: { ...pos }, ownerId: player.id });
-  unit.hasMoved = true;
   unit.hasAttacked = true;
   return true;
 }
@@ -2075,7 +2076,7 @@ export function buildRoad(state: GameState, unitId: string, pos: HexCoord): bool
 // the activation is only consumed if at least one segment was built).
 export function buildRoadPath(state: GameState, unitId: string, path: HexCoord[]): HexCoord[] {
   const unit = state.units.find(u => u.id === unitId && u.hp > 0);
-  if (!unit || unit.hasMoved || unit.hasAttacked) return [];
+  if (!unit || unit.hasAttacked) return [];
   const player = state.players.find(p => p.id === unit.playerId);
   if (!player) return [];
   const built: HexCoord[] = [];
@@ -2097,7 +2098,6 @@ export function buildRoadPath(state: GameState, unitId: string, path: HexCoord[]
     prev = hex;
   }
   if (built.length > 0) {
-    unit.hasMoved = true;
     unit.hasAttacked = true;
   }
   return built;
@@ -2132,7 +2132,6 @@ export function pillageRoad(state: GameState, unitId: string): boolean {
   const road = getRoadAt(state, unit.pos)!;
   state.roads = state.roads.filter(r => r !== road);
   state.pillagedRoadHexes.add(hexKey(road.pos));
-  unit.hasMoved = true;
   unit.hasAttacked = true;
   return true;
 }
