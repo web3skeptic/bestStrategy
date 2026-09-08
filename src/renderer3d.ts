@@ -268,6 +268,16 @@ export class Renderer3D {
   // them with a pending capture. Driven in the same pulse block as toMoveTintIds
   // (same phase); the temple model itself is tinted (no floating markers).
   private structureTintIds = new Set<string>();
+  // Ids of structures currently showing the pulsating RED "attackable" tint —
+  // a currently-selected unit could attack this structure right now (same
+  // set as the flat red attack highlight in syncHighlights, but that flat
+  // ground tint gets hidden under/behind a tall Capital/Temple model from
+  // most camera angles, same reasoning as structureTintIds above, so the
+  // model itself needs its own marker too). Takes priority over
+  // structureTintIds if a structure were ever eligible for both (shouldn't
+  // happen in practice — an attackable structure is always enemy-owned, so
+  // it's never also a legal move/found destination for the same unit).
+  private structureAttackTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
   private lastStructHp = new Map<string, number>(); // Capital/Temple/Farm — same purpose, structure combat pass
   private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number; stage: number }>();
@@ -587,6 +597,7 @@ export class Renderer3D {
     this.unitHpBars.clear();
     this.toMoveTintIds.clear();
     this.structureTintIds.clear();
+    this.structureAttackTintIds.clear();
     this.lastUnitHp.clear();
     this.lastStructHp.clear();
     this.roadSelectionHexes = [];
@@ -1368,6 +1379,11 @@ export class Renderer3D {
     // as the flat green move highlights in syncHighlights — the structure mesh
     // occludes those flat tints, which is exactly why we tint the model itself here).
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
+    // Structures the selected unit could ATTACK right now — same idea, same
+    // reason (see structureAttackTintIds above). Unit-vs-unit attacks don't
+    // need this (units are small enough that the flat highlight under them
+    // stays visible), only structureAttackHexes.
+    const attackableStructSet = new Set(state.structureAttackHexes.map(h => hexKey(h)));
 
     interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; }
     const structures: StructureVisual[] = [];
@@ -1433,6 +1449,7 @@ export class Renderer3D {
       this.disposeObject(entry.mesh);
       this.structureMeshes.delete(id);
       this.structureTintIds.delete(id);
+      this.structureAttackTintIds.delete(id);
       const bar = this.structHpBars.get(id);
       if (bar) { this.disposeObject(bar.group); this.structHpBars.delete(id); }
       this.structFlashUntil.delete(id);
@@ -1489,6 +1506,16 @@ export class Renderer3D {
       //       exactly like the flat move highlights.
       //   (b) a local Builder/Acolyte stands on it and could start founding —
       //       gated like the unit to-move tint (own unit, viewer's turn).
+      // Red "attackable" tint takes priority — checked first, and skips the
+      // warm-yellow logic entirely when it applies (see structureAttackTintIds).
+      const attackable = explored.has(key) && attackableStructSet.has(key);
+      if (attackable) {
+        this.structureAttackTintIds.add(st.id);
+        if (this.structureTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
+        continue;
+      }
+      if (this.structureAttackTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
+
       const tintA = explored.has(key) && moveSet.has(key);
       let tintB = false;
       if (showToMove && st.canPendingFound) {
@@ -2241,7 +2268,7 @@ export class Renderer3D {
         const entry = this.structureMeshes.get(id);
         if (now >= until) {
           this.structFlashUntil.delete(id);
-          if (entry && !this.structureTintIds.has(id)) this.setStructureEmissive(entry.mesh, null);
+          if (entry && !this.structureTintIds.has(id) && !this.structureAttackTintIds.has(id)) this.setStructureEmissive(entry.mesh, null);
         } else if (entry) {
           this.setStructureEmissive(entry.mesh, [0.8, 0.05, 0.05]);
         }
@@ -2260,6 +2287,19 @@ export class Renderer3D {
       }
       // Temples breathe in sync with the units (same phase / rgb).
       for (const id of this.structureTintIds) {
+        const entry = this.structureMeshes.get(id);
+        if (entry) this.setStructureEmissive(entry.mesh, rgb);
+      }
+    }
+    // Pulse the "attackable structure" red tint — same cadence/shape as the
+    // yellow pulse above, so a Capital/Temple/Farm the selected unit could
+    // attack right now reads clearly even though its own tall model hides
+    // the flat red attack highlight under/behind it (see structureAttackTintIds).
+    if (this.structureAttackTintIds.size > 0) {
+      const osc = 0.5 + 0.5 * Math.sin(now * 0.005);
+      const e = 0.16 + 0.34 * osc;
+      const rgb: [number, number, number] = [e, e * 0.12, e * 0.10]; // red
+      for (const id of this.structureAttackTintIds) {
         const entry = this.structureMeshes.get(id);
         if (entry) this.setStructureEmissive(entry.mesh, rgb);
       }
