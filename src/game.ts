@@ -787,28 +787,34 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
 }
 
 // §25 (phase 11 correction) — a road grants its movement bonus to Agrar
-// units ONLY. Temple units treat an Agrar road as normal terrain — Agrar's
-// physical infrastructure is a faction-locked mechanic, not a map-wide buff.
-// An active Farm counts as Road property too — it's already a permanent
-// Agrar structure sitting on cultivated, cleared land, so a Farm network
-// doubles as the backbone of the fast-travel network, not just a separate
-// thing a Road happens to also connect to.
+// units ONLY. Temple units treat an Agrar road as normal terrain — physical
+// infrastructure is a faction-locked mechanic, not a map-wide buff. Temple
+// never gets this at all, on any terrain — it's already the high-mobility
+// faction (see the Agrar-only roster comment above), so it has no equivalent.
+//
+// The bonus itself is ownership-agnostic: an Agrar unit reads ANY Road,
+// active Farm, or Capital — its own or an enemy's — as usable infrastructure
+// once it's standing on it, exactly like a real road doesn't care who paved
+// it. An active Farm counts as Road property too — it's already cleared,
+// cultivated land, so a Farm network doubles as the backbone of the
+// fast-travel network, not just a separate thing a Road happens to connect
+// to.
 //
 // The Capital is the network's hub, so it gets the same bonus by extension
-// whenever a Road or an active Farm sits directly adjacent to it — a unit
-// standing in the Capital is stepping straight onto that connected
-// infrastructure the instant it leaves, not walking a full off-road tile
-// first before the bonus ever applies. (A Farm needing its own adjacent
-// Road/Farm to also "activate" this way isn't needed — standing ON a Farm
-// already grants the bonus intrinsically, per onFarm above.)
+// whenever a Road or an active Farm sits directly adjacent to it (again,
+// anyone's) — a unit standing in a Capital is stepping straight onto that
+// connected infrastructure the instant it leaves, not walking a full
+// off-road tile first before the bonus ever applies. (A Farm needing its own
+// adjacent Road/Farm to also "activate" this way isn't needed — standing ON
+// a Farm already grants the bonus intrinsically, per onFarm above.)
 export function getEffectiveSpeed(state: GameState, unit: Unit): number {
   const player = state.players.find(p => p.id === unit.playerId);
   if (player?.faction !== 'agrar') return unit.stats.speed;
   const onRoad = state.roads.some(r => hexEqual(r.pos, unit.pos));
-  const onFarm = state.farms.some(f => f.ownerId === unit.playerId && f.state === 'farm' && hexEqual(f.pos, unit.pos));
-  const onConnectedCapital = state.capitals.some(c => c.playerId === unit.playerId && hexEqual(c.pos, unit.pos))
-    && (state.roads.some(r => r.ownerId === unit.playerId && hexDistance(r.pos, unit.pos) === 1)
-      || state.farms.some(f => f.ownerId === unit.playerId && f.state === 'farm' && hexDistance(f.pos, unit.pos) === 1));
+  const onFarm = state.farms.some(f => f.state === 'farm' && hexEqual(f.pos, unit.pos));
+  const onConnectedCapital = state.capitals.some(c => hexEqual(c.pos, unit.pos))
+    && (state.roads.some(r => hexDistance(r.pos, unit.pos) === 1)
+      || state.farms.some(f => f.state === 'farm' && hexDistance(f.pos, unit.pos) === 1));
   return unit.stats.speed + (onRoad || onFarm || onConnectedCapital ? ROAD_MOVEMENT_BONUS : 0);
 }
 

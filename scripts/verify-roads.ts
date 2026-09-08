@@ -336,9 +336,10 @@ console.log('\n=== A Road or Farm directly adjacent to the Capital gives units s
   check('the same Farm, now active, DOES trigger the bonus for a unit standing in the Capital',
     getEffectiveSpeed(state3, agrarWarrior3) === baseSpeed3 + ROAD_MOVEMENT_BONUS, `got ${getEffectiveSpeed(state3, agrarWarrior3)}`);
 
-  // Ownership/faction scoping: an enemy's Road adjacent to MY Capital must
-  // not count, and a Temple unit standing on an Agrar Capital gets nothing
-  // even with an adjacent Agrar Road (matches the Agrar-only restriction above).
+  // Faction scoping still applies (Temple never gets this, on anyone's
+  // infrastructure), but OWNERSHIP does not — an Agrar unit reads ANY Road/
+  // Farm/Capital as usable, its own or an enemy's, same as a real road
+  // doesn't care who paved it.
   const state4 = setup();
   const builder4 = clearRoadArea(state4, 0);
   const cap4 = getPlayerCapital(state4, 0)!;
@@ -347,8 +348,21 @@ console.log('\n=== A Road or Farm directly adjacent to the Capital gives units s
   const templeWarrior4 = state4.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
   const templeBaseSpeed4 = templeWarrior4.stats.speed;
   templeWarrior4.pos = { ...cap4.pos };
-  check('a Temple unit standing on an (enemy) Agrar Capital with an adjacent Road gets no bonus',
+  check('a Temple unit standing on an (enemy) Agrar Capital with an adjacent Road still gets no bonus (faction gate, §26)',
     getEffectiveSpeed(state4, templeWarrior4) === templeBaseSpeed4, `got ${getEffectiveSpeed(state4, templeWarrior4)}`);
+
+  // An Agrar unit standing on that SAME enemy-owned Road/Capital DOES now
+  // get the bonus — infrastructure ownership doesn't matter, only who's
+  // standing on it.
+  const rivalAgrarWarrior = createUnit('warrior', 1, roadPos4, state4.playerTech[1], 'agrar');
+  rivalAgrarWarrior.playerId = 1; // a rival AGRAR player, not the Road's owner (player 0)
+  const rivalBaseSpeed = rivalAgrarWarrior.stats.speed;
+  state4.players[1]!.faction = 'agrar'; // this specific check needs an Agrar rival, regardless of the real matchup
+  check('an Agrar unit on an ENEMY-owned Road gets the bonus too (ownership-agnostic)',
+    getEffectiveSpeed(state4, rivalAgrarWarrior) === rivalBaseSpeed + ROAD_MOVEMENT_BONUS, `got ${getEffectiveSpeed(state4, rivalAgrarWarrior)}`);
+  rivalAgrarWarrior.pos = { ...cap4.pos };
+  check('an Agrar unit standing on the ENEMY Capital (with an enemy Road adjacent) gets the bonus too',
+    getEffectiveSpeed(state4, rivalAgrarWarrior) === rivalBaseSpeed + ROAD_MOVEMENT_BONUS, `got ${getEffectiveSpeed(state4, rivalAgrarWarrior)}`);
 }
 
 // ── Pillage (§25; v14 — a real action, not automatic-on-move) ──
