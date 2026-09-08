@@ -8,6 +8,7 @@ import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
 import { buildTemple } from './voxelTemple';
 import { buildFarm, buildFertileSite } from './voxelFarm';
+import { buildRoad as buildRoadModel } from './voxelRoad';
 import { buildUnitModel } from './voxelUnits';
 import { getSharedFaceTexture } from './voxelWarrior';
 
@@ -284,6 +285,7 @@ export class Renderer3D {
   private structHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number }>();
   private structFlashUntil = new Map<string, number>(); // brief red hit-flash, cleared in advanceAnimations
   private teleportMeshes = new Map<string, THREE.Object3D>();
+  private roadMeshes = new Map<string, THREE.Object3D>(); // keyed by hexKey(pos) — a Road tile is uniquely identified by its position
   private highlightPool: THREE.Mesh[] = [];
   // Balance pass — Road multi-select UI: tiles the player has already picked
   // in the current Build-Road activation (as opposed to state.buildHexes,
@@ -609,6 +611,7 @@ export class Renderer3D {
     this.structFlashUntil.clear();
     this.structureMeshes.clear();
     this.teleportMeshes.clear();
+    this.roadMeshes.clear(); // disposed already via disposeGroup(overlayGroup) above
     this.highlightPool = [];
     this.moveAnims.clear();
     this.unitFacing.clear();
@@ -996,6 +999,7 @@ export class Renderer3D {
     this.detectHits(state, playerId, visible, !!omniscient);
     this.syncFog(explored, visible);
     this.syncHighlights(state, explored, playerId);
+    this.syncRoads(state, explored, visible);
     this.syncStructures(state, explored, visible, showToMove, playerId);
     this.syncUnits(state, playerId, visible, !!omniscient, showToMove);
   }
@@ -1266,10 +1270,11 @@ export class Renderer3D {
     // under nothing — the strongest tint on the board while active).
     const farmSelectionKey = this.farmSelectionHex ? hexKey(this.farmSelectionHex) : null;
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
-    // §23-25 — roads are persistent world decoration, not a transient
-    // selection highlight, but this pool already redraws every frame from
-    // live state, so a low-priority tan tint (below move/attack/build/
-    // support) is a cheap placeholder pending real road art (§70 policy).
+    // §23-25 — a subtle low-priority tan wash under/around every Road tile,
+    // on top of its own real "worn path" model now (see syncRoads) — the
+    // model is what actually makes a Road unmistakable; this flat tint is
+    // just a faint reinforcement, same relationship Farms have with their
+    // own territory/cultivation washes.
     const roadSet = new Set(state.roads.map(r => hexKey(r.pos)));
     // §26 — a lowest-priority amber warning tint on enemy ZOC hexes, so the
     // player can see WHY a unit's move range stops short before they even
@@ -1371,6 +1376,37 @@ export class Renderer3D {
       case 'completed': return 5;
       case 'founding': return 2;
       case 'neutralOrRuins': default: return 1;
+    }
+  }
+
+  // Placement-UX pass — a built Road previously had no 3D presence at all
+  // (just a faint flat ground tint, §23-25 — easy to lose among the other
+  // placement-mode highlight tints layered on top of it). Every Road tile
+  // now also gets a real, low-profile "worn path" model, same pooled/keyed-
+  // by-position pattern as the structure loop below, so it reads clearly
+  // regardless of what highlight happens to be drawn over the same hex.
+  private syncRoads(state: GameState, explored: Set<string>, visible: Set<string>): void {
+    const liveKeys = new Set(state.roads.map(r => hexKey(r.pos)));
+    for (const [key, mesh] of this.roadMeshes) {
+      if (liveKeys.has(key)) continue;
+      this.overlayGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.roadMeshes.delete(key);
+      this.structFogState.delete('R' + key);
+    }
+    for (const road of state.roads) {
+      const key = hexKey(road.pos);
+      if (!explored.has(key)) continue;
+      let mesh = this.roadMeshes.get(key);
+      if (!mesh) {
+        mesh = buildRoadModel();
+        const { x, z } = hexToWorld(road.pos);
+        mesh.position.set(x, this.elevationAt(state, road.pos), z);
+        this.overlayGroup.add(mesh);
+        this.roadMeshes.set(key, mesh);
+      }
+      const want = visible.has(key) ? 'lit' : 'dark';
+      this.applyStructFog(mesh, 'R' + key, want, false);
     }
   }
 
