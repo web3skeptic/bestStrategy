@@ -388,7 +388,12 @@
       text-overflow: ellipsis;
       max-width: 100%;
     }
-    .unit-card-cost {
+    .unit-card-stats {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .unit-card-cost, .unit-card-pop {
       display: inline-flex;
       align-items: center;
       gap: 3px;
@@ -402,11 +407,52 @@
       color: #ffe39a;
     }
     .unit-card-cost .cost-icon { color: #ffd24a; }
-    .unit-card.disabled .unit-card-cost {
+    /* Population (Command) cost chip — a distinct blue/lavender tint from the
+       Energy chip's gold, so the two costs read as clearly different things
+       at a glance (§ population clarity pass). */
+    .unit-card-pop {
+      border-color: rgba(140,170,255,0.45);
+      color: #cdd8ff;
+    }
+    .unit-card-pop .pop-icon { color: #9fb4ff; }
+    /* Whichever specific chip(s) are actually the blocking reason turn red —
+       NOT the whole card uniformly — so a disabled card tells you why
+       (can't afford it vs. would bust the population cap) instead of every
+       disabled reason looking identical. */
+    .unit-card-cost.chip-bad, .unit-card-pop.chip-bad {
       border-color: rgba(255,120,120,0.5);
       color: #ffb0b0;
     }
-    .unit-card.disabled .unit-card-cost .cost-icon { color: #ff9090; }
+    .unit-card-cost.chip-bad .cost-icon, .unit-card-pop.chip-bad .pop-icon { color: #ff9090; }
+    /* Queued-count badge — how many of this exact type are already waiting
+       in the training queue at the currently selected structure (§ the
+       "which units are waiting to be created" indicator). */
+    .unit-card-queued {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: #4a6fd8;
+      border: 2px solid #0e1424;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 14px;
+      text-align: center;
+      pointer-events: none;
+    }
+    .unit-card-queued.hidden { display: none; }
+    /* Activation indicator — a brief bright flash the instant a recruit
+       order is actually queued, so the click's effect is unmistakable
+       before the combat-log line or the queued badge even update. */
+    @keyframes unitCardFlash {
+      0%   { box-shadow: 0 0 0 0 rgba(126,199,126,0.9); border-color: #bdf2bd; }
+      100% { box-shadow: 0 0 14px 4px rgba(126,199,126,0); border-color: #4a6a4a; }
+    }
+    .unit-card-flash { animation: unitCardFlash 0.5s ease-out; }
 
     /* ── Combat log (collapsible) ── */
     .log-toggle {
@@ -1364,7 +1410,8 @@
       .unit-card { width: 84px; padding: 6px 5px 5px; }
       .unit-card-thumb { width: 64px; height: 64px; }
       .unit-card-name { font-size: 10px; }
-      .unit-card-cost { font-size: 10px; padding: 2px 6px; }
+      .unit-card-stats { gap: 3px; }
+      .unit-card-cost, .unit-card-pop { font-size: 10px; padding: 2px 6px; }
       .spawn-arrow { width: 44px; min-width: 44px; font-size: 26px; }
 
       /* contextual action buttons stay reachable + tap-sized */

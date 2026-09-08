@@ -866,8 +866,10 @@ export function getPopulationCap(state: GameState, playerId: number): number {
 
 // Population is spent by COMMAND COST, not a flat 1-per-unit — heavier units
 // (cavalry/heavy) cost more of the cap than light ones (§19). Founder/
-// pre-reveal units (no faction-specific def yet) fall back to 1.
-function getUnitCommandCost(type: UnitType, faction: FactionId | null | undefined): number {
+// pre-reveal units (no faction-specific def yet) fall back to 1. Exported so
+// the recruit UI can show each unit's population cost up front, before
+// recruiting it (population/pop-cap clarity pass).
+export function getUnitCommandCost(type: UnitType, faction: FactionId | null | undefined): number {
   if (faction && type !== 'founder') {
     const def = FACTION_UNITS[faction].find(u => u.slot === type);
     if (def) return def.commandCost;

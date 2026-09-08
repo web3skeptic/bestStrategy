@@ -33,6 +33,7 @@ import {
   canAfford,
   getPopulationCap,
   getPopulationCount,
+  getUnitCommandCost,
   getProductionSlots,
   getBusyProductionSlotCount,
   HEALER_HEAL_AMOUNT,
@@ -1100,12 +1101,19 @@ function render(): void {
   // §5 (phase 11 correction) — recruits no longer appear instantly, so make
   // the wait visible: a small banner listing what's currently queued for the
   // local viewer's own player, deploying at the start of their next round.
+  // Grouped by unit type with a ×N count (population/queue clarity pass) —
+  // recruiting several of the same type used to just repeat its name once
+  // per order ("Warrior, Warrior, Warrior"), which is exactly the "not clear
+  // how many are waiting" complaint this pass is fixing.
   const vSlotForBanner = gameStarted && !spectatorMode ? viewerPlayerSlot() : null;
   const queuedForViewer = vSlotForBanner !== null ? state.trainingQueue.filter(o => o.playerId === vSlotForBanner) : [];
   if (queuedForViewer.length > 0) {
     const viewerFaction = state.players[vSlotForBanner!]?.faction;
-    const names = queuedForViewer.map(o => unitDisplayName(o.unitType, viewerFaction)).join(', ');
-    trainingQueueBanner.textContent = `🏭 Training: ${names} — deploys next round`;
+    const counts = new Map<UnitType, number>();
+    for (const o of queuedForViewer) counts.set(o.unitType, (counts.get(o.unitType) ?? 0) + 1);
+    const parts = [...counts.entries()].map(([type, n]) =>
+      n > 1 ? `${unitDisplayName(type, viewerFaction)} ×${n}` : unitDisplayName(type, viewerFaction));
+    trainingQueueBanner.textContent = `🏭 Training: ${parts.join(', ')} — deploys next round`;
     trainingQueueBanner.classList.remove('hidden');
   } else {
     trainingQueueBanner.classList.add('hidden');
@@ -1702,6 +1710,13 @@ function buildUnitCards(): void {
     const card = document.createElement('div');
     card.className = 'unit-card disabled';
 
+    // Queued-count badge (§ population/queue clarity pass) — how many of
+    // THIS type are already waiting in the training queue at the currently
+    // selected structure. Hidden (via updateUnitCards) whenever that count
+    // is 0, so it never clutters a card with nothing pending.
+    const queuedBadge = document.createElement('div');
+    queuedBadge.className = 'unit-card-queued hidden';
+
     const thumb = document.createElement('img');
     thumb.className = 'unit-card-thumb';
     thumb.src = UNIT_ART[type];
@@ -1712,14 +1727,23 @@ function buildUnitCards(): void {
     name.className = 'unit-card-name';
     name.textContent = UNIT_CARD_NAMES[type];
 
+    const stats = document.createElement('div');
+    stats.className = 'unit-card-stats';
+
     const cost = document.createElement('div');
     cost.className = 'unit-card-cost';
     // cost value gets refreshed in updateUnitCards (settings can change it)
 
-    card.append(thumb, name, cost);
+    const pop = document.createElement('div');
+    pop.className = 'unit-card-pop';
+    // population/command-cost value gets refreshed in updateUnitCards too —
+    // this is the "what population size does this unit take up" indicator.
+
+    stats.append(cost, pop);
+    card.append(queuedBadge, thumb, name, stats);
     card.addEventListener('click', () => {
       if (card.classList.contains('disabled')) return;
-      handleSpawnBtn(type);
+      handleSpawnBtn(type, card);
     });
 
     unitCards.set(type, card);
@@ -1767,6 +1791,18 @@ function updateUnitCards(): void {
   // recruiting player's next round), not here, so a structure with a unit
   // standing on it is still a legal recruit target — no card should grey out
   // for that reason.
+  //
+  // Population/queue clarity pass — each card now shows its own population
+  // (Command) cost up front, not just its Energy cost, and each of the two
+  // gates is tinted independently so a disabled card actually explains WHY
+  // (can't afford it vs. would bust the population cap vs. every production
+  // slot is currently busy), instead of collapsing every reason into one
+  // generic greyed-out look.
+  const popCap = getPopulationCap(state, player.id);
+  const popCount = getPopulationCount(state, player.id);
+  const slots = getProductionSlots(state, player.id);
+  const busySlots = getBusyProductionSlotCount(state, player.id);
+  const slotsFree = busySlots < slots;
   for (const type of UNIT_CARD_ORDER) {
     const card = unitCards.get(type)!;
     // Match the old build menu: locked units are hidden entirely.
@@ -1775,8 +1811,19 @@ function updateUnitCards(): void {
       continue;
     }
     card.style.display = '';
-    const affordable = canAfford(state, type);
+
+    const auraCost = getUnitCost(type, player.faction);
+    const popCost = getUnitCommandCost(type, player.faction);
+    const auraOk = player.aura >= auraCost;
+    const popOk = popCount + popCost <= popCap;
+    const affordable = auraOk && popOk && slotsFree;
     card.classList.toggle('disabled', !affordable);
+
+    const reasons: string[] = [];
+    if (!auraOk) reasons.push(`not enough Energy (need ⚡${auraCost})`);
+    if (!popOk) reasons.push(`would exceed your population cap (👥${popCount + popCost}/${popCap})`);
+    if (!slotsFree) reasons.push(`every production slot is busy (🏭${busySlots}/${slots})`);
+    card.title = reasons.join(' · ');
 
     // Card art = a 3D render of the unit model, team-tinted to the current
     // player. Regenerated when the player colour OR faction changes (faction
@@ -1796,7 +1843,27 @@ function updateUnitCards(): void {
     // Refresh cost (faction-flavored; base UNIT_COSTS is still editable via
     // the settings panel and used as the fallback pre-reveal).
     const cost = card.querySelector('.unit-card-cost')!;
-    cost.innerHTML = `<span class="cost-icon">⚡</span>${getUnitCost(type, player.faction)}`;
+    cost.innerHTML = `<span class="cost-icon">⚡</span>${auraCost}`;
+    cost.classList.toggle('chip-bad', !auraOk);
+
+    // Population (Command) cost this unit will take up once recruited —
+    // the missing piece that made "what population size does this take up"
+    // unclear before.
+    const pop = card.querySelector('.unit-card-pop')!;
+    pop.innerHTML = `<span class="pop-icon">👥</span>${popCost}`;
+    pop.classList.toggle('chip-bad', !popOk);
+
+    // Queued-count badge — how many of THIS type are already waiting in the
+    // training queue at the currently selected recruiting structure (§ the
+    // "which units are waiting to be created" indicator). Only meaningful
+    // while a structure is actually selected (recruiting is only possible
+    // from the site-selection view in the first place).
+    const queuedBadge = card.querySelector('.unit-card-queued')!;
+    const queuedHere = state.selectionMode === 'site' && state.selectedSiteId
+      ? state.trainingQueue.filter(o => o.playerId === player.id && o.structureId === state.selectedSiteId && o.unitType === type).length
+      : 0;
+    queuedBadge.textContent = `×${queuedHere}`;
+    queuedBadge.classList.toggle('hidden', queuedHere === 0);
   }
   // Visible card count can change as units unlock → recheck overflow/arrows.
   updateSpawnArrows();
@@ -2670,7 +2737,9 @@ function handleHexClick(clientX: number, clientY: number): void {
 }
 
 // ── Spawn buttons ──
-function handleSpawnBtn(type: UnitType): void {
+// `card` is the exact DOM element clicked — used purely for the transient
+// "just queued this" flash (§ activation-indicator pass), never for logic.
+function handleSpawnBtn(type: UnitType, card?: HTMLElement): void {
   if (!localHasTurn()) return; // no recruiting on an opponent's turn (online)
   if (state.selectionMode !== 'site' || !state.selectedSiteId) return;
   if (!canAfford(state, type)) return;
@@ -2682,7 +2751,15 @@ function handleSpawnBtn(type: UnitType): void {
     try {
       if (spawnUnit(state, structureId, type)) {
         const spawnPlayer = getCurrentPlayer(state);
-        logCombat(`Queued ${unitDisplayName(type, spawnPlayer.faction)} for ${getUnitCost(type, spawnPlayer.faction)} aura — deploys next round`);
+        logCombat(`Queued ${unitDisplayName(type, spawnPlayer.faction)} for ⚡${getUnitCost(type, spawnPlayer.faction)} + 👥${getUnitCommandCost(type, spawnPlayer.faction)} — deploys next round`);
+        // A brief flash on the card itself — immediate confirmation the click
+        // actually registered as "now training", separate from (and faster
+        // to notice than) the combat-log line or the queued-count badge.
+        if (card) {
+          card.classList.remove('unit-card-flash');
+          void card.offsetWidth; // restart the CSS animation even on rapid repeat clicks
+          card.classList.add('unit-card-flash');
+        }
       }
     } catch (e: unknown) {
       logCombat(e instanceof Error ? e.message : 'Cannot recruit unit');
