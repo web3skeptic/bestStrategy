@@ -793,12 +793,23 @@ export function getEffectiveRange(state: GameState, unit: Unit): number {
 // Agrar structure sitting on cultivated, cleared land, so a Farm network
 // doubles as the backbone of the fast-travel network, not just a separate
 // thing a Road happens to also connect to.
+//
+// The Capital is the network's hub, so it gets the same bonus by extension
+// whenever a Road or an active Farm sits directly adjacent to it — a unit
+// standing in the Capital is stepping straight onto that connected
+// infrastructure the instant it leaves, not walking a full off-road tile
+// first before the bonus ever applies. (A Farm needing its own adjacent
+// Road/Farm to also "activate" this way isn't needed — standing ON a Farm
+// already grants the bonus intrinsically, per onFarm above.)
 export function getEffectiveSpeed(state: GameState, unit: Unit): number {
   const player = state.players.find(p => p.id === unit.playerId);
   if (player?.faction !== 'agrar') return unit.stats.speed;
   const onRoad = state.roads.some(r => hexEqual(r.pos, unit.pos));
   const onFarm = state.farms.some(f => f.ownerId === unit.playerId && f.state === 'farm' && hexEqual(f.pos, unit.pos));
-  return unit.stats.speed + (onRoad || onFarm ? ROAD_MOVEMENT_BONUS : 0);
+  const onConnectedCapital = state.capitals.some(c => c.playerId === unit.playerId && hexEqual(c.pos, unit.pos))
+    && (state.roads.some(r => r.ownerId === unit.playerId && hexDistance(r.pos, unit.pos) === 1)
+      || state.farms.some(f => f.ownerId === unit.playerId && f.state === 'farm' && hexDistance(f.pos, unit.pos) === 1));
+  return unit.stats.speed + (onRoad || onFarm || onConnectedCapital ? ROAD_MOVEMENT_BONUS : 0);
 }
 
 // ── Zone of Control (§26) ──

@@ -244,6 +244,75 @@ console.log('\n=== An active Farm grants the same movement bonus as a Road (Agra
     getEffectiveSpeed(state, templeWarrior) === templeBaseSpeed);
 }
 
+// ── The Capital gets the same bonus as a hub, once it's actually connected ──
+console.log('\n=== A Road or Farm directly adjacent to the Capital gives units standing IN it the same bonus (leaving isn\'t a full off-road tile first) ===');
+{
+  const state = setup();
+  const builder = clearRoadArea(state, 0);
+  const cap = getPlayerCapital(state, 0)!;
+  const agrarWarrior = state.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const baseSpeed = agrarWarrior.stats.speed;
+  agrarWarrior.pos = { ...cap.pos };
+
+  check('standing in the Capital with NO adjacent Road/Farm gets no bonus yet',
+    getEffectiveSpeed(state, agrarWarrior) === baseSpeed, `got ${getEffectiveSpeed(state, agrarWarrior)}`);
+
+  const roadPos = getValidRoadHexes(state, builder)[0]!; // adjacent to both the Builder and the Capital
+  buildRoad(state, builder.id, roadPos);
+  check('once a Road is built directly adjacent to the Capital, a unit standing IN the Capital gets +ROAD_MOVEMENT_BONUS',
+    getEffectiveSpeed(state, agrarWarrior) === baseSpeed + ROAD_MOVEMENT_BONUS, `got ${getEffectiveSpeed(state, agrarWarrior)}`);
+
+  // A Road two hexes away (not directly adjacent to the Capital) must NOT
+  // trigger this — only genuine direct adjacency counts as "connected".
+  const state2 = setup();
+  const builder2 = clearRoadArea(state2, 0);
+  const cap2 = getPlayerCapital(state2, 0)!;
+  const agrarWarrior2 = state2.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const baseSpeed2 = agrarWarrior2.stats.speed;
+  agrarWarrior2.pos = { ...cap2.pos };
+  const farRoadPos = { q: cap2.pos.q + 3, r: cap2.pos.r };
+  state2.roads.push({ pos: farRoadPos, ownerId: 0 });
+  check('a Road that exists but is NOT directly adjacent to the Capital does not trigger the bonus',
+    getEffectiveSpeed(state2, agrarWarrior2) === baseSpeed2, `got ${getEffectiveSpeed(state2, agrarWarrior2)}`);
+  void builder2;
+
+  // An active Farm directly adjacent to the Capital works the same way as a Road.
+  // getValidFarmHexes only guarantees adjacency to the BUILDER (Farm
+  // placement, unlike Road placement, doesn't require Capital-adjacency in
+  // general) — filter down to one that's ALSO directly adjacent to the
+  // Capital itself, which is what this specific rule cares about.
+  const state3 = setup();
+  const builder3 = clearRoadArea(state3, 0);
+  state3.currentPlayerIndex = 0;
+  const cap3 = getPlayerCapital(state3, 0)!;
+  const agrarWarrior3 = state3.units.find(u => u.playerId === 0 && u.type === 'warrior')!;
+  const baseSpeed3 = agrarWarrior3.stats.speed;
+  agrarWarrior3.pos = { ...cap3.pos };
+  const farmHex3 = getValidFarmHexes(state3, builder3)
+    .find(h => canStartFarm(state3, builder3, h) && hexDistance(h, cap3.pos) === 1)!;
+  check('setup: found a Farm candidate directly adjacent to the Capital', !!farmHex3);
+  startFarm(state3, builder3.id, farmHex3);
+  check('a still-FOUNDING Farm adjacent to the Capital does not trigger the bonus yet',
+    getEffectiveSpeed(state3, agrarWarrior3) === baseSpeed3, `got ${getEffectiveSpeed(state3, agrarWarrior3)}`);
+  endTurn(state3); endTurn(state3); // resolves founding into an active Farm
+  check('the same Farm, now active, DOES trigger the bonus for a unit standing in the Capital',
+    getEffectiveSpeed(state3, agrarWarrior3) === baseSpeed3 + ROAD_MOVEMENT_BONUS, `got ${getEffectiveSpeed(state3, agrarWarrior3)}`);
+
+  // Ownership/faction scoping: an enemy's Road adjacent to MY Capital must
+  // not count, and a Temple unit standing on an Agrar Capital gets nothing
+  // even with an adjacent Agrar Road (matches the Agrar-only restriction above).
+  const state4 = setup();
+  const builder4 = clearRoadArea(state4, 0);
+  const cap4 = getPlayerCapital(state4, 0)!;
+  const roadPos4 = getValidRoadHexes(state4, builder4)[0]!;
+  buildRoad(state4, builder4.id, roadPos4);
+  const templeWarrior4 = state4.units.find(u => u.playerId === 1 && u.type === 'warrior')!;
+  const templeBaseSpeed4 = templeWarrior4.stats.speed;
+  templeWarrior4.pos = { ...cap4.pos };
+  check('a Temple unit standing on an (enemy) Agrar Capital with an adjacent Road gets no bonus',
+    getEffectiveSpeed(state4, templeWarrior4) === templeBaseSpeed4, `got ${getEffectiveSpeed(state4, templeWarrior4)}`);
+}
+
 // ── Pillage (§25; v14 — a real action, not automatic-on-move) ──
 console.log('\n=== Pillage (§25, v14) ===');
 {
