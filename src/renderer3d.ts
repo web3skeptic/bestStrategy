@@ -63,6 +63,8 @@ type StructFade = { parts: StructPart[]; fromFactor: number; toFactor: number; s
 // unit, so it needs no offset at all.
 function forwardOffset(type: string, faction?: FactionId | null): number {
   if (type === 'horserider' && faction === 'agrar') return 0;
+  // Nomads: every unit is mounted (see buildUnitModel), all -X-forward.
+  if (faction === 'temple' && type !== 'founder') return Math.PI / 2;
   return (type === 'horserider' || type === 'heavyknight') ? Math.PI / 2 : 0;
 }
 

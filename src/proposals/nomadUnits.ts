@@ -9,7 +9,7 @@
 //   Spearsman→ Lancer         long lance with a team pennant
 //   Raider   → Raider         dark fast horse, sabre + torch, saddlebags
 //   Mobile Siege → Siege Cart horse-drawn two-wheel cart carrying a ballista
-//   Champion → Khan's Guard   felt-barded warhorse, lamellar rider, fur hat, glaive, banner
+//   Champion → Warlord        felt-barded warhorse, lamellar rider, fur hat, glaive, banner
 //   Priest   → Shaman         antler staff, feathers, bone charms
 //   Chanter  → War Drummer    big war drum slung at the saddle
 //   Oracle   → Falconer       eagle perched on the gloved arm
@@ -162,7 +162,7 @@ export function buildSiegeCart(teamColor: number, face?: FaceStyle): THREE.Group
   return g;
 }
 
-export function buildKhansGuard(teamColor: number, face?: FaceStyle): THREE.Group {
+export function buildWarlord(teamColor: number, face?: FaceStyle): THREE.Group {
   const { g, r } = mountedBase(teamColor, 0x4a3628, true, face);
   // lamellar cuirass over the torso + pauldrons
   r.add(block(3.2, 2.2, 2.4, mat(STEEL_DK, 0.6), 0, 2.1, 0));
@@ -223,7 +223,7 @@ export const NOMAD_UNITS: NomadUnitProposal[] = [
   { type: 'spearsman', current: 'Spearsman', proposed: 'Lancer', blurb: 'A long lance held forward with a team pennant near the tip.', build: buildLancer },
   { type: 'horserider', current: 'Raider', proposed: 'Raider', blurb: 'Dark fast horse, sabre and a burning torch, saddlebags for the loot.', build: buildRaiderV2 },
   { type: 'catapult', current: 'Mobile Siege', proposed: 'Siege Cart', blurb: 'A horse-drawn two-wheel cart carrying a ballista, driver at the back.', build: buildSiegeCart },
-  { type: 'heavyknight', current: 'Champion', proposed: "Khan's Guard", blurb: 'Felt-barded warhorse, lamellar cuirass, fur hat, glaive and a back banner.', build: buildKhansGuard },
+  { type: 'heavyknight', current: 'Champion', proposed: "Warlord", blurb: 'Felt-barded warhorse, lamellar cuirass, fur hat, glaive and a back banner.', build: buildWarlord },
   { type: 'healer', current: 'Priest', proposed: 'Shaman', blurb: 'Antler staff, feathers in the headband, bone charms, on a pale horse.', build: buildShaman },
   { type: 'damageBooster', current: 'Chanter', proposed: 'War Drummer', blurb: 'A big war drum slung at the saddle, drumsticks raised.', build: buildWarDrummer },
   { type: 'rangeBooster', current: 'Oracle', proposed: 'Falconer', blurb: 'An eagle perched on the gloved arm — the tribe\'s eyes.', build: buildFalconer },

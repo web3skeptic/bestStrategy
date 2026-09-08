@@ -8,6 +8,10 @@ import { UnitType, FactionId } from './types';
 import { buildGuy, HairBuilder, FaceStyle } from './voxelWarrior';
 import { ponytailHeadband } from './proposals/hairStyles';
 import { sunny } from './proposals/faces';
+import {
+  buildSabreRider, buildHorseArcher, buildLancer, buildRaiderV2, buildSiegeCart,
+  buildWarlord, buildShaman, buildWarDrummer, buildFalconer,
+} from './proposals/nomadUnits';
 import { wideBrimHat } from './proposals/strawHats';
 import { buildHorseRider } from './voxelHorserider';
 import { buildHeavyKnight } from './voxelHeavyKnight';
@@ -66,9 +70,23 @@ function tribeLook(faction: FactionId | null | undefined): TribeLook {
 export function buildUnitModel(type: UnitType, color: number, faction?: FactionId | null, hairStyle?: HairBuilder, hairColor?: number, faceStyle?: FaceStyle): THREE.Group {
   const wrap = new THREE.Group();
   const look = tribeLook(faction);
+  const hairOverridden = hairStyle !== undefined;
   hairStyle = hairStyle ?? look.hairStyle;
   hairColor = hairColor ?? look.hairColor;
   faceStyle = faceStyle ?? look.faceStyle;
+
+  // Nomads: every unit is mounted (picked on /nomad-proposals) — the kit under
+  // src/proposals/nomadUnits.ts, all facing -X like buildHorseRider. Skipped
+  // only when a proposal page explicitly overrides the hair, so those pages
+  // keep showing the bare rig.
+  if (faction === 'temple' && !hairOverridden) {
+    const nomad: Partial<Record<UnitType, (c: number, f?: FaceStyle) => THREE.Group>> = {
+      warrior: buildSabreRider, archer: buildHorseArcher, spearsman: buildLancer, horserider: buildRaiderV2,
+      catapult: buildSiegeCart, heavyknight: buildWarlord, healer: buildShaman, damageBooster: buildWarDrummer, rangeBooster: buildFalconer,
+    };
+    const b = nomad[type];
+    if (b) { wrap.add(mounted(b(color, faceStyle))); return wrap; }
+  }
   switch (type) {
     case 'catapult': wrap.add(buildCannon(color)); break; // cannon, muzzle faces +Z
     case 'warrior': wrap.add(guy(color, buildSword(), 0.62, 2.2, 2.0, 0.4, undefined, hairStyle, hairColor, faceStyle)); break;
