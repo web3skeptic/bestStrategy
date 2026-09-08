@@ -23,6 +23,7 @@ export default defineConfig({
         hairProposals: resolve(__dirname, "hair-proposals.html"),
         hatProposals: resolve(__dirname, "hat-proposals.html"),
         faceProposals: resolve(__dirname, "face-proposals.html"),
+        nomadProposals: resolve(__dirname, "nomad-proposals.html"),
       },
     },
   },
