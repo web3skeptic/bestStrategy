@@ -746,7 +746,7 @@
     }
     #techTreeBtn:active { background: rgba(60,50,110,0.9); }
 
-    /* ── Tech tree overlay ── */
+    /* ── Tech tree overlay (lane × tier research graph) ── */
     .tech-overlay {
       position: absolute;
       inset: 0;
@@ -760,149 +760,138 @@
     .tech-overlay.hidden { display: none; }
     .tech-panel {
       position: relative;
-      /* chiselled-rock panel frame */
-      background: #41464f; /* flat stone frame */
-      border: 3px solid #11141c;
-      box-shadow:
-        inset 0 2px 0 rgba(160,175,200,0.32),
-        inset 0 -3px 8px rgba(0,0,0,0.55),
-        inset 0 0 0 2px rgba(42,46,54,0.7),
-        0 10px 30px rgba(0,0,0,0.6);
-      clip-path: polygon(
-        2% 0%, 98% 0%, 100% 3%, 100% 97%, 98% 100%,
-        2% 100%, 0% 97%, 0% 3%
-      );
-      max-width: 660px;
+      display: flex;
+      flex-direction: column;
       width: 95%;
+      max-width: 760px;
       max-height: 88vh;
-      overflow-y: auto;
-      padding: 20px;
+      overflow: hidden;            /* the graph scrolls inside; header + detail pane stay put */
+      padding: 18px 20px 16px;
+      border-radius: 14px;
+      color: #d6dbe6;
+      background: radial-gradient(120% 90% at 50% 0%, #1c2233 0%, #11141d 60%, #0b0d14 100%);
+      border: 1px solid #2b3446;
+      box-shadow: 0 18px 50px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.05);
     }
     .tech-header {
+      flex: 0 0 auto;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 18px;
-      padding-bottom: 14px;
-      border-bottom: 2px solid #11141c;
+      gap: 12px;
+      margin-bottom: 12px;
     }
     .tech-title {
-      font-size: 20px;
-      font-weight: 900;
-      letter-spacing: 0.5px;
-      /* warm gold display title to match the rock/gold accent */
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
       background: linear-gradient(180deg, #ffe9b0 0%, #e7c24a 60%, #c79a26 100%);
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
       color: #e7c24a;
-      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
     }
-    .tech-aura  {
-      font-size: 13px;
+    .tech-aura {
+      margin-left: auto;
       font-weight: 800;
-      color: #e7c24a;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+      font-size: 13px;
+      color: #ffd86a;
+      background: rgba(231,194,74,.12);
+      border: 1px solid rgba(231,194,74,.35);
+      border-radius: 999px;
+      padding: 4px 12px;
     }
     .tech-close {
       flex: 0 0 auto;
-      background: #565c67; /* flat stone */
-      border: 2px solid #11141c;
-      color: #e3e8f0;
-      font-size: 18px;
+      font-size: 16px;
       line-height: 1;
       cursor: pointer;
-      padding: 5px 11px;
-      box-shadow:
-        inset 0 1px 0 rgba(160,175,200,0.32),
-        inset 0 -2px 4px rgba(0,0,0,0.55);
-      clip-path: polygon(15% 0%, 85% 0%, 100% 28%, 100% 72%, 85% 100%, 15% 100%, 0% 72%, 0% 28%);
+      padding: 6px 11px;
     }
-    .tech-close:active { transform: translateY(1px); }
-    .tech-section { margin-bottom: 18px; }
-    .tech-section-title {
-      font-size: 11px;
-      font-weight: 800;
-      color: #aab4c6;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      margin-bottom: 6px;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    #techBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .tt-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 2px; }
+    .tt-slot {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      font-size: 12px; color: #aab4c6;
+      background: rgba(255,255,255,.03); border: 1px solid #263044; border-radius: 10px;
+      padding: 8px 12px; margin-bottom: 14px;
     }
-    .tech-branch-label {
-      font-size: 11px;
-      font-weight: 700;
-      color: #e7c24a;
-      margin-bottom: 8px;
+    .tt-slot b { color: #e7c24a; }
+    .tt-slot .bar { flex: 1 1 80px; height: 6px; border-radius: 3px; background: #1f2533; overflow: hidden; }
+    .tt-slot .bar i { display: block; height: 100%; background: linear-gradient(90deg, #c79a26, #ffd86a); }
+    .tt-slot.idle b { color: #7fd6ff; }
+    .tt-slot.idle .bar i { background: #5fd0ff; opacity: .45; }
+    .tt-graph { position: relative; display: grid; grid-template-columns: 96px repeat(3, minmax(0, 1fr)); column-gap: 18px; row-gap: 14px; padding-bottom: 4px; }
+    .tt-tiers, .tt-lane { display: contents; }
+    .tt-tier { font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #6f7a90; text-align: center; padding-bottom: 4px; border-bottom: 1px dashed #263044; }
+    .tt-lane-label { align-self: center; font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #aab4c6; padding-right: 6px; line-height: 1.3; }
+    .tt-lane-label small { display: block; font-size: 9px; font-weight: 600; letter-spacing: .4px; color: #e7c24a; text-transform: none; }
+    .tt-cell { display: flex; flex-direction: column; gap: 8px; justify-content: center; min-height: 64px; min-width: 0; }
+    .tt-cell.pick { position: relative; padding: 6px; border: 1px dashed rgba(231,194,74,.35); border-radius: 12px; }
+    .tt-cell.pick::before { content: 'choose one'; position: absolute; top: -8px; left: 10px; font-size: 9px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #e7c24a; background: #11141d; padding: 0 6px; }
+    .tt-cell.pick.locked-branch::before { content: 'choice made'; color: #33e0a0; }
+    .tt-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .tt-node {
+      position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+      padding: 7px 10px 7px 7px; border-radius: 12px; cursor: pointer; outline: none;
+      background: linear-gradient(180deg, #1d2432, #151a25); border: 1px solid #2b3446;
+      transition: transform .1s, box-shadow .15s, border-color .15s;
     }
-    .tech-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
-    .tech-node {
-      flex: 1;
-      min-width: 140px;
-      max-width: 200px;
-      padding: 10px 12px;
-      /* chiselled rock chip */
-      border: 2px solid #11141c;
-      background: #4b515c; /* flat stone chip */
-      box-shadow:
-        inset 0 1px 0 rgba(160,175,200,0.30),
-        inset 0 -2px 5px rgba(0,0,0,0.55);
-      clip-path: polygon(6% 0%, 94% 0%, 100% 14%, 100% 86%, 94% 100%, 6% 100%, 0% 86%, 0% 14%);
-      cursor: pointer;
-      transition: filter 0.12s, transform 0.08s;
+    .tt-node:hover, .tt-node:focus-visible { transform: translateY(-1px); border-color: #4a5a78; }
+    .tt-node.sel { border-color: #5fd0ff; box-shadow: 0 0 0 2px rgba(95,208,255,.25); }
+    .tt-med { position: relative; flex: 0 0 auto; width: 46px; height: 46px; border-radius: 50%; background: #0e1119; display: grid; place-items: center; }
+    .tt-med img { width: 44px; height: 44px; object-fit: contain; }
+    .tt-med span { font-size: 20px; }
+    .tt-ring { position: absolute; inset: -3px; border-radius: 50%; border: 3px solid #333c4e; pointer-events: none; }
+    .tt-txt { min-width: 0; }
+    .tt-name { font-size: 12.5px; font-weight: 800; color: #eef2f8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tt-meta { display: flex; gap: 6px; margin-top: 3px; font-size: 10px; font-weight: 700; }
+    .tt-cost { color: #ffd86a; }
+    .tt-time { color: #8b94a4; }
+    .tt-badge { position: absolute; top: -7px; right: -6px; font-size: 10px; font-weight: 900; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; border: 2px solid #11141d; }
+    .tt-node.available .tt-ring { border-color: #5fd0ff; box-shadow: 0 0 10px rgba(95,208,255,.45); }
+    .tt-node.available { border-color: #2f5670; }
+    .tt-node.researched .tt-ring { border-color: #33e0a0; }
+    .tt-node.researched { background: linear-gradient(180deg, #183a33, #12281f); border-color: #245a48; }
+    .tt-node.researched .tt-badge { background: #33e0a0; color: #062; }
+    .tt-node.researching .tt-ring {
+      border-color: transparent;
+      background: conic-gradient(#ffd86a var(--p, 0%), #3a3020 0);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
     }
-    .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched):not(.tech-node--researching) {
-      filter: brightness(1.18);
+    .tt-node.researching { background: linear-gradient(180deg, #3a3120, #2a2417); border-color: #6a5626; box-shadow: 0 0 12px rgba(231,194,74,.25); }
+    .tt-node.researching .tt-badge { background: #ffd86a; color: #4a3300; }
+    .tt-node.locked { opacity: .45; filter: saturate(.4); }
+    .tt-node.locked .tt-badge { background: #2a3040; color: #8b94a4; }
+    .tt-node.poor .tt-cost { color: #ff8a5a; }
+    .tt-node.poor .tt-ring { border-color: #7a4a2a; }
+    /* detail pane — flex sibling of the scroll area, so it is always visible at the panel bottom */
+    .tt-detail {
+      flex: 0 0 auto;
+      display: flex; gap: 14px; align-items: center;
+      margin-top: 12px; padding: 12px 14px; border-radius: 12px;
+      background: rgba(255,255,255,.04); border: 1px solid #2b3446;
+      box-shadow: 0 -8px 20px rgba(0,0,0,.35);
+      min-height: 72px;
     }
-    .tech-node:active:not(.tech-node--locked):not(.tech-node--researched):not(.tech-node--researching) {
-      transform: translateY(1px);
+    .tt-detail .tt-med { width: 56px; height: 56px; }
+    .tt-detail .tt-med img { width: 54px; height: 54px; }
+    .tt-detail-txt { flex: 1 1 0; min-width: 0; }
+    .tt-detail h4 { margin: 0 0 2px; font-size: 14px; color: #eef2f8; }
+    .tt-detail h4 span { font-weight: 600; color: #8b94a4; font-size: 11px; }
+    .tt-detail p { margin: 0; font-size: 12px; color: #c2c8d4; line-height: 1.4; }
+    .tt-detail .req { font-size: 11px; color: #8b94a4; margin-top: 3px; }
+    .tt-detail .req b { color: #33e0a0; font-weight: 700; }
+    .tt-detail .req s { text-decoration: none; opacity: .8; }
+    .tt-btn {
+      flex: 0 0 auto; padding: 9px 18px; border-radius: 10px;
+      font-weight: 800; font-size: 13px; cursor: pointer;
+      border: 1px solid #3fa7d6; color: #062f45;
+      background: linear-gradient(180deg, #8fe0ff, #3fb7ea);
+      box-shadow: 0 4px 12px rgba(95,208,255,.25);
     }
-    .tech-node--researched {
-      /* teal gem aura — researched/owned */
-      border-color: #11141c;
-      background:
-        linear-gradient(180deg, rgba(95,208,255,0.18) 0%, rgba(0,0,0,0) 30%),
-        linear-gradient(180deg, #2f5a4e 0%, #234a42 55%, #1b3a34 100%);
-      box-shadow:
-        inset 0 1px 0 rgba(95,208,255,0.32),
-        inset 0 -2px 5px rgba(0,0,0,0.5),
-        0 0 8px rgba(51,224,160,0.3);
-      cursor: default;
-    }
-    .tech-node--locked { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
-    .tech-node--poor   {
-      cursor: not-allowed;
-      filter: saturate(0.7) brightness(0.85);
-    }
-    .tech-node--researching {
-      /* amber pulse — actively being researched, mid-flight */
-      border-color: #11141c;
-      background:
-        linear-gradient(180deg, rgba(231,194,74,0.22) 0%, rgba(0,0,0,0) 30%),
-        linear-gradient(180deg, #5a4e2f 0%, #4a4223 55%, #3a3020 100%);
-      box-shadow:
-        inset 0 1px 0 rgba(231,194,74,0.32),
-        inset 0 -2px 5px rgba(0,0,0,0.5),
-        0 0 8px rgba(231,194,74,0.35);
-      cursor: default;
-    }
-    .tech-node-art {
-      display: block; width: 100%; height: 72px; object-fit: contain;
-      margin: -2px auto 7px;
-      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55));
-    }
-    .tech-node--researched .tech-node-art { opacity: 0.92; }
-    .tech-node-name  { font-size: 13px; font-weight: 800; color: #f0f3f8; margin-bottom: 3px; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
-    .tech-node-cost  { font-size: 11px; color: #e7c24a; margin-bottom: 4px; }
-    .tech-node-prereq { font-size: 10px; color: #8b94a4; margin-bottom: 4px; font-style: italic; }
-    .tech-node-desc  { font-size: 10px; color: #c2c8d4; line-height: 1.4; }
-    .tech-node-status { font-size: 11px; font-weight: 800; margin-top: 6px; }
-    .status-researched  { color: #33e0a0; }
-    .status-available   { color: #5fd0ff; }
-    .status-locked      { color: #8b94a4; }
-    .status-poor        { color: #e08a4a; }
-    .status-researching { color: #e7c24a; }
+    .tt-btn:active { transform: translateY(1px); }
+    .tt-btn[disabled] { background: #232a38; color: #7a8598; border-color: #2b3446; box-shadow: none; cursor: not-allowed; transform: none; }
 
     /* ── Build Teleport button ── */
     #teleportBtn {
@@ -1355,7 +1344,7 @@
         max-width: 96vw;
         max-height: 90vh;
       }
-      .tech-node { min-width: 132px; }
+      .tt-graph { column-gap: 12px; grid-template-columns: 84px repeat(3, minmax(0, 1fr)); }
     }
 
     /* ── Phones (≤480px) ── */
@@ -1392,13 +1381,29 @@
       }
       .tech-header { margin-bottom: 14px; }
       .tech-title, .settings-title { font-size: 18px; }
-      /* tech nodes go full-width and stack so they're tappable */
-      .tech-node {
-        flex: 1 1 100%;
-        min-width: 0;
-        max-width: none;
-        padding: 12px 14px;
-      }
+      /* research graph: lane label becomes a row header, three narrow tier
+         columns, medallion stacked over the name; detail pane stays pinned */
+      .tech-panel { padding: 12px 10px calc(env(safe-area-inset-bottom, 0px) + 10px); }
+      .tt-graph { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 10px; row-gap: 8px; }
+      .tt-tiers > div:first-child { display: none; }
+      .tt-tier { font-size: 9px; letter-spacing: .8px; }
+      .tt-lane-label { grid-column: 1 / -1; padding: 8px 2px 0; font-size: 10px; }
+      .tt-lane-label small { display: none; }
+      .tt-cell { min-height: 0; gap: 6px; }
+      .tt-cell.pick { padding: 8px 4px 4px; }
+      .tt-cell.pick::before { left: 6px; }
+      .tt-node { flex-direction: column; align-items: stretch; gap: 5px; padding: 8px 6px 6px; text-align: center; border-radius: 10px; }
+      .tt-med { width: 38px; height: 38px; margin: 0 auto; }
+      .tt-med img { width: 36px; height: 36px; }
+      .tt-med span { font-size: 17px; }
+      .tt-name { font-size: 11px; white-space: normal; line-height: 1.15; }
+      .tt-meta { justify-content: center; gap: 5px; font-size: 9.5px; }
+      .tt-slot { font-size: 11px; padding: 7px 9px; }
+      .tt-slot .bar { flex-basis: 100%; }
+      .tt-detail { flex-wrap: wrap; gap: 10px; padding: 10px; margin-top: 8px; }
+      .tt-detail .tt-med { width: 44px; height: 44px; }
+      .tt-detail .tt-med img { width: 42px; height: 42px; }
+      .tt-btn { flex-basis: 100%; }
 
       /* Unit-card tray: shrink + horizontal scroll, stay centred.
          Stats removed → bigger picture, slightly tighter cards. */
@@ -1606,7 +1611,7 @@
     <div class="tech-overlay hidden" id="techOverlay">
       <div class="tech-panel">
         <div class="tech-header">
-          <div class="tech-title">🔬 Research</div>
+          <div class="tech-title">Research</div>
           <div class="tech-aura" id="techAuraInfo"></div>
           <button class="tech-close" id="techCloseBtn">✕</button>
         </div>

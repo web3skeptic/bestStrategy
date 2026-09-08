@@ -2246,54 +2246,57 @@ settingsResetBtn.addEventListener('click', () => {
 
 // ── Tech tree UI ──
 
-const BRANCH_META: Record<string, { title: string }> = {
-  movement:        { title: 'Branch: Movement — Pick ONE' },
-  stat_bonus:      { title: 'Branch: Stat Bonus — Pick ONE' },
-  support:         { title: 'Branch: Support Unit — Pick ONE' },
+// ── Research panel (lane × tier graph) ───────────────────────────────────────
+//
+// Lanes: Siege, Heavy Unit, Command (linear), Stat Bonus + Support (pick-one
+// branches). Tiers by prerequisite count: 0 = Foundation, 1 = Advanced,
+// 2 = Elite. Prerequisites are drawn as connectors in an SVG overlay; nodes
+// are compact medallions and the ONE detail pane pinned to the bottom of the
+// panel carries the description, prerequisite checklist and the Research
+// button — the node itself is never the buy button any more.
 
+type TechStatus = 'researching' | 'researched' | 'slot' | 'locked' | 'branch' | 'command2' | 'poor' | 'available';
+interface TechLane { title: string; branch?: string; nodes: typeof TECH_NODES; }
+
+// Mirrors game.ts's COMMAND_2_MIN_OTHER_TECHS (not exported — canResearch is
+// the source of truth for the actual gate), purely for the disabled-reason
+// text and the prerequisite checklist.
+const COMMAND_2_MIN_OTHER_TECHS_UI = 2;
+
+// Glyphs for techs that don't unlock a unit (no thumbnail to show).
+const TECH_GLYPH: Partial<Record<TechId, string>> = {
+  command_1: '⚑', command_2: '⚑', agrar_heavy_armor: '🛡', temple_warrior_rite: '🔥',
+  agrar_siegecraft_splash: '💥', temple_mobile_siege_splash: '💥', longrange_hp: '🏹', horse_sight: '👁',
 };
 
-function renderTechTree(): void {
-  const player = getCurrentPlayer(state);
-  const tech = state.playerTech[player.id]!;
-  techAuraInfo.textContent = `⚡ ${player.aura} aura`;
+let selectedTechId: TechId | null = null;
+let techStatusMap: Map<TechId, TechStatus> = new Map();
 
-  techBody.innerHTML = '';
+function techLanes(faction: FactionId | null): TechLane[] {
+  const own = (n: typeof TECH_NODES[number]) => !n.faction || n.faction === faction;
+  const pick = (...ids: string[]) => TECH_NODES.filter(n => own(n) && ids.includes(n.id));
+  return [
+    { title: 'Siege', nodes: pick('agrar_siegecraft', 'agrar_siegecraft_splash', 'temple_mobile_siege_tech', 'temple_mobile_siege_splash') },
+    { title: 'Heavy Unit', nodes: pick('agrar_heavy_armor', 'agrar_heavy_knight_tech', 'temple_warrior_rite', 'temple_champion_rite') },
+    { title: 'Command', nodes: pick('command_1', 'command_2') },
+    { title: 'Stat bonus', branch: 'stat_bonus', nodes: TECH_NODES.filter(n => n.branch === 'stat_bonus') },
+    { title: 'Support', branch: 'support', nodes: TECH_NODES.filter(n => n.branch === 'support') },
+  ];
+}
 
-  // Tech-tree pacing pass — exactly one active research slot per player; show
-  // it up top so it's obvious why every other card is disabled while it's busy.
-  if (tech.researching) {
-    const node = TECH_NODES.find(n => n.id === tech.researching!.techId)!;
-    const remaining = Math.max(1, tech.researching.completesRound - state.turnNumber);
-    const banner = document.createElement('div');
-    banner.className = 'tech-branch-label';
-    banner.textContent = `⏳ Researching ${node.name} — ${remaining} round${remaining === 1 ? '' : 's'} remaining`;
-    techBody.appendChild(banner);
-  }
-
-  // Phase 11 §33-34 — Siege and Heavy-unit lines are faction-specific, each
-  // a real 2-step prerequisite chain now (not a flat unlock). Only the
-  // current player's own faction variant is ever shown — see node.faction.
-  const own = (n: typeof TECH_NODES[number]) => !n.faction || n.faction === player.faction;
-
-  const siegeNodes = TECH_NODES.filter(n => own(n) && (n.id === 'agrar_siegecraft' || n.id === 'agrar_siegecraft_splash' || n.id === 'temple_mobile_siege_tech' || n.id === 'temple_mobile_siege_splash'));
-  appendSection(techBody, 'Siege', undefined, siegeNodes, tech, player.aura, player.color);
-
-  const heavyNodes = TECH_NODES.filter(n => own(n) && (n.id === 'agrar_heavy_armor' || n.id === 'agrar_heavy_knight_tech' || n.id === 'temple_warrior_rite' || n.id === 'temple_champion_rite'));
-  appendSection(techBody, 'Heavy Unit', undefined, heavyNodes, tech, player.aura, player.color);
-
-  // Command — linear (not a branch pick-one); prereqs alone keep II gated
-  // behind I. Also the prereq for each faction's Heavy-unit tier 2 above.
-  const commandNodes = TECH_NODES.filter(n => n.id === 'command_1' || n.id === 'command_2');
-  appendSection(techBody, 'Command', undefined, commandNodes, tech, player.aura, player.color);
-
-  // Branches — shared by both factions.
-  const branches = ['stat_bonus', 'support'];
-  for (const branch of branches) {
-    const nodes = TECH_NODES.filter(n => n.branch === branch);
-    const meta = BRANCH_META[branch]!;
-    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color);
-  }
+function techStatus(node: typeof TECH_NODES[number], tech: PlayerTech, aura: number, lane: typeof TECH_NODES): TechStatus {
+  if (tech.researching?.techId === node.id) return 'researching';
+  if (tech.researched.has(node.id)) return 'researched';
+  if (tech.researching) return 'slot';
+  const prereqsMet = node.prereqs.every(p => tech.researched.has(p));
+  const branchBlocked = !!node.branch && lane.some(n => n.id !== node.id && tech.researched.has(n.id));
+  const command2Blocked = node.id === 'command_2' && prereqsMet &&
+    [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length < COMMAND_2_MIN_OTHER_TECHS_UI;
+  if (branchBlocked) return 'branch';
+  if (command2Blocked) return 'command2';
+  if (!prereqsMet) return 'locked';
+  if (aura < node.cost) return 'poor';
+  return 'available';
 }
 
 // The art a tech card "stands for": the unlocked unit, or the Catapult/Mobile
@@ -2305,144 +2308,181 @@ function techNodeArt(node: typeof TECH_NODES[number], color: string): string | n
   return null;
 }
 
-// Mirrors game.ts's COMMAND_2_MIN_OTHER_TECHS (not exported — canResearch is
-// the source of truth for the actual gate), purely for the disabled-reason
-// text below.
-const COMMAND_2_MIN_OTHER_TECHS_UI = 2;
-
-function appendSection(
-  container: HTMLElement,
-  title: string,
-  branch: string | undefined,
-  nodes: typeof TECH_NODES,
-  tech: PlayerTech,
-  aura: number,
-  playerColor: string,
-): void {
-  if (nodes.length === 0) return;
-
-  const section = document.createElement('div');
-  section.className = 'tech-section';
-
-  const titleEl = document.createElement('div');
-  titleEl.className = 'tech-section-title';
-  titleEl.textContent = title;
-  section.appendChild(titleEl);
-
-  if (branch) {
-    const branchHasPick = nodes.some(n => tech.researched.has(n.id));
-    if (branchHasPick) {
-      const label = document.createElement('div');
-      label.className = 'tech-branch-label';
-      label.textContent = '✓ Choice made — branch locked';
-      section.appendChild(label);
-    }
-  }
-
-  const nodesRow = document.createElement('div');
-  nodesRow.className = 'tech-nodes';
-
-  for (const node of nodes) {
-    const prereqsMet = node.prereqs.every(p => tech.researched.has(p));
-    const branchBlocked = !!node.branch && nodes.some(n => n.id !== node.id && tech.researched.has(n.id));
-    const isResearched = tech.researched.has(node.id);
-    const isResearching = tech.researching?.techId === node.id;
-    const slotBusy = !!tech.researching && !isResearching;
-    // Command II's "at least COMMAND_2_MIN_OTHER_TECHS other completed
-    // technologies" rule lives in canResearch (game.ts) and isn't exposed via
-    // `prereqs` — mirrored here just for the disabled-reason text.
-    const command2Blocked = node.id === 'command_2' && prereqsMet &&
-      [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length < COMMAND_2_MIN_OTHER_TECHS_UI;
-    const canAffordIt = aura >= node.cost;
-    const researchable = !isResearched && canResearch(state, node.id);
-
-    let stateClass = '';
-    let statusText = '';
-    let statusClass = '';
-    if (isResearching) {
-      const remaining = Math.max(1, tech.researching!.completesRound - state.turnNumber);
-      stateClass = 'tech-node--researching';
-      statusText = `⏳ ${remaining} round${remaining === 1 ? '' : 's'} left`;
-      statusClass = 'status-researching';
-    } else if (isResearched) {
-      stateClass = 'tech-node--researched';
-      statusText = '✓ Researched';
-      statusClass = 'status-researched';
-    } else if (slotBusy) {
-      stateClass = 'tech-node--locked';
-      statusText = 'Research slot occupied';
-      statusClass = 'status-locked';
-    } else if (!prereqsMet || branchBlocked || command2Blocked) {
-      stateClass = 'tech-node--locked';
-      statusText = branchBlocked ? '✗ Branch taken' : command2Blocked ? '✗ Needs 2 other completed techs' : '✗ Requires prerequisite';
-      statusClass = 'status-locked';
-    } else if (!canAffordIt) {
-      stateClass = 'tech-node--poor';
-      statusText = `Need ${node.cost} ⚡`;
-      statusClass = 'status-poor';
-    } else {
-      statusText = `Available`;
-      statusClass = 'status-available';
-    }
-
-    const artUrl = techNodeArt(node, playerColor);
-    const artHtml = artUrl
-      ? `<img class="tech-node-art" src="${artUrl}" alt="${node.name}" draggable="false">`
-      : '';
-
-    const prereqNames = node.prereqs.map(p => TECH_NODES.find(n => n.id === p)?.name ?? p).join(', ');
-    const prereqHtml = prereqNames ? `<div class="tech-node-prereq">Requires: ${prereqNames}</div>` : '';
-
-    const card = document.createElement('div');
-    card.className = `tech-node ${stateClass}`;
-    card.innerHTML = `
-      ${artHtml}
-      <div class="tech-node-name">${node.name}</div>
-      <div class="tech-node-cost">Cost: ${node.cost} ⚡ · ${node.researchTime} round${node.researchTime === 1 ? '' : 's'}</div>
-      ${prereqHtml}
-      <div class="tech-node-desc">${node.description}</div>
-      <div class="tech-node-status ${statusClass}">${statusText}</div>
-    `;
-
-    if (researchable && localHasTurn()) {
-      card.addEventListener('click', () => {
-        if (!localHasTurn()) return; // view-only on an opponent's turn (server rejects too)
-        const applyLocal = (): void => {
-          if (researchTech(state, node.id)) {
-            logCombat(`Started research: ${node.name} (−${node.cost} ⚡, ${node.researchTime} round${node.researchTime === 1 ? '' : 's'})`);
-            renderTechTree();
-          }
-        };
-        if (multiplayerMode && mpClient) {
-          // Optimistic: apply the purchase locally for instant feedback (aura
-          // pill drops, unit unlocks appear) instead of waiting for the server
-          // round-trip. Snapshot first so a (rare) server rejection can roll it
-          // back; the authoritative state_update otherwise reconciles it.
-          researchRollback = serialize(state);
-          applyLocal();
-          render();                       // reflect deducted aura / unlocks now
-          mpClient.sendAction({ type: 'action_research', techId: node.id });
-        } else {
-          applyLocal();
-          render();
-        }
-      });
-    }
-
-    nodesRow.appendChild(card);
-  }
-
-  section.appendChild(nodesRow);
-  container.appendChild(section);
+function techMedallion(node: typeof TECH_NODES[number], color: string): string {
+  const art = techNodeArt(node, color);
+  return art ? `<img src="${art}" alt="" draggable="false">` : `<span>${TECH_GLYPH[node.id] ?? '✦'}</span>`;
 }
+
+const techName = (id: TechId): string => TECH_NODES.find(n => n.id === id)?.name ?? id;
+const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+function renderTechTree(): void {
+  const player = getCurrentPlayer(state);
+  const tech = state.playerTech[player.id]!;
+  techAuraInfo.textContent = `⚡ ${player.aura} aura`;
+
+  const lanes = techLanes(player.faction);
+  techStatusMap = new Map();
+  for (const lane of lanes) for (const n of lane.nodes) techStatusMap.set(n.id, techStatus(n, tech, player.aura, lane.nodes));
+  if (!selectedTechId || !techStatusMap.has(selectedTechId)) {
+    selectedTechId = tech.researching?.techId
+      ?? [...techStatusMap.entries()].find(([, st]) => st === 'available')?.[0]
+      ?? lanes[0]!.nodes[0]!.id;
+  }
+  const remaining = tech.researching ? Math.max(1, tech.researching.completesRound - state.turnNumber) : 0;
+
+  // one research slot — status bar up top
+  let slot: string;
+  if (tech.researching) {
+    const n = TECH_NODES.find(x => x.id === tech.researching!.techId)!;
+    const pct = Math.round(((n.researchTime - remaining) / n.researchTime) * 100);
+    slot = `<div class="tt-slot">Research slot: <b>${n.name}</b> · ${remaining} round${remaining === 1 ? '' : 's'} left <div class="bar"><i style="width:${Math.max(8, pct)}%"></i></div></div>`;
+  } else {
+    slot = `<div class="tt-slot idle">Research slot: <b>idle</b> — pick a glowing node <div class="bar"><i style="width:100%"></i></div></div>`;
+  }
+
+  // lane × tier grid
+  let grid = `<div class="tt-tiers"><div></div><div class="tt-tier">Foundation</div><div class="tt-tier">Advanced</div><div class="tt-tier">Elite</div></div>`;
+  for (const lane of lanes) {
+    grid += `<div class="tt-lane"><div class="tt-lane-label">${lane.title}${lane.branch ? '<small>pick one</small>' : ''}</div>`;
+    for (let tier = 0; tier < 3; tier++) {
+      const cell = lane.nodes.filter(n => n.prereqs.length === tier);
+      const isPick = !!lane.branch && tier === 0;
+      const made = isPick && lane.nodes.some(n => tech.researched.has(n.id));
+      grid += `<div class="tt-cell${isPick ? ' pick' : ''}${made ? ' locked-branch' : ''}">`;
+      for (const n of cell) {
+        const st = techStatusMap.get(n.id)!;
+        const cls = st === 'researching' || st === 'researched' || st === 'available' || st === 'poor' ? st : 'locked';
+        const badge = st === 'researched' ? '✓' : st === 'researching' ? String(remaining) : cls === 'locked' ? '🔒' : '';
+        const prog = st === 'researching' ? ` style="--p:${Math.round(((n.researchTime - remaining) / n.researchTime) * 100)}%"` : '';
+        grid += `<div class="tt-node ${cls}${selectedTechId === n.id ? ' sel' : ''}" data-id="${n.id}" role="button" tabindex="0">
+          <div class="tt-med">${techMedallion(n, player.color)}<div class="tt-ring"${prog}></div>${badge ? `<div class="tt-badge">${badge}</div>` : ''}</div>
+          <div class="tt-txt"><div class="tt-name">${n.name}</div><div class="tt-meta"><span class="tt-cost">${n.cost} ⚡</span><span class="tt-time">${n.researchTime} rd</span></div></div>
+        </div>`;
+      }
+      grid += `</div>`;
+    }
+    grid += `</div>`;
+  }
+
+  // detail pane (pinned to the panel bottom — always visible, never scrolls away)
+  const sel = TECH_NODES.find(n => n.id === selectedTechId)!;
+  const selStatus = techStatusMap.get(sel.id)!;
+  const reqs = sel.prereqs.map(p => `${tech.researched.has(p) ? '<b>✓</b>' : '<s>✗</s>'} ${techName(p)}`);
+  if (sel.id === 'command_2') {
+    const others = [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length;
+    reqs.push(`${others >= COMMAND_2_MIN_OTHER_TECHS_UI ? '<b>✓</b>' : '<s>✗</s>'} any ${COMMAND_2_MIN_OTHER_TECHS_UI} other techs`);
+  }
+  const researchable = selStatus === 'available' && canResearch(state, sel.id);
+  const myTurn = localHasTurn();
+  const btnText =
+    selStatus === 'researched' ? '✓ Researched'
+    : selStatus === 'researching' ? `⏳ ${remaining} round${remaining === 1 ? '' : 's'} left`
+    : selStatus === 'slot' ? 'Research slot busy'
+    : selStatus === 'poor' ? `Need ${sel.cost} ⚡`
+    : selStatus === 'branch' ? 'Branch already chosen'
+    : selStatus === 'command2' ? `Needs ${COMMAND_2_MIN_OTHER_TECHS_UI} other techs`
+    : selStatus === 'locked' ? 'Prerequisite missing'
+    : !myTurn ? 'Not your turn'
+    : `Research · ${sel.cost} ⚡`;
+  const detail = `<div class="tt-detail">
+    <div class="tt-med">${techMedallion(sel, player.color)}</div>
+    <div class="tt-detail-txt"><h4>${sel.name} <span>· ${sel.cost} ⚡ · ${sel.researchTime} round${sel.researchTime === 1 ? '' : 's'}</span></h4>
+      <p>${escapeHtml(sel.description)}</p>${reqs.length ? `<div class="req">Requires: ${reqs.join(' &nbsp;·&nbsp; ')}</div>` : ''}</div>
+    <button class="tt-btn" id="techResearchBtn" ${researchable && myTurn ? '' : 'disabled'}>${btnText}</button>
+  </div>`;
+
+  techBody.innerHTML = `<div class="tt-scroll">${slot}<div class="tt-graph"><svg class="tt-svg"></svg>${grid}</div></div>${detail}`;
+
+  techBody.querySelectorAll<HTMLElement>('.tt-node').forEach(el => {
+    const pickIt = (): void => { selectedTechId = el.dataset.id as TechId; renderTechTree(); };
+    el.addEventListener('click', pickIt);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickIt(); } });
+  });
+
+  const btn = document.getElementById('techResearchBtn') as HTMLButtonElement | null;
+  if (btn && researchable && myTurn) {
+    btn.addEventListener('click', () => {
+      if (!localHasTurn()) return; // view-only on an opponent's turn (server rejects too)
+      const node = sel;
+      const applyLocal = (): void => {
+        if (researchTech(state, node.id)) {
+          logCombat(`Started research: ${node.name} (−${node.cost} ⚡, ${node.researchTime} round${node.researchTime === 1 ? '' : 's'})`);
+          renderTechTree();
+        }
+      };
+      if (multiplayerMode && mpClient) {
+        // Optimistic: apply the purchase locally for instant feedback (aura
+        // pill drops, unit unlocks appear) instead of waiting for the server
+        // round-trip. Snapshot first so a (rare) server rejection can roll it
+        // back; the authoritative state_update otherwise reconciles it.
+        researchRollback = serialize(state);
+        applyLocal();
+        render();                       // reflect deducted aura / unlocks now
+        mpClient.sendAction({ type: 'action_research', techId: node.id });
+      } else {
+        applyLocal();
+        render();
+      }
+    });
+  }
+
+  requestAnimationFrame(drawTechLinks);
+}
+
+// Prerequisite connectors. Orthogonal routing: leave the prereq's right edge,
+// run to the gutter between its column and the next, climb/drop vertically in
+// that gutter, then run horizontally into the target's left edge. Vertical
+// travel only ever happens in a gutter, so a line never crosses another node.
+function drawTechLinks(): void {
+  const graph = techBody.querySelector<HTMLElement>('.tt-graph');
+  const svg = graph?.querySelector<SVGSVGElement>('.tt-svg');
+  if (!graph || !svg || techOverlay.classList.contains('hidden')) return;
+  const gb = graph.getBoundingClientRect();
+  if (gb.width === 0) return;
+  const nodeEl = (id: string) => graph.querySelector<HTMLElement>(`[data-id="${id}"]`);
+  const tiers = Array.from(graph.querySelectorAll<HTMLElement>('.tt-tier')).map(t => t.getBoundingClientRect());
+  const gutterAfter = (colRight: number): number => {
+    const next = tiers.find(t => t.left - gb.left > colRight + 1);
+    return next ? (colRight + (next.left - gb.left)) / 2 : colRight + 10;
+  };
+  const r = 6;
+  let d = '';
+  for (const [id] of techStatusMap) {
+    const n = TECH_NODES.find(x => x.id === id)!;
+    const to = nodeEl(id)?.getBoundingClientRect(); if (!to) continue;
+    n.prereqs.forEach((p, i) => {
+      const from = nodeEl(p)?.getBoundingClientRect(); if (!from) return;
+      const x1 = from.right - gb.left, y1 = from.top + from.height / 2 - gb.top;
+      const x2 = to.left - gb.left, y2 = to.top + to.height / 2 - gb.top;
+      const done = techStatusMap.get(p) === 'researched';
+      const col = done ? '#33e0a0' : '#4a5670';
+      const straight = Math.abs(y1 - y2) < 2;
+      const yIn = straight || n.prereqs.length < 2 ? y2 : y2 + (i - (n.prereqs.length - 1) / 2) * 8;
+      let path: string;
+      if (straight) path = `M${x1},${y1} L${x2},${yIn}`;
+      else {
+        const gx = gutterAfter(from.right - gb.left);
+        const dir = yIn > y1 ? 1 : -1;
+        path = `M${x1},${y1} L${gx - r},${y1} Q${gx},${y1} ${gx},${y1 + dir * r} L${gx},${yIn - dir * r} Q${gx},${yIn} ${gx + r},${yIn} L${x2},${yIn}`;
+      }
+      d += `<path d="${path}" fill="none" stroke="${col}" stroke-width="2" ${done ? '' : 'stroke-dasharray="5 4"'} stroke-linecap="round" opacity=".95"/>`;
+      d += `<circle cx="${x1}" cy="${y1}" r="3" fill="${col}"/><circle cx="${x2}" cy="${yIn}" r="3" fill="${col}"/>`;
+    });
+  }
+  svg.innerHTML = d;
+}
+// Connectors are position-derived, so redraw whenever the panel reflows
+// (orientation change, keyboard, column collapse on phones).
+new ResizeObserver(() => drawTechLinks()).observe(techBody);
 
 function openTechTree(): void {
   if (!gameStarted) return;
   if (spectatorMode) return;
   // The tech tree stays openable and browsable even when it's NOT your turn
   // (view-only) — buying a tech is gated to your own turn in renderTechTree.
+  techOverlay.classList.remove('hidden'); // unhide first — connector geometry needs real layout
   renderTechTree();
-  techOverlay.classList.remove('hidden');
   renderer.clearCameraKeys();
 }
 
