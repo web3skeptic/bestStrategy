@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Capital cities — faction proposals</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #12131a; overflow: hidden; }
+      #c { display: block; width: 100vw; height: 100vh; }
+      #hud {
+        position: fixed; top: 12px; left: 14px; z-index: 10; max-width: 440px;
+        font: 13px/1.45 -apple-system, system-ui, sans-serif; color: #cfd3de;
+        background: rgba(18, 19, 26, 0.8); padding: 10px 14px; border-radius: 10px;
+        user-select: none;
+      }
+      #hud h1 { font-size: 15px; margin: 0 0 6px; color: #ffd27a; }
+      #hud p { margin: 4px 0; }
+      #hud b { color: #eef; }
+      #hud .nomad { color: #e0a060; font-weight: 600; } #hud .farmer { color: #80d8a0; font-weight: 600; }
+      #hud .btns { display: flex; gap: 6px; margin: 8px 0 4px; flex-wrap: wrap; }
+      #hud button { background: #2a2a4a; color: #cfd3de; border: 1px solid #445; border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      #hud button:hover { background: #3a3a6a; color: #fff; }
+      #hud small { color: #8a8fa0; }
+      #hud a { color: #9ab; }
+      details { margin-top: 6px; } summary { cursor: pointer; color: #bbc; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <h1>Capital cities — one look per tribe</h1>
+      <p>Today both tribes share one ziggurat. Each row shows the <b>current</b> Capital on the left, then three faction-specific proposals, each with one of that tribe's units beside it for scale.</p>
+      <div class="btns">
+        <button data-view="all">Overview</button>
+        <button data-view="nomads">Nomads row</button>
+        <button data-view="farmers">Farmers row</button>
+        <button data-view="n0">N·A</button><button data-view="n1">N·B</button><button data-view="n2">N·C</button>
+        <button data-view="f0">F·A</button><button data-view="f1">F·B</button><button data-view="f2">F·C</button>
+        <button id="colorBtn">Team colour: blue</button>
+      </div>
+      <details open><summary>What each version is</summary>
+        <p><span class="nomad">Nomads</span> — <b>A · Great Yurt Camp:</b> a grand team-felt yurt ringed by smaller yurts, a stake palisade, horse-skull totems, a campfire and a tall standard. <b>B · Khan's Pavilion:</b> one tall striped war tent with pennants on the mast, hitched horses, a spear rack and war drums inside a rope fence. <b>C · Horde Hold:</b> a raised earth mound — palisade and walkway on the lower terrace, a watchtower, the chieftain's yurt and totems on top.</p>
+        <p><span class="farmer">Farmers</span> — <b>A · Granary Town:</b> a timber-framed great hall with a team-tiled roof, granary silo, windmill, wheat rows, haystacks and a well inside a low stone wall. <b>B · Windmill Keep:</b> a big stone windmill with a team-coloured cap as the centrepiece, a barn, twin silos, an orchard and a hay cart. <b>C · Walled Farmstead:</b> a two-storey farmhouse with a smoking chimney and a barn behind a proper stone wall with a gatehouse, plus an animal pen, oak tree and scarecrow.</p>
+      </details>
+      <small>Drag to orbit · scroll to zoom · <a href="./proposals">model proposals</a> · <a href="./">back to the game</a></small>
+    </div>
+    <script type="module" src="/src/capitalProposals.ts"></script>
+  </body>
+</html>
