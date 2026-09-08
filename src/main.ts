@@ -1023,8 +1023,21 @@ function submitFactionChoice(faction: FactionId): void {
 fcAgrarCard.addEventListener('click', () => submitFactionChoice('agrar'));
 fcTempleCard.addEventListener('click', () => submitFactionChoice('temple'));
 
+let factionPortraitsDone = false;
+function fillFactionPortraits(): void {
+  if (factionPortraitsDone) return;
+  factionPortraitsDone = true;
+  for (const card of [fcAgrarCard, fcTempleCard]) {
+    const [type, faction] = (card.dataset.art ?? 'warrior:temple').split(':') as [UnitType, FactionId];
+    const tint = getComputedStyle(card).getPropertyValue('--tint').trim() || '#f5c451';
+    const img = card.querySelector<HTMLImageElement>('.fc-art');
+    if (img) img.src = getUnitThumbnail(type, tint, faction);
+  }
+}
+
 function updateFactionOverlay(): void {
   const slot = pendingFactionSlot();
+  if (slot !== null) fillFactionPortraits();
   if (slot === null) {
     // Still show a brief "locked in, waiting" note for the online player who
     // already chose but the opponent hasn't revealed yet.
@@ -1683,9 +1696,9 @@ function updateOpponentTurnOverlay(): void {
   //    "Waiting for {name} to move…" pill so play never feels hidden.
   if (handoffPending) {
     opponentTurnCardEl.innerHTML =
-      `<div class="spinner">🎮</div>` +
+      `<div class="spinner"><svg viewBox="0 0 24 24"><path d="M12 2l8.7 5v10L12 22l-8.7-5V7z"/><path d="M12 7v10M7.7 9.5l4.3 2.5 4.3-2.5M7.7 14.5l4.3-2.5 4.3 2.5"/></svg></div>` +
       `<div class="label">Pass the device to</div>` +
-      `<div class="opp-name">${getCurrentPlayer(state).name}</div>` +
+      `<div class="hand-name">${getCurrentPlayer(state).name}</div>` +
       `<div class="sublabel">Tap anywhere to start their turn</div>`;
     opponentTurnOverlay.classList.remove('hidden');
     waitingIndicator.classList.add('hidden');

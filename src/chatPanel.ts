@@ -56,14 +56,15 @@ const STYLES = `
   right: calc(env(safe-area-inset-right, 0px) + 12px);
   z-index: 140;                     /* above toasts (121), below modal overlays */
   display: flex; align-items: center; gap: 7px;
-  padding: 9px 13px;
-  font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
-  letter-spacing: .3px;
-  color: #f2e3b0;
-  background: #5e6470;              /* same carved-stone grey as the HUD slabs */
-  border: 1px solid #2a2e36;
-  border-radius: 4px;
-  box-shadow: inset 1px 1px 0 #7b828f, inset -1px -1px 0 #464b55, 0 3px 6px rgba(0,0,0,.45);
+  padding: 0 13px; height: 34px;
+  font: 800 12px/1 'Nunito', system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: .02em;
+  color: #fff4dc;
+  background: rgba(8,20,14,.72);    /* same glass chip as the menu */
+  border: 1px solid rgba(255,244,220,.14);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 12px rgba(0,0,0,.35);
   cursor: pointer;
   transition: transform .08s ease, filter .12s ease;
 }
