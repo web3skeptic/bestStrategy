@@ -130,6 +130,11 @@ function makeFace(): THREE.CanvasTexture {
   return faceTex ??= buildFace();
 }
 
+/** The shared angry-face texture, building it on first use (for alternate humanoid kits). */
+export function faceTexture(): THREE.CanvasTexture {
+  return makeFace();
+}
+
 function buildFace(): THREE.CanvasTexture {
   const s = 512;
   const cv = document.createElement('canvas');
