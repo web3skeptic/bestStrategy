@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tech tree — visual style proposal</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; background: #0d0d1a; color: #ccc; font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { padding: 18px 20px 40px; }
+  h1 { font-size: 20px; color: #e8e8ff; margin: 0 0 4px; }
+  .sub { color: #778; font-size: 12px; margin-bottom: 14px; } .sub a { color: #9ab; }
+  .ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; font-size: 12px; color: #99a; }
+  .ctl button { background: #2a2a4a; color: #cfd3de; border: 1px solid #445; border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+  .ctl button.on { background: #3a3a6a; color: #fff; border-color: #88a; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 1150px) { .cols { grid-template-columns: 1fr; } }
+  .col h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 8px; }
+  .col.cur h2 { color: #e08080; } .col.prop h2 { color: #80d8a0; }
+  .notes { margin-top: 22px; background: #14142a; border: 1px solid #2a2a4a; border-radius: 10px; padding: 14px 18px; font-size: 13px; line-height: 1.5; max-width: 1100px; }
+  .notes h3 { font-size: 14px; color: #e8e8ff; margin: 0 0 6px; }
+  .notes ul { margin: 6px 0 0 18px; } .notes li { margin: 4px 0; } .notes b { color: #e0e0ff; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #1c1c36; color: #cfe; padding: 1px 5px; border-radius: 3px; }
+
+  /* ═══════ CURRENT (lifted verbatim from index.html; overlay un-fixed so it sits in the page) ═══════ */
+    /* ── Tech tree overlay ── */
+    .tech-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 150;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(5,5,15,0.93);
+      backdrop-filter: blur(8px);
+    }
+    .tech-overlay.hidden { display: none; }
+    .tech-panel {
+      position: relative;
+      /* chiselled-rock panel frame */
+      background: #41464f; /* flat stone frame */
+      border: 3px solid #11141c;
+      box-shadow:
+        inset 0 2px 0 rgba(160,175,200,0.32),
+        inset 0 -3px 8px rgba(0,0,0,0.55),
+        inset 0 0 0 2px rgba(42,46,54,0.7),
+        0 10px 30px rgba(0,0,0,0.6);
+      clip-path: polygon(
+        2% 0%, 98% 0%, 100% 3%, 100% 97%, 98% 100%,
+        2% 100%, 0% 97%, 0% 3%
+      );
+      max-width: 660px;
+      width: 95%;
+      max-height: 88vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .tech-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid #11141c;
+    }
+    .tech-title {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      /* warm gold display title to match the rock/gold accent */
+      background: linear-gradient(180deg, #ffe9b0 0%, #e7c24a 60%, #c79a26 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: #e7c24a;
+      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
+    }
+    .tech-aura  {
+      font-size: 13px;
+      font-weight: 800;
+      color: #e7c24a;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    .tech-close {
+      flex: 0 0 auto;
+      background: #565c67; /* flat stone */
+      border: 2px solid #11141c;
+      color: #e3e8f0;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 5px 11px;
+      box-shadow:
+        inset 0 1px 0 rgba(160,175,200,0.32),
+        inset 0 -2px 4px rgba(0,0,0,0.55);
+      clip-path: polygon(15% 0%, 85% 0%, 100% 28%, 100% 72%, 85% 100%, 15% 100%, 0% 72%, 0% 28%);
+    }
+    .tech-close:active { transform: translateY(1px); }
+    .tech-section { margin-bottom: 18px; }
+    .tech-section-title {
+      font-size: 11px;
+      font-weight: 800;
+      color: #aab4c6;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 6px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    .tech-branch-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #e7c24a;
+      margin-bottom: 8px;
+    }
+    .tech-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tech-node {
+      flex: 1;
+      min-width: 140px;
+      max-width: 200px;
+      padding: 10px 12px;
+      /* chiselled rock chip */
+      border: 2px solid #11141c;
+      background: #4b515c; /* flat stone chip */
+      box-shadow:
+        inset 0 1px 0 rgba(160,175,200,0.30),
+        inset 0 -2px 5px rgba(0,0,0,0.55);
+      clip-path: polygon(6% 0%, 94% 0%, 100% 14%, 100% 86%, 94% 100%, 6% 100%, 0% 86%, 0% 14%);
+      cursor: pointer;
+      transition: filter 0.12s, transform 0.08s;
+    }
+    .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched):not(.tech-node--researching) {
+      filter: brightness(1.18);
+    }
+    .tech-node:active:not(.tech-node--locked):not(.tech-node--researched):not(.tech-node--researching) {
+      transform: translateY(1px);
+    }
+    .tech-node--researched {
+      /* teal gem aura — researched/owned */
+      border-color: #11141c;
+      background:
+        linear-gradient(180deg, rgba(95,208,255,0.18) 0%, rgba(0,0,0,0) 30%),
+        linear-gradient(180deg, #2f5a4e 0%, #234a42 55%, #1b3a34 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(95,208,255,0.32),
+        inset 0 -2px 5px rgba(0,0,0,0.5),
+        0 0 8px rgba(51,224,160,0.3);
+      cursor: default;
+    }
+    .tech-node--locked { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
+    .tech-node--poor   {
+      cursor: not-allowed;
+      filter: saturate(0.7) brightness(0.85);
+    }
+    .tech-node--researching {
+      /* amber pulse — actively being researched, mid-flight */
+      border-color: #11141c;
+      background:
+        linear-gradient(180deg, rgba(231,194,74,0.22) 0%, rgba(0,0,0,0) 30%),
+        linear-gradient(180deg, #5a4e2f 0%, #4a4223 55%, #3a3020 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(231,194,74,0.32),
+        inset 0 -2px 5px rgba(0,0,0,0.5),
+        0 0 8px rgba(231,194,74,0.35);
+      cursor: default;
+    }
+    .tech-node-art {
+      display: block; width: 100%; height: 72px; object-fit: contain;
+      margin: -2px auto 7px;
+      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55));
+    }
+    .tech-node--researched .tech-node-art { opacity: 0.92; }
+    .tech-node-name  { font-size: 13px; font-weight: 800; color: #f0f3f8; margin-bottom: 3px; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+    .tech-node-cost  { font-size: 11px; color: #e7c24a; margin-bottom: 4px; }
+    .tech-node-prereq { font-size: 10px; color: #8b94a4; margin-bottom: 4px; font-style: italic; }
+    .tech-node-desc  { font-size: 10px; color: #c2c8d4; line-height: 1.4; }
+    .tech-node-status { font-size: 11px; font-weight: 800; margin-top: 6px; }
+    .status-researched  { color: #33e0a0; }
+    .status-available   { color: #5fd0ff; }
+    .status-locked      { color: #8b94a4; }
+    .status-poor        { color: #e08a4a; }
+    .status-researching { color: #e7c24a; }
+
+
+  .col.cur .tech-overlay { position: relative; inset: auto; background: none; backdrop-filter: none; display: block; z-index: auto; }
+  .col.cur .tech-panel { max-width: none; width: 100%; max-height: none; }
+
+  /* ═══════ PROPOSED ═══════ */
+  .tt { position: relative; border-radius: 14px; padding: 18px 20px 16px; color: #d6dbe6;
+        background: radial-gradient(120% 90% at 50% 0%, #1c2233 0%, #11141d 60%, #0b0d14 100%);
+        border: 1px solid #2b3446; box-shadow: 0 18px 50px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.05); }
+  .tt-head { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .tt-title { font-size: 19px; font-weight: 800; letter-spacing: .3px; color: #f2e7c4;
+              background: linear-gradient(180deg,#ffe9b0,#e7c24a 60%,#c79a26); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .tt-aura { margin-left: auto; font-weight: 800; font-size: 13px; color: #ffd86a; background: rgba(231,194,74,.12); border: 1px solid rgba(231,194,74,.35); border-radius: 999px; padding: 4px 12px; }
+  .tt-slot { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #aab4c6; background: rgba(255,255,255,.03); border: 1px solid #263044; border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; }
+  .tt-slot b { color: #e7c24a; }
+  .tt-slot .bar { flex: 1; height: 6px; border-radius: 3px; background: #1f2533; overflow: hidden; }
+  .tt-slot .bar i { display: block; height: 100%; background: linear-gradient(90deg,#c79a26,#ffd86a); }
+  .tt-slot.idle { color: #7fd6ff; } .tt-slot.idle .bar i { background: #5fd0ff; opacity: .45; }
+  .tt-graph { position: relative; display: grid; grid-template-columns: 96px repeat(3, 1fr); column-gap: 18px; row-gap: 14px; }
+  .tt-tiers { display: contents; }
+  .tt-tier { font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #6f7a90; text-align: center; padding-bottom: 4px; border-bottom: 1px dashed #263044; }
+  .tt-lane { display: contents; }
+  .tt-lane-label { align-self: center; font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #aab4c6; padding-right: 6px; line-height: 1.3; }
+  .tt-lane-label small { display: block; font-size: 9px; font-weight: 600; letter-spacing: .4px; color: #e7c24a; text-transform: none; }
+  .tt-cell { display: flex; flex-direction: column; gap: 8px; justify-content: center; min-height: 64px; }
+  .tt-cell.pick { position: relative; padding: 6px; border: 1px dashed rgba(231,194,74,.35); border-radius: 12px; }
+  .tt-cell.pick::before { content: 'choose one'; position: absolute; top: -8px; left: 10px; font-size: 9px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #e7c24a; background: #11141d; padding: 0 6px; }
+  .tt-cell.pick.locked-branch::before { content: 'choice made'; color: #33e0a0; }
+  .tt-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .tt-node { position: relative; display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 7px; border-radius: 12px; cursor: pointer;
+             background: linear-gradient(180deg,#1d2432,#151a25); border: 1px solid #2b3446; transition: transform .1s, box-shadow .15s, border-color .15s; }
+  .tt-node:hover { transform: translateY(-1px); border-color: #4a5a78; }
+  .tt-node.sel { border-color: #5fd0ff; box-shadow: 0 0 0 2px rgba(95,208,255,.25); }
+  .tt-med { position: relative; flex: 0 0 auto; width: 46px; height: 46px; border-radius: 50%; background: #0e1119; display: grid; place-items: center; overflow: hidden; }
+  .tt-med img { width: 44px; height: 44px; object-fit: contain; }
+  .tt-med span { font-size: 20px; }
+  .tt-ring { position: absolute; inset: -3px; border-radius: 50%; border: 3px solid #333c4e; pointer-events: none; }
+  .tt-txt { min-width: 0; }
+  .tt-name { font-size: 12.5px; font-weight: 800; color: #eef2f8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tt-meta { display: flex; gap: 6px; margin-top: 3px; font-size: 10px; font-weight: 700; }
+  .tt-cost { color: #ffd86a; } .tt-time { color: #8b94a4; }
+  .tt-badge { position: absolute; top: -7px; right: -6px; font-size: 10px; font-weight: 900; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; border: 2px solid #11141d; }
+  /* states */
+  .tt-node.available .tt-ring { border-color: #5fd0ff; box-shadow: 0 0 10px rgba(95,208,255,.45); }
+  .tt-node.available { border-color: #2f5670; }
+  .tt-node.researched .tt-ring { border-color: #33e0a0; }
+  .tt-node.researched { background: linear-gradient(180deg,#183a33,#12281f); border-color: #245a48; }
+  .tt-node.researched .tt-badge { background: #33e0a0; color: #062; }
+  .tt-node.researching .tt-ring { border-color: transparent; background: conic-gradient(#ffd86a var(--p), #3a3020 0); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px)); mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px)); }
+  .tt-node.researching { background: linear-gradient(180deg,#3a3120,#2a2417); border-color: #6a5626; box-shadow: 0 0 12px rgba(231,194,74,.25); }
+  .tt-node.researching .tt-badge { background: #ffd86a; color: #4a3300; }
+  .tt-node.locked { opacity: .45; filter: saturate(.4); cursor: default; }
+  .tt-node.locked .tt-badge { background: #2a3040; color: #8b94a4; }
+  .tt-node.poor .tt-cost { color: #ff8a5a; }
+  .tt-node.poor .tt-ring { border-color: #7a4a2a; }
+  /* detail pane */
+  .tt-detail { display: flex; gap: 14px; align-items: center; margin-top: 16px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,.03); border: 1px solid #263044; min-height: 72px; }
+  .tt-detail .tt-med { width: 56px; height: 56px; } .tt-detail .tt-med img { width: 54px; height: 54px; }
+  .tt-detail h4 { margin: 0 0 2px; font-size: 14px; color: #eef2f8; }
+  .tt-detail p { margin: 0; font-size: 12px; color: #c2c8d4; line-height: 1.4; }
+  .tt-detail .req { font-size: 11px; color: #8b94a4; margin-top: 3px; } .tt-detail .req b { color: #33e0a0; font-weight: 700; } .tt-detail .req s { color: #8b94a4; text-decoration: none; opacity: .8; }
+  .tt-btn { margin-left: auto; flex: 0 0 auto; padding: 9px 18px; border-radius: 10px; font-weight: 800; font-size: 13px; cursor: pointer; border: 1px solid #3fa7d6; color: #062f45; background: linear-gradient(180deg,#8fe0ff,#3fb7ea); box-shadow: 0 4px 12px rgba(95,208,255,.25); }
+  .tt-btn[disabled] { background: #232a38; color: #7a8598; border-color: #2b3446; box-shadow: none; cursor: not-allowed; }
+  .tt-empty { color: #6f7a90; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Tech tree — visual style proposal</h1>
+  <div class="sub">Both panels are rendered from the real <code>TECH_NODES</code> data with the real unit thumbnails and one shared mock player state. Nothing is wired into the game. · <a href="./proposals">3D model proposals</a> · <a href="./">back to the game</a></div>
+  <div class="ctl">
+    Faction: <button data-f="temple" class="on">Temple</button><button data-f="agrar">Agrar</button>
+    &nbsp;·&nbsp; Demo state: <button data-s="idle" class="on">Slot idle</button><button data-s="busy">Researching</button>
+  </div>
+  <div class="cols">
+    <div class="col cur"><h2>Current</h2><div id="cur"></div></div>
+    <div class="col prop"><h2>Proposed</h2><div id="prop"></div></div>
+  </div>
+  <div class="notes">
+    <h3>What changes</h3>
+    <ul>
+      <li><b>It becomes a tree.</b> Today five headed lists of chips; the prerequisites exist only as italic text. Proposed: lanes (Siege, Heavy Unit, Command, Stat Bonus, Support) × tiers (Foundation → Advanced → Elite) with drawn connectors, so "Champion needs Warrior Rite <i>and</i> Command I" is a line you can see, not a sentence you have to read.</li>
+      <li><b>Compact nodes, one detail pane.</b> Every chip currently repeats its full description and status; the panel scrolls on phones. Proposed nodes are a medallion + name + cost/time; click (or hover) a node and the pane below shows the description, prerequisites with ✓/✗, and one clear <i>Research</i> button. Fewer accidental purchases too, since the card itself is no longer the buy button.</li>
+      <li><b>State on the ring, not the whole card.</b> Cyan glow = available, teal ✓ = researched, amber conic ring filling up = researching (with rounds left), dim + lock = blocked, orange cost = can't afford. The one research slot gets a status bar at the top instead of a text line.</li>
+      <li><b>"Choose one" is a visible bracket.</b> Pick-one branches are grouped in a dashed frame labelled <i>choose one</i>, which flips to <i>choice made</i> once picked, replacing the "✓ Choice made — branch locked" caption.</li>
+      <li><b>Same palette as the rest of the HUD.</b> Gold title, slate panel, cyan/teal/amber semantic colours already used elsewhere; drops the chiselled-rock clip-paths that don't match the 3D board's look.</li>
+    </ul>
+    <p style="margin:10px 0 0;color:#8a8fa0;font-size:12px">Implementation footprint if accepted: <code>renderTechTree</code>/<code>appendSection</code> in <code>src/main.ts</code> (~150 lines), the tech CSS block in <code>index.html</code>, plus a ~40-line SVG connector routine. Game logic untouched.</p>
+  </div>
+  <script type="module" src="/src/techProposal.ts"></script>
+</body>
+</html>
