@@ -16,6 +16,7 @@ export default defineConfig({
         replay: resolve(__dirname, "replay.html"),
         replays: resolve(__dirname, "replays.html"),
         demo: resolve(__dirname, "demo.html"),
+        proposals: resolve(__dirname, "proposals.html"),
       },
     },
   },

@@ -53,6 +53,10 @@ app.get('/replays', (_req, res) => {
 app.get('/demo', (_req, res) => {
   res.sendFile(path.join(distPath, 'demo.html'));
 });
+// Design proposals — static preview page for rule changes under discussion.
+app.get('/proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'proposals.html'));
+});
 app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });

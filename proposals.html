@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design Proposals — Temples &amp; the Mid Map</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d1a; color: #ccd; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; padding: 20px; max-width: 1100px; margin: 0 auto; line-height: 1.5; }
+  h1 { font-size: 22px; color: #e8e8ff; margin-bottom: 4px; }
+  .subtitle { color: #778; margin-bottom: 22px; font-size: 12px; }
+  .subtitle a { color: #9ab; }
+  .card { background: #14142a; border: 1px solid #2a2a4a; border-radius: 10px; padding: 18px 20px; margin-bottom: 22px; }
+  .card h2 { font-size: 17px; color: #e8e8ff; margin-bottom: 2px; }
+  .card .tag { display: inline-block; font-size: 11px; color: #9ab; background: #1f1f3a; border: 1px solid #334; border-radius: 4px; padding: 1px 7px; margin-left: 8px; vertical-align: middle; }
+  .card p { margin: 8px 0; color: #bbc; }
+  .card p strong { color: #e0e0ff; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0 10px; }
+  @media (max-width: 760px) { .row { grid-template-columns: 1fr; } }
+  .panel { background: #0f0f22; border: 1px solid #262648; border-radius: 8px; padding: 10px; }
+  .panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .panel.now h3 { color: #e08080; }
+  .panel.next h3 { color: #80d8a0; }
+  .panel svg { width: 100%; height: auto; display: block; }
+  .panel .cap { font-size: 12px; color: #99a; margin-top: 6px; }
+  ul { margin: 6px 0 4px 18px; color: #bbc; }
+  li { margin: 3px 0; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: #1c1c36; color: #cfe; padding: 1px 5px; border-radius: 3px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #99a; margin: 8px 0 0; }
+  .legend span::before { content: ''; display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .lg-temple::before { background: #d9a441; }
+  .lg-me::before { background: #4c8dff; }
+  .lg-enemy::before { background: #e05555; }
+  .lg-support::before { background: #e08fd8; }
+  .lg-ruins::before { background: #666; }
+  .lg-ok::before { background: #3ecf7a; }
+  .lg-bad::before { background: #ff4d4d; }
+  .timeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
+  .tl { background: #1a1a33; border: 1px solid #2c2c50; border-radius: 6px; padding: 8px; font-size: 12px; text-align: center; }
+  .tl b { display: block; color: #e0e0ff; font-size: 11px; margin-bottom: 4px; }
+  .tl.bad { border-color: #7a2c2c; background: #2a1520; }
+  .tl.ok { border-color: #2c7a4a; background: #152a1f; }
+  .tl.grey { color: #778; }
+  footer { color: #667; font-size: 12px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<h1>Design proposals: Temples &amp; the mid map</h1>
+<div class="subtitle">Three follow-ups to the two rule fixes shipped today (founder pinned to the site · standing Temples are solid). Nothing here is implemented — it's a preview to accept, tweak or reject. <a href="./">← back to the game</a></div>
+
+<!-- ─────────────────────────── 1 ─────────────────────────── -->
+<div class="card">
+  <h2>1. Only fighters can break a founding <span class="tag">founding interrupt</span></h2>
+  <p>Today <strong>any</strong> living enemy unit in the 6-hex ring at resolution aborts the founding: a Healer, a Builder, a Range Booster, a 1 HP straggler. On the mid map someone is almost always adjacent, so centre Temples rarely complete, and 6 aura is lost with only a generic "founding failed" toast.</p>
+  <p><strong>Proposal:</strong> only units that already project ZOC (Warrior/Pike/Cavalry/Heavy classes) count as an adjacent interrupt. Support and civil units can stand next to a founding site without stopping it. An enemy <em>on</em> the site still always blocks (unchanged). Show the 6-hex "contested" ring when a founding starts so the player can see what threatens it.</p>
+  <div class="row">
+    <div class="panel now"><h3>Now — fails</h3><svg id="d1a" viewBox="0 0 300 220"></svg><div class="cap">Enemy Healer adjacent → founding aborts, no refund.</div></div>
+    <div class="panel next"><h3>Proposed — completes</h3><svg id="d1b" viewBox="0 0 300 220"></svg><div class="cap">Healer ignored; a Warrior in the ring would still abort it.</div></div>
+  </div>
+  <div class="legend"><span class="lg-temple">Site</span><span class="lg-me">Founder (you)</span><span class="lg-support">Enemy support unit</span><span class="lg-enemy">Enemy fighter</span><span class="lg-ok">Safe ring</span><span class="lg-bad">Contested ring</span></div>
+  <ul>
+    <li><code>resolveFoundingForPlayer</code>: filter <code>enemyAdjacent</code> through the same unit-class set <code>getZocHexes</code> uses.</li>
+    <li>Renderer: outline the ring for a <code>foundingTemple</code> site in the founder's colour.</li>
+    <li>Fail toast names the cause ("enemy Warrior adjacent" / "founder died").</li>
+  </ul>
+</div>
+
+<!-- ─────────────────────────── 2 ─────────────────────────── -->
+<div class="card">
+  <h2>2. Smouldering Ruins <span class="tag">destroy → reconsecrate loop</span></h2>
+  <p>Today a Temple knocked to Ruins can be reconsecrated the <strong>same round</strong> by any Temple unit already standing next to it, and the previous owner restores it at its old level (even Temple II) for the flat 6 aura, forever. Mid-map fights become a cheap ping-pong: the attacker spends 2–3 rounds of damage, the defender re-founds it in one action.</p>
+  <p><strong>Proposal:</strong> fresh Ruins <em>smoulder</em> for 1 full round: nobody can start founding on them until the start of the round after destruction. The previous owner's level-restore memory expires after 3 rounds; after that, everyone rebuilds at Temple I. The attacker gets a real window to bring a founder up; the defender gets a real reason to hold the site rather than let it fall and re-buy it.</p>
+  <div class="timeline">
+    <div class="tl grey"><b>Round N</b>Temple II destroyed → Ruins</div>
+    <div class="tl bad"><b>Round N</b>❌ founding blocked (smouldering)</div>
+    <div class="tl ok"><b>Round N+1</b>✅ anyone may found · owner restores to II</div>
+    <div class="tl ok"><b>Rounds N+2, N+3</b>✅ owner still restores to II</div>
+    <div class="tl grey"><b>Round N+4 →</b>memory expired · everyone gets Temple I</div>
+  </div>
+  <div class="row">
+    <div class="panel now"><h3>Now</h3><svg id="d2a" viewBox="0 0 300 220"></svg><div class="cap">Destroyed this round → defender's adjacent unit steps on and re-founds the same round.</div></div>
+    <div class="panel next"><h3>Proposed</h3><svg id="d2b" viewBox="0 0 300 220"></svg><div class="cap">Ruins are locked one round; attacker's founder gets a move to reach it.</div></div>
+  </div>
+  <ul>
+    <li><code>StrategicSite</code>: add <code>ruinedRound</code>; <code>canStartFounding</code> rejects while <code>turnNumber === ruinedRound</code>.</li>
+    <li><code>completeFounding</code>: honour <code>previousOwnerId</code> only if <code>turnNumber − ruinedRound ≤ 3</code>.</li>
+    <li>Tunables: <code>RUINS_SMOULDER_ROUNDS = 1</code>, <code>RUINS_MEMORY_ROUNDS = 3</code>.</li>
+  </ul>
+</div>
+
+<!-- ─────────────────────────── 3 ─────────────────────────── -->
+<div class="card">
+  <h2>3. Temples muster on the ring, not the roof <span class="tag">deployment + garrison</span></h2>
+  <p>Since today, a Temple tile is solid. But the training queue still <strong>deploys new units onto the Temple tile itself</strong>; the unit can walk off but never back on. It also means one idle unit on the roof blocks every further deployment, and the owner has no way to "hold" a Temple physically.</p>
+  <p><strong>Proposal:</strong> a completed unit deploys onto a free hex in the Temple's 6-ring (nearest to the owner's Capital first); the queue only waits if all six are taken. In exchange, the owner gets a way to defend it: each friendly <em>fighter</em> adjacent to a Temple gives it <strong>+1 DEF</strong> (max +2). A guarded mid-map Temple takes noticeably longer to grind down; an abandoned one falls as fast as today.</p>
+  <div class="row">
+    <div class="panel now"><h3>Now</h3><svg id="d3a" viewBox="0 0 300 220"></svg><div class="cap">Recruit spawns on the roof. Roof occupied → queue stalls. No garrison effect.</div></div>
+    <div class="panel next"><h3>Proposed</h3><svg id="d3b" viewBox="0 0 300 220"></svg><div class="cap">Spawns on the ring toward home. Two adjacent fighters → Temple DEF 5 → 7.</div></div>
+  </div>
+  <div class="legend"><span class="lg-temple">Temple</span><span class="lg-me">Your unit</span><span class="lg-ok">Deploy hex</span></div>
+  <ul>
+    <li><code>resolveTrainingForPlayer</code>: for Temple sites, pick from <code>hexNeighbors(site.pos)</code> that are on-map, not wall, not occupied, not another structure; sort by distance to own Capital. Capitals keep deploying on their own tile.</li>
+    <li><code>structureDefense</code>: <code>+min(2, adjacentOwnerFighters)</code> for sites.</li>
+    <li>Sidebar: show "Garrison +1/+2" on the Temple tooltip.</li>
+  </ul>
+</div>
+
+<footer>Constants referenced: Temple 26 HP / 5 DEF · founding &amp; upgrade 6 aura · founding resolves after 1 round. Reply in the chat with the numbers of the proposals you want implemented.</footer>
+
+<script>
+(function () {
+  const S = 22, SQ3 = Math.sqrt(3);
+  const C = { temple: '#d9a441', me: '#4c8dff', enemy: '#e05555', support: '#e08fd8', ruins: '#666', ok: '#3ecf7a', bad: '#ff4d4d', tile: '#1d1d38', edge: '#33335a' };
+  function px(q, r, cx, cy) { return [cx + S * SQ3 * (q + r / 2), cy + S * 1.5 * r]; }
+  function hexPts(x, y, s) { let p = []; for (let i = 0; i < 6; i++) { const a = Math.PI / 180 * (60 * i - 30); p.push((x + s * Math.cos(a)).toFixed(1) + ',' + (y + s * Math.sin(a)).toFixed(1)); } return p.join(' '); }
+  const NB = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+  function el(n, a) { const e = document.createElementNS('http://www.w3.org/2000/svg', n); for (const k in a) e.setAttribute(k, a[k]); return e; }
+  function board(svg, ring) {
+    const cx = 150, cy = 110;
+    for (let q = -2; q <= 2; q++) for (let r = -2; r <= 2; r++) {
+      if (Math.abs(q + r) > 2) continue;
+      const [x, y] = px(q, r, cx, cy);
+      const d = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+      const g = el('polygon', { points: hexPts(x, y, S - 1.5), fill: C.tile, stroke: (d === 1 && ring) ? ring : C.edge, 'stroke-width': (d === 1 && ring) ? 2.5 : 1 });
+      svg.appendChild(g);
+    }
+    return { cx, cy };
+  }
+  function tile(svg, b, q, r, fill, label) {
+    const [x, y] = px(q, r, b.cx, b.cy);
+    svg.appendChild(el('polygon', { points: hexPts(x, y, S - 1.5), fill, stroke: '#000', 'stroke-opacity': .3 }));
+    if (label) { const t = el('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#fff', 'font-weight': 600 }); t.textContent = label; svg.appendChild(t); }
+  }
+  function unit(svg, b, q, r, fill, label) {
+    const [x, y] = px(q, r, b.cx, b.cy);
+    svg.appendChild(el('circle', { cx: x, cy: y, r: 11, fill, stroke: '#000', 'stroke-opacity': .4 }));
+    const t = el('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 10, fill: '#fff', 'font-weight': 700 }); t.textContent = label; svg.appendChild(t);
+  }
+  function arrow(svg, b, q1, r1, q2, r2, col) {
+    const [x1, y1] = px(q1, r1, b.cx, b.cy), [x2, y2] = px(q2, r2, b.cx, b.cy);
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L;
+    const ax = x1 + ux * 13, ay = y1 + uy * 13, bx = x2 - ux * 14, by = y2 - uy * 14;
+    svg.appendChild(el('line', { x1: ax, y1: ay, x2: bx, y2: by, stroke: col, 'stroke-width': 2.5 }));
+    svg.appendChild(el('polygon', { points: `${bx},${by} ${bx - ux*8 - uy*5},${by - uy*8 + ux*5} ${bx - ux*8 + uy*5},${by - uy*8 - ux*5}`, fill: col }));
+  }
+  function verdict(svg, txt, col) { const t = el('text', { x: 150, y: 210, 'text-anchor': 'middle', 'font-size': 12, fill: col, 'font-weight': 700 }); t.textContent = txt; svg.appendChild(t); }
+  const $ = id => document.getElementById(id);
+
+  // 1a: now — healer adjacent aborts
+  { const s = $('d1a'), b = board(s, C.bad); tile(s, b, 0, 0, C.temple); unit(s, b, 0, 0, C.me, 'F'); unit(s, b, 1, -1, C.support, 'H'); verdict(s, '✖ Healer adjacent → founding fails', C.bad); }
+  // 1b: proposed — healer ignored
+  { const s = $('d1b'), b = board(s, C.ok); tile(s, b, 0, 0, C.temple); unit(s, b, 0, 0, C.me, 'F'); unit(s, b, 1, -1, C.support, 'H'); unit(s, b, -2, 2, C.enemy, 'W'); verdict(s, '✔ Healer ignored · Warrior is 2 away → Temple I', C.ok); }
+  // 2a: now — same-round refound
+  { const s = $('d2a'), b = board(s); tile(s, b, 0, 0, C.ruins, '☓'); unit(s, b, -1, 0, C.me, 'D'); unit(s, b, 2, -1, C.enemy, 'A'); arrow(s, b, -1, 0, 0, 0, C.me); verdict(s, 'Same round: defender steps on, pays 6, restores Temple II', C.bad); }
+  // 2b: proposed — smouldering
+  { const s = $('d2b'), b = board(s, C.bad); tile(s, b, 0, 0, C.ruins, '🔥'); unit(s, b, -1, 0, C.me, 'D'); unit(s, b, 2, -1, C.enemy, 'A'); arrow(s, b, 2, -1, 1, -1, C.enemy); verdict(s, 'Locked this round · attacker moves a founder adjacent', C.ok); }
+  // 3a: now — deploy on roof
+  { const s = $('d3a'), b = board(s); tile(s, b, 0, 0, C.temple, '⛩'); unit(s, b, 0, 0, C.me, '★'); verdict(s, 'New unit sits on the Temple · queue stalls while it stays', C.bad); }
+  // 3b: proposed — ring deploy + garrison
+  { const s = $('d3b'), b = board(s); tile(s, b, 0, 0, C.temple, '⛩'); tile(s, b, -1, 1, C.ok); unit(s, b, -1, 1, C.me, '★'); unit(s, b, 1, 0, C.me, 'W'); unit(s, b, 0, -1, C.me, 'P'); arrow(s, b, 0, 0, -1, 1, C.ok); verdict(s, 'Deploys on ring toward home · 2 fighters adjacent → DEF 7', C.ok); }
+})();
+</script>
+</body>
+</html>
