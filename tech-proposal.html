@@ -244,6 +244,32 @@
   .tt-btn { margin-left: auto; flex: 0 0 auto; padding: 9px 18px; border-radius: 10px; font-weight: 800; font-size: 13px; cursor: pointer; border: 1px solid #3fa7d6; color: #062f45; background: linear-gradient(180deg,#8fe0ff,#3fb7ea); box-shadow: 0 4px 12px rgba(95,208,255,.25); }
   .tt-btn[disabled] { background: #232a38; color: #7a8598; border-color: #2b3446; box-shadow: none; cursor: not-allowed; }
   .tt-empty { color: #6f7a90; font-size: 12px; }
+
+  /* ═══════ Mobile ═══════ */
+  @media (max-width: 480px) {
+    body { padding: 12px 10px 30px; }
+    /* current replica: same phone rules index.html applies (full-width stacked chips) */
+    .col.cur .tech-panel { clip-path: none; border-width: 0; padding: 14px 12px; }
+    .col.cur .tech-node { flex: 1 1 100%; min-width: 0; max-width: none; padding: 12px 14px; }
+    /* proposed: lane label becomes a row header, the three tiers stay side by side */
+    .tt { padding: 12px 10px 12px; border-radius: 10px; }
+    .tt-graph { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 10px; row-gap: 8px; }
+    .tt-tiers > div:first-child { display: none; }
+    .tt-tier { font-size: 9px; letter-spacing: .8px; }
+    .tt-lane-label { grid-column: 1 / -1; padding: 8px 2px 0; font-size: 10px; }
+    .tt-lane-label small { display: none; } /* the bracket already says 'choose one' */
+    .tt-cell { min-height: 0; gap: 6px; }
+    .tt-cell.pick { padding: 8px 4px 4px; }
+    .tt-cell.pick::before { left: 6px; }
+    .tt-node { flex-direction: column; align-items: stretch; gap: 5px; padding: 8px 6px 6px; text-align: center; border-radius: 10px; }
+    .tt-med { width: 38px; height: 38px; margin: 0 auto; } .tt-med img { width: 36px; height: 36px; } .tt-med span { font-size: 17px; }
+    .tt-name { font-size: 11px; white-space: normal; line-height: 1.15; }
+    .tt-meta { justify-content: center; gap: 5px; font-size: 9.5px; }
+    .tt-slot { font-size: 11px; padding: 7px 9px; flex-wrap: wrap; } .tt-slot .bar { flex-basis: 100%; }
+    .tt-detail { flex-wrap: wrap; padding: 10px; } .tt-btn { margin-left: 0; width: 100%; }
+    .tt-detail .tt-med { width: 44px; height: 44px; } .tt-detail .tt-med img { width: 42px; height: 42px; }
+    .tt-detail > div:nth-child(2) { flex: 1 1 0; min-width: 0; }
+  }
 </style>
 </head>
 <body>

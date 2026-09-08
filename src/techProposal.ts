@@ -80,6 +80,7 @@ function renderCurrent(root: HTMLElement, m: Mock): void {
 // ── PROPOSED graph ───────────────────────────────────────────────────────────
 const GLYPH: Partial<Record<TechId, string>> = { command_1: '⚑', command_2: '⚑', agrar_heavy_armor: '🛡', temple_warrior_rite: '🔥', agrar_siegecraft_splash: '💥', temple_mobile_siege_splash: '💥', longrange_hp: '🏹', horse_sight: '👁' };
 let selected: TechId | null = null;
+let lastStatus: Map<TechId, Status> | null = null;
 
 function renderProposed(root: HTMLElement, m: Mock): void {
   const rem = m.researching ? Math.max(1, m.researching.completesRound - TURN) : 0;
@@ -137,29 +138,56 @@ function renderProposed(root: HTMLElement, m: Mock): void {
   root.querySelectorAll<HTMLElement>('.tt-node').forEach(el => {
     el.addEventListener('click', () => { selected = el.dataset.id as TechId; renderProposed(root, m); });
   });
+  lastStatus = statusMap;
   requestAnimationFrame(() => drawLinks(root, statusMap));
 }
 
-// Prerequisite connectors: right edge of the prereq → left edge of the node.
+// Prerequisite connectors. Orthogonal routing: leave the prereq's right edge,
+// run to the gutter between its column and the next, drop/climb vertically in
+// that gutter, then run horizontally into the target's left edge. Vertical
+// travel only ever happens in a gutter, so a line never crosses another node
+// (e.g. Command I → Champion Rite climbs in the Foundation/Advanced gutter and
+// crosses the Heavy Unit lane's empty Advanced cell, not Command II).
 function drawLinks(root: HTMLElement, statusMap: Map<TechId, Status>): void {
   const graph = root.querySelector<HTMLElement>('.tt-graph')!;
   const svg = graph.querySelector<SVGSVGElement>('.tt-svg')!;
   const gb = graph.getBoundingClientRect();
-  const rect = (id: string) => graph.querySelector<HTMLElement>(`[data-id="${id}"]`)?.getBoundingClientRect();
+  const el = (id: string) => graph.querySelector<HTMLElement>(`[data-id="${id}"]`);
+  // column gutters from the tier header cells (their gaps are the gutters)
+  const tiers = Array.from(graph.querySelectorAll<HTMLElement>('.tt-tier')).map(t => t.getBoundingClientRect());
+  const gutterAfter = (colRight: number): number => {
+    // midpoint between this column's right edge and the next column's left edge
+    const next = tiers.find(t => t.left - gb.left > colRight + 1);
+    return next ? (colRight + (next.left - gb.left)) / 2 : colRight + 10;
+  };
+  const r = 6; // corner radius
   let d = '';
   for (const [id] of statusMap) {
     const n = TECH_NODES.find(x => x.id === id)!;
-    const to = rect(id); if (!to) continue;
-    for (const p of n.prereqs) {
-      const from = rect(p); if (!from) continue;
+    const to = el(id)?.getBoundingClientRect(); if (!to) continue;
+    n.prereqs.forEach((p, i) => {
+      const from = el(p)?.getBoundingClientRect(); if (!from) return;
       const x1 = from.right - gb.left, y1 = from.top + from.height / 2 - gb.top;
       const x2 = to.left - gb.left, y2 = to.top + to.height / 2 - gb.top;
-      const mx = (x1 + x2) / 2;
       const done = statusMap.get(p) === 'researched';
-      const col = done ? '#33e0a0' : '#3a4560';
-      d += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="2" ${done ? '' : 'stroke-dasharray="5 4"'} opacity=".9"/>`;
-      d += `<circle cx="${x2}" cy="${y2}" r="3" fill="${col}"/>`;
-    }
+      const col = done ? '#33e0a0' : '#4a5670';
+      const dash = done ? '' : 'stroke-dasharray="5 4"';
+      // stagger parallel inbound lines a little so two arrivals don't overlap
+      // a prereq in the same lane keeps a dead-straight line; other arrivals
+      // into a multi-prereq node are offset so they don't overlap
+      const straight = Math.abs(y1 - y2) < 2;
+      const yIn = straight || n.prereqs.length < 2 ? y2 : y2 + (i - (n.prereqs.length - 1) / 2) * 8;
+      let path: string;
+      if (straight) {
+        path = `M${x1},${y1} L${x2},${yIn}`;
+      } else {
+        const gx = gutterAfter(from.right - gb.left);
+        const dir = yIn > y1 ? 1 : -1;
+        path = `M${x1},${y1} L${gx - r},${y1} Q${gx},${y1} ${gx},${y1 + dir * r} L${gx},${yIn - dir * r} Q${gx},${yIn} ${gx + r},${yIn} L${x2},${yIn}`;
+      }
+      d += `<path d="${path}" fill="none" stroke="${col}" stroke-width="2" ${dash} stroke-linecap="round" opacity=".95"/>`;
+      d += `<circle cx="${x1}" cy="${y1}" r="3" fill="${col}"/><circle cx="${x2}" cy="${yIn}" r="3" fill="${col}"/>`;
+    });
   }
   svg.innerHTML = d;
 }
@@ -175,5 +203,6 @@ document.querySelectorAll<HTMLButtonElement>('[data-s]').forEach(b => b.addEvent
   busy = b.dataset.s === 'busy'; selected = null;
   document.querySelectorAll('[data-s]').forEach(x => x.classList.toggle('on', x === b)); renderAll();
 }));
-window.addEventListener('resize', () => renderProposed(prop, mock()));
+const ro = new ResizeObserver(() => { if (lastStatus) drawLinks(prop, lastStatus); });
 renderAll();
+ro.observe(prop);
