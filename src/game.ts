@@ -2415,6 +2415,42 @@ export function calculateEncirclement(state: GameState, targetUnit: Unit): Encir
   };
 }
 
+// ── Impassable structures ──
+//
+// An ACTIVE Temple (Temple I/II, including mid-upgrade) is a solid building:
+// no unit of any faction — not even its owner's — may step onto its tile.
+// Previously a unit could stand right on top of an enemy Temple and shell it
+// from there; a Temple is now walked around, and the only way onto that hex
+// is to destroy the Temple first (it becomes Ruins, which stay passable so
+// they can be reconsecrated — see canStartFounding).
+//
+// Deliberately NOT included: neutral sites, Ruins and sites mid-founding
+// (founding requires standing on them), Capitals, Farms and Fertile Sites
+// (unchanged behaviour). Note this blocks ENTERING only — a unit deployed
+// onto its own Temple tile by resolveTrainingForPlayer can still walk off.
+export function isImpassableStructureHex(state: GameState, hex: HexCoord): boolean {
+  return state.strategicSites.some(s =>
+    (s.state === 'temple' || s.state === 'upgradingTemple') && hexEqual(s.pos, hex));
+}
+
+export function getImpassableStructureHexes(state: GameState): HexCoord[] {
+  return state.strategicSites
+    .filter(s => s.state === 'temple' || s.state === 'upgradingTemple')
+    .map(s => ({ ...s.pos }));
+}
+
+// The single blocked-hex list every movement BFS must use: other living
+// units, mountains, and standing Temples.
+export function getMoveBlockedHexes(state: GameState, unit: Unit): HexCoord[] {
+  const blocked: HexCoord[] = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => ({ ...u.pos }));
+  for (const key of state.walls) {
+    const [q, r] = key.split(',').map(Number);
+    blocked.push({ q: q!, r: r! });
+  }
+  for (const h of getImpassableStructureHexes(state)) blocked.push(h);
+  return blocked;
+}
+
 // ── Highlights ──
 
 const SUPPORT_UNIT_TYPES: Set<UnitType> = new Set(['healer', 'damageBooster', 'rangeBooster']);
@@ -2449,9 +2485,7 @@ function updateHighlights(state: GameState): void {
   // "attack then move" works identically to "move then attack" (§ agnostic
   // activation order fix). Only hasMoved gates movement itself.
   if (!unit.hasMoved) {
-    const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
-    const wallPositions = [...state.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
-    state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills, getZocHexes(state, unit.playerId));
+    state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, getMoveBlockedHexes(state, unit), state.hills, getZocHexes(state, unit.playerId));
   }
 
   const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
@@ -2542,6 +2576,7 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
         if (hexDistance({ q: 0, r: 0 }, h) > state.mapRadius) return false;
         if (state.walls.has(hexKey(h))) return false;
         if (getUnitAt(state, h)) return false;
+        if (isImpassableStructureHex(state, h)) return false; // never land inside a standing Temple
         return true;
       });
       if (neighbours.length > 0) {

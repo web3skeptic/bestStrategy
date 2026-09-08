@@ -5,7 +5,7 @@ import { runHardAITurn, runAITurn } from '../src/ai';
 import { endTurn, canAfford, canResearch, canBuildTeleportPair,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
   getValidTeleportHexes, getValidTeleportHexesForOtherTemples, getOwnedStructures,
-  getEffectiveRange, getEffectiveSpeed, getZocHexes, getPlayerVisible, isForestUnitRevealed, canStartFounding } from '../src/game';
+  getEffectiveRange, getEffectiveSpeed, getZocHexes, getPlayerVisible, isForestUnitRevealed, canStartFounding, getMoveBlockedHexes } from '../src/game';
 import { TECH_NODES, UnitType } from '../src/types';
 import { hexDistance, hexKey, hexEqual, getReachableHexes } from '../src/hex';
 import { featurize } from './features';
@@ -49,13 +49,11 @@ export function botCandidates(s: GameState): Micro[] {
   }
 
   // Moves: only the MOVE_UNITS movable units nearest an objective get a BFS.
-  const wallPositions = [...s.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
   const movable = myUnits.filter(u => !u.hasMoved && !u.hasAttacked)
     .map(u => ({ u, d: nearestObj(u.pos) }))
     .sort((a, b) => a.d - b.d).slice(0, MOVE_UNITS);
   for (const { u } of movable) {
-    const occupied = s.units.filter(x => x.hp > 0 && x.id !== u.id).map(x => x.pos);
-    const reachable = getReachableHexes(u.pos, getEffectiveSpeed(s, u), s.mapRadius, [...occupied, ...wallPositions], s.hills, getZocHexes(s, u.playerId));
+    const reachable = getReachableHexes(u.pos, getEffectiveSpeed(s, u), s.mapRadius, getMoveBlockedHexes(s, u), s.hills, getZocHexes(s, u.playerId));
     const scored = reachable.map(h => ({
       to: h,
       adj: enemies.some(e => hexDistance(h, e.pos) === 1) ? 0 : 1,

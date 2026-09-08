@@ -20,6 +20,7 @@ import {
   selectUnit, deselectAll,
   moveUnit, attackUnit,
   canStartFounding, startFounding,
+  getMoveBlockedHexes,
   attackStructure, getStructureAt,
   canDestroyUnit, destroyUnit,
   spawnUnit, endTurn,
@@ -124,16 +125,11 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   // Move actions — available whenever the unit hasn't moved yet, regardless
   // of whether it already attacked (move/attack order is agnostic).
   if (!unit.hasMoved) {
-    const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
-    const wallPositions: HexCoord[] = [...state.walls].map(k => {
-      const [q, r] = k.split(',').map(Number);
-      return { q: q!, r: r! };
-    });
     const reachable = getReachableHexes(
       unit.pos,
       getEffectiveSpeed(state, unit),
       state.mapRadius,
-      [...occupied, ...wallPositions],
+      getMoveBlockedHexes(state, unit),
       state.hills,
       getZocHexes(state, unit.playerId),
     );
@@ -218,12 +214,7 @@ export function computePlayerLegalMoves(state: GameState, playerId: number): Leg
 
 export function computeUnitMoveHexes(state: GameState, unit: Unit): HexCoord[] {
   if (unit.hasMoved) return [];
-  const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
-  const wallPositions: HexCoord[] = [...state.walls].map(k => {
-    const [q, r] = k.split(',').map(Number);
-    return { q: q!, r: r! };
-  });
-  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills, getZocHexes(state, unit.playerId));
+  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, getMoveBlockedHexes(state, unit), state.hills, getZocHexes(state, unit.playerId));
 }
 
 export function computeUnitAttackTargets(state: GameState, unit: Unit): Unit[] {
@@ -419,6 +410,7 @@ export function buildRulesPayload(): Record<string, unknown> {
         note: 'Reduces vision to 1 when standing inside. Units inside are hidden unless an adjacent enemy unit or owned structure is within 1 hex.',
       },
       wall: { note: 'Impassable.' },
+      standingTemple: { note: 'An ACTIVE Temple (temple/upgradingTemple) is impassable to EVERY unit of every faction, including its own owner — you cannot stand on a Temple tile to shell it point-blank, you walk around it. Neutral sites, Ruins and sites mid-founding stay passable (founding requires standing on them), as do Capitals, Farms and Fertile Sites. Units deployed onto their own Temple tile by the training queue can still walk off it.' },
     },
     support: {
       supportRange: SUPPORT_RANGE,
