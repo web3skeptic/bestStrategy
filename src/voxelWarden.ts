@@ -8,7 +8,7 @@
 // Built in model units (feet at y = 0, ~8 units tall, same reference frame as
 // buildGuy/buildHeavyKnight); the renderer scales it down to fit a hex tile.
 import * as THREE from 'three';
-import { buildGuy, HairBuilder } from './voxelWarrior';
+import { buildGuy, HairBuilder, FaceStyle } from './voxelWarrior';
 import { buildSword } from './voxelSword';
 
 function mat(color: number, rough: number): THREE.MeshStandardMaterial {
@@ -48,8 +48,8 @@ function buildTowerShield(): THREE.Group {
 // — broader pauldrons, a deep breastplate, a waist guard, greaves, and a
 // plain steel great helm (no plume — this is a defensive frontline unit, not
 // cavalry). Holds a heavy sword in the right hand, a broad shield on the left.
-export function buildWarden(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number): THREE.Group {
-  const g = buildGuy(bodyColor, hairStyle, hairColor);
+export function buildWarden(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number, faceStyle?: FaceStyle): THREE.Group {
+  const g = buildGuy(bodyColor, hairStyle, hairColor, faceStyle);
 
   const plate = mat(0x8b8f97, 0.5);
   const plateD = mat(0x5a5d63, 0.55);

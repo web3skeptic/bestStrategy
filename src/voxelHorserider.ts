@@ -3,7 +3,7 @@
 // (buildGuy from voxelWarrior). Returned in model units (legs stand on y = 0);
 // the renderer scales it down to fit a hex tile.
 import * as THREE from 'three';
-import { buildGuy, HairBuilder } from './voxelWarrior';
+import { buildGuy, HairBuilder, FaceStyle } from './voxelWarrior';
 import { buildSword } from './voxelSword';
 
 function mat(color: number, rough: number): THREE.MeshStandardMaterial {
@@ -72,11 +72,11 @@ function buildHorse(): THREE.Group {
 
 // Horse with the angry guy seated on the saddle. bodyColor tints the rider's
 // torso to the owning player's team color.
-export function buildHorseRider(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number): THREE.Group {
+export function buildHorseRider(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number, faceStyle?: FaceStyle): THREE.Group {
   const group = new THREE.Group();
   group.add(buildHorse());
 
-  const rider = buildGuy(bodyColor, hairStyle, hairColor);
+  const rider = buildGuy(bodyColor, hairStyle, hairColor, faceStyle);
   rider.scale.set(0.92, 0.6, 0.78); // bigger rider
   rider.rotation.y = -Math.PI / 2;  // face the same way as the horse
   rider.position.set(-0.15, 4.6, 0); // seated on the (lowered) saddle

@@ -83,6 +83,18 @@ function block(
 // material; `teamColor` lets a style carry an owner-tinted band/tie.
 export type HairBuilder = (g: THREE.Group, hair: THREE.Material, teamColor: number) => void;
 
+// A face style draws the expression onto the 512x512 skin-coloured canvas
+// that maps to the head's front face (0,0 top-left; eyes ~ y 0.40, mouth
+// ~ y 0.70-0.85 in the current face). Textures are memoised per style and
+// tagged shared, exactly like the default angry face.
+export type FaceStyle = (ctx: CanvasRenderingContext2D, s: number) => void;
+const faceTexCache = new Map<FaceStyle, THREE.CanvasTexture>();
+export function faceTextureFor(style: FaceStyle): THREE.CanvasTexture {
+  let t = faceTexCache.get(style);
+  if (!t) { t = buildFaceWith(style); faceTexCache.set(style, t); }
+  return t;
+}
+
 // Today's hair: a blocky helmet around the whole head.
 export const defaultHair: HairBuilder = (g, hair) => {
   g.add(block(2.50, 0.75, 2.45, hair, 0, 5.375, 0));      // crown slab
@@ -102,7 +114,7 @@ export function guyBlock(w: number, h: number, d: number, material: THREE.Materi
 // bodyColor tints the torso to the owning player's team color (red/blue);
 // defaults to the original yellow when omitted (e.g. the standalone sprite).
 // hairStyle defaults to today's hair — see /hair-proposals for alternatives.
-export function buildGuy(bodyColor = 0xf1cb16, hairStyle: HairBuilder = defaultHair, hairColor = DEFAULT_HAIR_COLOR): THREE.Group {
+export function buildGuy(bodyColor = 0xf1cb16, hairStyle: HairBuilder = defaultHair, hairColor = DEFAULT_HAIR_COLOR, faceStyle?: FaceStyle): THREE.Group {
   const g = new THREE.Group();
 
   const skin = mat(0xd9b97f, 0.95);
@@ -118,7 +130,7 @@ export function buildGuy(bodyColor = 0xf1cb16, hairStyle: HairBuilder = defaultH
   g.add(block(0.78, 0.55, 1.0, feet, 0.66, -0.15, 0.55));
 
   // head — only the front (+Z) face carries the angry expression
-  const faceMat = new THREE.MeshStandardMaterial({ map: makeFace(), roughness: 0.95, metalness: 0 });
+  const faceMat = new THREE.MeshStandardMaterial({ map: faceStyle ? faceTextureFor(faceStyle) : makeFace(), roughness: 0.95, metalness: 0 });
   const headMats = [skin, skin, skin, skin, faceMat, skin]; // +x,-x,+y,-y,+z,-z
   const head = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.9, 2.1), headMats);
   head.position.set(0, 4.1, 0);
@@ -152,7 +164,19 @@ export function faceTexture(): THREE.CanvasTexture {
   return makeFace();
 }
 
-function buildFace(): THREE.CanvasTexture {
+// The default angry face: thick brows angled down toward the centre, wide
+// open mouth.
+export const angryFace: FaceStyle = (x, s) => {
+  x.fillStyle = '#1d1d1d';
+  drawBrow(x, s * 0.355, s * 0.40, 0.42, s * 0.26, s * 0.085);
+  drawBrow(x, s * 0.645, s * 0.40, -0.42, s * 0.26, s * 0.085);
+  roundRect(x, s * 0.34, s * 0.70, s * 0.32, s * 0.15, s * 0.05);
+  x.fill();
+};
+
+function buildFace(): THREE.CanvasTexture { return buildFaceWith(angryFace); }
+
+function buildFaceWith(style: FaceStyle): THREE.CanvasTexture {
   const s = 512;
   const cv = document.createElement('canvas');
   cv.width = cv.height = s;
@@ -160,15 +184,7 @@ function buildFace(): THREE.CanvasTexture {
 
   x.fillStyle = '#d9b97f'; // matches the skin material so edges blend
   x.fillRect(0, 0, s, s);
-
-  // eyebrows: thick black bars angled down toward the centre (anger)
-  x.fillStyle = '#1d1d1d';
-  drawBrow(x, s * 0.355, s * 0.40, 0.42, s * 0.26, s * 0.085);
-  drawBrow(x, s * 0.645, s * 0.40, -0.42, s * 0.26, s * 0.085);
-
-  // wide open mouth
-  roundRect(x, s * 0.34, s * 0.70, s * 0.32, s * 0.15, s * 0.05);
-  x.fill();
+  style(x, s);
 
   const t = new THREE.CanvasTexture(cv);
   t.anisotropy = 8;
@@ -177,18 +193,18 @@ function buildFace(): THREE.CanvasTexture {
   // carries a runtime `userData` object that the r128 type defs don't declare.)
   (t as unknown as { userData: Record<string, unknown> }).userData = { shared: true };
   return t;
-
-  function drawBrow(ctx: CanvasRenderingContext2D, px: number, py: number, rot: number, w: number, h: number): void {
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(rot);
-    roundRect(ctx, -w / 2, -h / 2, w, h, h / 2);
-    ctx.fill();
-    ctx.restore();
-  }
 }
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+export function drawBrow(ctx: CanvasRenderingContext2D, px: number, py: number, rot: number, w: number, h: number): void {
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(rot);
+  roundRect(ctx, -w / 2, -h / 2, w, h, h / 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);

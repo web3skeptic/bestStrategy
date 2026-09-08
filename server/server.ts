@@ -72,6 +72,9 @@ app.get('/hair-proposals', (_req, res) => {
 app.get('/hat-proposals', (_req, res) => {
   res.sendFile(path.join(distPath, 'hat-proposals.html'));
 });
+app.get('/face-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'face-proposals.html'));
+});
 app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });

@@ -6,7 +6,7 @@
 // model units (legs stand on y = 0, ~8 units tall); the renderer scales it down
 // to fit a hex tile.
 import * as THREE from 'three';
-import { buildGuy, HairBuilder } from './voxelWarrior';
+import { buildGuy, HairBuilder, FaceStyle } from './voxelWarrior';
 import { buildSword } from './voxelSword';
 
 function mat(color: number, rough: number): THREE.MeshStandardMaterial {
@@ -91,8 +91,8 @@ function buildArmoredHorse(): THREE.Group {
 // knight's plate — pauldrons, a great helm with visor slit, and a crimson plume.
 // The base guy is built and seated exactly like the horserider's rider; the armor
 // is added on top in guy-model space so it scales/rotates with him.
-function buildArmoredRider(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number): THREE.Group {
-  const rider = buildGuy(bodyColor, hairStyle, hairColor); // torso tinted to the owning player's team color
+function buildArmoredRider(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number, faceStyle?: FaceStyle): THREE.Group {
+  const rider = buildGuy(bodyColor, hairStyle, hairColor, faceStyle); // torso tinted to the owning player's team color
 
   const plate = mat(0x989aa4, 0.55);  // bright plate
   const plateD = mat(0x62626c, 0.6);  // dark plate (visor band, trim)
@@ -124,11 +124,11 @@ function buildArmoredRider(bodyColor?: number, hairStyle?: HairBuilder, hairColo
 
 // Barded warhorse with the armored knight seated on the saddle. bodyColor tints
 // the rider's torso to the owning player's team color.
-export function buildHeavyKnight(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number): THREE.Group {
+export function buildHeavyKnight(bodyColor?: number, hairStyle?: HairBuilder, hairColor?: number, faceStyle?: FaceStyle): THREE.Group {
   const group = new THREE.Group();
   group.add(buildArmoredHorse());
 
-  const rider = buildArmoredRider(bodyColor, hairStyle, hairColor);
+  const rider = buildArmoredRider(bodyColor, hairStyle, hairColor, faceStyle);
   rider.scale.set(0.92, 0.6, 0.78); // bigger rider
   rider.rotation.y = -Math.PI / 2;  // face the same way as the horse
   rider.position.set(-0.15, 4.6, 0); // seated on the (lowered) saddle

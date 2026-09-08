@@ -22,6 +22,7 @@ export default defineConfig({
         capitalProposals: resolve(__dirname, "capital-proposals.html"),
         hairProposals: resolve(__dirname, "hair-proposals.html"),
         hatProposals: resolve(__dirname, "hat-proposals.html"),
+        faceProposals: resolve(__dirname, "face-proposals.html"),
       },
     },
   },

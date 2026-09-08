@@ -44,7 +44,7 @@ const teamBand: HairBuilder = (g, _hair, teamColor) => {
 };
 
 // C · Wide drooping brim: bigger brim that turns down at the edge.
-const droop: HairBuilder = (g) => {
+export const wideBrimHat: HairBuilder = (g) => {
   cyl(g, 2.1, 2.1, 0.16, 12, m(STRAW), 0, 5.18, 0);
   cyl(g, 2.75, 2.15, 0.34, 12, m(STRAW), 0, 5.02, 0);
   cyl(g, 2.72, 2.72, 0.05, 12, m(STRAW_DK), 0, 4.84, 0);
@@ -87,7 +87,7 @@ const tippedBack: HairBuilder = (g, hair) => {
 export const STRAW_HATS: HatStyle[] = [
   { id: 'luffy', name: 'A · Classic', blurb: 'Round crown, wide flat brim, red band — the One Piece silhouette as-is.', build: luffy },
   { id: 'team', name: 'B · Team band', blurb: 'Same hat with the band in the owner\'s colour, so ownership reads on the head too.', build: teamBand },
-  { id: 'droop', name: 'C · Wide brim', blurb: 'Bigger brim that turns down at the edge — reads bigger from the top-down camera.', build: droop },
+  { id: 'droop', name: 'C · Wide brim', blurb: 'Bigger brim that turns down at the edge — reads bigger from the top-down camera.', build: wideBrimHat },
   { id: 'boater', name: 'D · Low boater', blurb: 'Flat, shallow crown and narrower brim with short hair showing under it.', build: boater },
   { id: 'rustic', name: 'E · Rustic', blurb: 'Blocky octagonal weave, frayed brim, team band, a wheat stalk tucked in.', build: rustic },
   { id: 'back', name: 'F · Pushed back', blurb: 'The classic hat tipped back on the head with hair showing — face wide open.', build: tippedBack },
