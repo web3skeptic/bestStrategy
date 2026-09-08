@@ -69,6 +69,9 @@ app.get('/capital-proposals', (_req, res) => {
 app.get('/hair-proposals', (_req, res) => {
   res.sendFile(path.join(distPath, 'hair-proposals.html'));
 });
+app.get('/hat-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'hat-proposals.html'));
+});
 app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });

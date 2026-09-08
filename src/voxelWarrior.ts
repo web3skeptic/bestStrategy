@@ -93,7 +93,8 @@ export const defaultHair: HairBuilder = (g, hair) => {
   g.add(block(2.20, 0.45, 0.30, hair, 0, 4.850, 1.15));   // front fringe / hairline
 };
 
-export function hairMaterial(): THREE.MeshStandardMaterial { return mat(0x5e3b1e, 0.85); }
+export const DEFAULT_HAIR_COLOR = 0x5e3b1e; // brown
+export function hairMaterial(color = DEFAULT_HAIR_COLOR): THREE.MeshStandardMaterial { return mat(color, 0.85); }
 export function guyBlock(w: number, h: number, d: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   return block(w, h, d, material, x, y, z);
 }
@@ -101,11 +102,11 @@ export function guyBlock(w: number, h: number, d: number, material: THREE.Materi
 // bodyColor tints the torso to the owning player's team color (red/blue);
 // defaults to the original yellow when omitted (e.g. the standalone sprite).
 // hairStyle defaults to today's hair — see /hair-proposals for alternatives.
-export function buildGuy(bodyColor = 0xf1cb16, hairStyle: HairBuilder = defaultHair): THREE.Group {
+export function buildGuy(bodyColor = 0xf1cb16, hairStyle: HairBuilder = defaultHair, hairColor = DEFAULT_HAIR_COLOR): THREE.Group {
   const g = new THREE.Group();
 
   const skin = mat(0xd9b97f, 0.95);
-  const hair = hairMaterial();
+  const hair = hairMaterial(hairColor);
   const body = mat(bodyColor, 0.80);
   const feet = mat(0x5d3b1e, 0.90);
 

@@ -68,7 +68,7 @@ const mohawk: HairBuilder = (g, hair) => {
 };
 
 // Ponytail: skull cap, hair gathered at the back with a tie, tail down the back.
-const ponytail: HairBuilder = (g, hair) => {
+export const ponytail: HairBuilder = (g, hair) => {
   g.add(block(2.4, 0.5, 2.35, hair, 0, 5.28, 0));
   g.add(block(2.3, 0.9, 0.35, hair, 0, 4.75, -1.15));
   g.add(block(0.9, 0.5, 0.6, hair, 0, 4.55, -1.35));

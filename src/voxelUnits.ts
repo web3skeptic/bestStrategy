@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { UnitType, FactionId } from './types';
 import { buildGuy, HairBuilder } from './voxelWarrior';
+import { ponytail } from './proposals/hairStyles';
 import { buildHorseRider } from './voxelHorserider';
 import { buildHeavyKnight } from './voxelHeavyKnight';
 import { buildWarden } from './voxelWarden';
@@ -17,8 +18,8 @@ import { buildCannon } from './voxelCannon';
 
 // A foot soldier ("Voxel Guy"), team-tinted, holding a weapon on its right side,
 // scaled down to tile size. scaleVec overrides the uniform weapon scale.
-function guy(color: number, weapon: THREE.Object3D, scale: number, x: number, y: number, z: number, scaleVec?: [number, number, number], hairStyle?: HairBuilder): THREE.Group {
-  const g = buildGuy(color, hairStyle);
+function guy(color: number, weapon: THREE.Object3D, scale: number, x: number, y: number, z: number, scaleVec?: [number, number, number], hairStyle?: HairBuilder, hairColor?: number): THREE.Group {
+  const g = buildGuy(color, hairStyle, hairColor);
   if (scaleVec) weapon.scale.set(scaleVec[0], scaleVec[1], scaleVec[2]);
   else weapon.scale.setScalar(scale);
   weapon.position.set(x, y, z);
@@ -46,23 +47,36 @@ function mounted(model: THREE.Group): THREE.Group {
 // factions.ts's AGRAR_UNITS comment on the Warden entry. Every other slot
 // currently shares one model between factions, so `faction` is optional and
 // only this one case branches on it.
-// `hairStyle` (optional) overrides the humanoid hair — used by /hair-proposals.
-export function buildUnitModel(type: UnitType, color: number, faction?: FactionId | null, hairStyle?: HairBuilder): THREE.Group {
+// Per-tribe hair (picked on /hair-proposals): Nomads wear a black ponytail on
+// every humanoid rig, including the mounted Raider; Farmers keep the default
+// until their straw hat is chosen (see /hat-proposals).
+export const NOMAD_HAIR_COLOR = 0x1c1a18;
+function factionHair(faction: FactionId | null | undefined): { style: HairBuilder | undefined; color: number | undefined } {
+  if (faction === 'temple') return { style: ponytail, color: NOMAD_HAIR_COLOR };
+  return { style: undefined, color: undefined };
+}
+
+// `hairStyle`/`hairColor` (optional) override the tribe's hair — used by the
+// proposal pages.
+export function buildUnitModel(type: UnitType, color: number, faction?: FactionId | null, hairStyle?: HairBuilder, hairColor?: number): THREE.Group {
   const wrap = new THREE.Group();
+  const fh = factionHair(faction);
+  hairStyle = hairStyle ?? fh.style;
+  hairColor = hairColor ?? fh.color;
   switch (type) {
     case 'catapult': wrap.add(buildCannon(color)); break; // cannon, muzzle faces +Z
-    case 'warrior': wrap.add(guy(color, buildSword(), 0.62, 2.2, 2.0, 0.4, undefined, hairStyle)); break;
-    case 'archer': wrap.add(guy(color, buildBow(), 0.4, 2.2, 3.4, 0.3, undefined, hairStyle)); break;
-    case 'spearsman': wrap.add(guy(color, buildSpear(), 0.52, 2.2, 4.6, 0.3, undefined, hairStyle)); break;
-    case 'healer': wrap.add(guy(color, buildHealerStaff(), 0.58, 2.2, 2.2, 0.3, undefined, hairStyle)); break;
-    case 'damageBooster': wrap.add(guy(color, buildDemonStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92], hairStyle)); break;
-    case 'rangeBooster': wrap.add(guy(color, buildRuneStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92], hairStyle)); break;
+    case 'warrior': wrap.add(guy(color, buildSword(), 0.62, 2.2, 2.0, 0.4, undefined, hairStyle, hairColor)); break;
+    case 'archer': wrap.add(guy(color, buildBow(), 0.4, 2.2, 3.4, 0.3, undefined, hairStyle, hairColor)); break;
+    case 'spearsman': wrap.add(guy(color, buildSpear(), 0.52, 2.2, 4.6, 0.3, undefined, hairStyle, hairColor)); break;
+    case 'healer': wrap.add(guy(color, buildHealerStaff(), 0.58, 2.2, 2.2, 0.3, undefined, hairStyle, hairColor)); break;
+    case 'damageBooster': wrap.add(guy(color, buildDemonStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92], hairStyle, hairColor)); break;
+    case 'rangeBooster': wrap.add(guy(color, buildRuneStaff(), 0, 2.3, 2.4, 0.3, [0.92, 0.72, 0.92], hairStyle, hairColor)); break;
     case 'horserider':
-      if (faction === 'agrar') wrap.add(mounted(buildWarden(color))); // unmounted — see header note
-      else wrap.add(mounted(buildHorseRider(color)));
+      if (faction === 'agrar') wrap.add(mounted(buildWarden(color, hairStyle, hairColor))); // unmounted — see header note
+      else wrap.add(mounted(buildHorseRider(color, hairStyle, hairColor)));
       break;
-    case 'heavyknight': wrap.add(mounted(buildHeavyKnight(color))); break;
-    default: { const g = buildGuy(color, hairStyle); g.scale.setScalar(0.2); g.position.y = 0.08; wrap.add(g); }
+    case 'heavyknight': wrap.add(mounted(buildHeavyKnight(color, hairStyle, hairColor))); break;
+    default: { const g = buildGuy(color, hairStyle, hairColor); g.scale.setScalar(0.2); g.position.y = 0.08; wrap.add(g); }
   }
   return wrap;
 }
