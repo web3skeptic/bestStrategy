@@ -74,6 +74,7 @@ import {
   getUnitCost,
 } from './game';
 import { getUnitThumbnail } from './unitThumbnails';
+import { createMenuScene, MenuScene, MenuPlace } from './menuScene';
 import { runAiTurn, difficultyLabel, AiDifficulty } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from './serializer';
@@ -665,6 +666,7 @@ function showMenu(): void {
   cancelAITurn();
   saveGame(); // snapshot the local game before leaving to the menu (no-op online)
   menuOverlay.classList.remove('hidden');
+  ensureMenuScene();
   // Clear any turn indicators so they don't linger over the menu.
   handoffPending = false;
   opponentTurnOverlay.classList.add('hidden');
@@ -693,6 +695,7 @@ function showMenu(): void {
 
 function hideMenu(): void {
   menuOverlay.classList.add('hidden');
+  disposeMenuScene();
 }
 
 // ── Save / resume (LOCAL modes only) ──────────────────────────────────────
@@ -780,10 +783,54 @@ function restoreGame(): void {
   maybeRunAITurn();              // if it was the AI's turn, let it continue
 }
 
-// Show the "Continue game" CTA only when a valid local save exists.
+// Show the "Continue" card only when a valid local save exists, and describe
+// the save (round, who you're playing) so resuming is an informed tap.
 function updateContinueButton(): void {
-  menuContinueBtn.style.display = hasValidLocalSave() ? 'block' : 'none';
+  const save = loadSavedGame();
+  menuContinueBtn.style.display = save ? '' : 'none';
+  if (!save) return;
+  const st = save.state;
+  const kinds = controllersFromSave(save);
+  const humans = kinds.filter(k => k === 'human').length;
+  const ais = kinds.filter(k => k !== 'human');
+  const who = ais.length === 0 ? `${humans} players, one device`
+    : humans === 1 && ais.length === 1 ? `vs ${ais[0]} AI`
+    : `${humans} human${humans === 1 ? '' : 's'} · ${ais.length} AI`;
+  const me = st.players.find(p => kinds[st.players.indexOf(p)] === 'human');
+  const faction = me?.faction === 'temple' ? 'Temple' : me?.faction === 'agrar' ? 'Agrar' : null;
+  document.getElementById('menuContinueTitle')!.textContent = `Continue · Round ${st.turnNumber}`;
+  document.getElementById('menuContinueSub')!.textContent = [faction, who].filter(Boolean).join(' · ');
 }
+
+// ── Living-board menu scene: created whenever the menu is up, torn down when a
+// game starts so it never holds a second WebGL context behind the board. ──
+let menuScene: MenuScene | null = null;
+function ensureMenuScene(): void {
+  if (menuScene) return;
+  // A canvas whose WebGL context was force-lost on dispose can't host a new
+  // renderer, so every open gets a fresh canvas element in the same slot.
+  const old = document.getElementById('menuScene') as HTMLCanvasElement;
+  const canvas = document.createElement('canvas');
+  canvas.id = 'menuScene';
+  old.replaceWith(canvas);
+  try {
+    menuScene = createMenuScene(canvas, menuOverlay);
+  } catch (e) { console.warn('[menu] living board unavailable', e); }
+}
+function disposeMenuScene(): void {
+  menuScene?.dispose();
+  menuScene = null;
+}
+// Every entry flies the camera to its scene; the sub-panel then opens over it.
+for (const el of Array.from(document.querySelectorAll<HTMLElement>('#lobbyMain [data-cam]'))) {
+  const fly = (): void => menuScene?.goTo(el.dataset.cam as MenuPlace);
+  el.addEventListener('pointerenter', fly);
+  el.addEventListener('click', fly);
+}
+for (const id of ['setupBack', 'difficultyBack', 'lobbyLoginBack', 'lobbyRoomBack', 'lobbyWaitingBack']) {
+  document.getElementById(id)?.addEventListener('click', () => menuScene?.goTo('home'));
+}
+document.getElementById('menuRules')!.textContent = `Rules v${RULES_VERSION}`;
 
 // Build a human-readable name for a local seat.
 function seatName(kind: ControllerKind, idx: number): string {
@@ -3097,3 +3144,6 @@ window.addEventListener('resize', () => {
 
 // ── Initial state: show menu ──
 showMenu();
+
+// The menu is up on first load — bring the living board with it.
+if (!menuOverlay.classList.contains('hidden')) ensureMenuScene();
