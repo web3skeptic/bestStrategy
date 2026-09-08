@@ -7,10 +7,11 @@ import * as B from './three/builders.gen';
 import { buildTemple } from './voxelTemple';
 import { buildUnitModel } from './voxelUnits';
 import { buildFarm } from './voxelFarm';
+import { buildPortal } from './voxelPortal';
 import { HexCoord } from './types';
 
 const CAPTIONS: Record<string, string> = {
-  D: '<b>D · Living Board.</b> Mobile-first: the real board fills the phone, drifting through a day–night cycle with fireflies and long shadows. Chunky Lilita One wordmark with a voxel extrusion, Nunito UI, thumb-zone bottom sheet: Continue card, one big PLAY, three mode tiles. Tap a mode — the camera swoops to its place on the board (armies, farms, the ridge, the temple).',
+  D: '<b>D · Living Board.</b> Mobile-first: the real board fills the phone through a day–night cycle with fireflies and crawling shadows. Every menu entry flies the camera to a scene that IS that mode: <b>2 Players</b> → two warriors squared up on adjacent hexes · <b>vs AI</b> → behind the machine\'s siege engine, aimed at your temple · <b>Custom</b> → high overview of all four camps · <b>Online</b> → a linked portal pair · <b>Continue</b> → your held temple.',
   A: '<b>A · War Table.</b> A live low-angle shot of the actual board (real tile, temple, farm and unit builders) drifting behind an old-ledger menu: serif type, roman numerals, a wax-seal hover mark, a red bookmark for “Continue”. Feels like a campaign map on a general’s table, not a settings dialog.',
   B: '<b>B · Diptych.</b> The two factions split the screen on a skewed seam — Temple dusk and moon left, Agrar dawn and sun right — and the title is cut across both. Modes are a honeycomb of hex cells with line-art icons; hovering fills a cell with the colour of the side it sits on. Move the mouse: the halves parallax.',
   C: '<b>C · Broadsheet.</b> Editorial poster: huge tight serif title, numbered chapters instead of buttons, monospace metadata, one vermilion accent. A hexagonal coin flips between the two faction sigils. Quiet, typographic and deliberate.',
@@ -137,16 +138,38 @@ for (let q = -RD; q <= RD; q++) for (let r = Math.max(-RD, -q - RD); r <= Math.m
   const extra = kind === 'temple' ? buildTemple(0x8f7bff, 5) : kind === 'farm' ? buildFarm(0xffb054, 0) : null;
   if (extra) { extra.position.set(w.x, 0, w.z); extra.traverse(o => { (o as THREE.Mesh).castShadow = true; }); mapD.add(extra); }
 }
-const unitsD: [string, number, string, number, number][] = [
-  ['warrior', 0x8f7bff, 'temple', 1, -1], ['archer', 0x8f7bff, 'temple', 2, -2], ['horserider', 0x8f7bff, 'temple', 1, -2], ['spearsman', 0x8f7bff, 'temple', 0, -1],
-  ['warrior', 0xffb054, 'agrar', -1, 2], ['spearsman', 0xffb054, 'agrar', -2, 3], ['horserider', 0xffb054, 'agrar', -1, 1], ['catapult', 0xffb054, 'agrar', -2, 2],
+// Cast. Each menu entry has a scene the camera flies to:
+//   • 2 Players → the DUEL: one Temple and one Agrar warrior on adjacent
+//     hexes, squared up, east of the temple
+//   • vs AI     → the MACHINE: the Agrar siege engine, shot from behind it,
+//     aimed at the player's temple
+//   • Custom    → EVERY CAMP: two extra colours camp at the map edges so a
+//     high overview shows 2–6 seats, not just two
+//   • Online    → the PORTAL PAIR: two linked teleport gates glowing on the
+//     ridge side with a rider between them
+//   • Continue  → YOUR TEMPLE: the held Temple with its garrison
+const DUEL_A: HexCoord = { q: 0, r: 3 }, DUEL_B: HexCoord = { q: 1, r: 3 }; // south, in front of the forest
+const unitsD: [string, number, string, number, number, HexCoord | null][] = [
+  ['archer', 0x8f7bff, 'temple', 1, -2, null], ['spearsman', 0x8f7bff, 'temple', 0, -1, null], ['horserider', 0x8f7bff, 'temple', 1, -1, null],
+  ['spearsman', 0xffb054, 'agrar', -3, 5, null], ['horserider', 0xffb054, 'agrar', -1, 3, null], ['catapult', 0xffb054, 'agrar', -2, 2, null], ['warrior', 0xffb054, 'agrar', -4, 4, null],
+  ['warrior', 0x8f7bff, 'temple', DUEL_A.q, DUEL_A.r, DUEL_B], ['warrior', 0xffb054, 'agrar', DUEL_B.q, DUEL_B.r, DUEL_A],   // the duel
+  ['warrior', 0x5ee08a, 'temple', 6, -1, null], ['archer', 0x5ee08a, 'temple', 5, 0, null],                                    // third camp (east)
+  ['warrior', 0x4fe3ff, 'agrar', -3, -4, null], ['spearsman', 0x4fe3ff, 'agrar', -2, -5, null],                               // fourth camp (north-west)
+  ['horserider', 0x8f7bff, 'temple', 4, 2, { q: 4, r: 3 }],                                                                     // rider beside the portals, facing the camera
 ];
-for (const [type, color, fac, q, r] of unitsD) {
+for (const [type, color, fac, q, r, faceHex] of unitsD) {
   const u = buildUnitModel(type as never, color, fac as never);
   const w = hexToWorld({ q, r } as HexCoord);
-  u.position.set(w.x, 0, w.z); u.rotation.y = Math.atan2(-w.x, -w.z) + (rnd() - 0.5) * 0.6; // face the temple
+  u.position.set(w.x, 0, w.z);
+  const look = faceHex ? hexToWorld(faceHex) : { x: 0, z: 0 };
+  u.rotation.y = Math.atan2(look.x - w.x, look.z - w.z) + (faceHex ? 0 : (rnd() - 0.5) * 0.6); // duelists square up exactly; others roughly face the temple
   u.traverse(o => { (o as THREE.Mesh).castShadow = true; });
   mapD.add(u); bobbers.push(u);
+}
+const PORTALS: HexCoord[] = [{ q: 3, r: 2 }, { q: 5, r: 1 }];
+for (const h of PORTALS) {
+  const pm = buildPortal(0x8f7bff); const w = hexToWorld(h);
+  pm.position.set(w.x, 0, w.z); pm.traverse(o => { (o as THREE.Mesh).castShadow = true; }); mapD.add(pm);
 }
 // fireflies — additive points drifting over the board
 const FF = 90;
@@ -160,12 +183,20 @@ tableD.position.y = -TILE_H - 0.2; tableD.receiveShadow = true; sceneD.add(table
 
 // camera places — one per menu entry; tapping swoops there
 type Place = { target: [number, number, number]; yaw: number; dist: number; elev: number };
+const dA = hexToWorld(DUEL_A), dB = hexToWorld(DUEL_B);
+const duelMid: [number, number, number] = [(dA.x + dB.x) / 2, 0.5, (dA.z + dB.z) / 2];
+const duelYaw = Math.atan2(dB.x - dA.x, dB.z - dA.z) + Math.PI / 2 + 0.55;    // three-quarter from the north-east so both faces read, forest behind
+const cat = hexToWorld({ q: -2, r: 2 } as HexCoord);
+const machineYaw = Math.atan2(cat.x, cat.z);                                   // from behind the catapult, looking along its shot at the temple
+const pA = hexToWorld(PORTALS[0]!), pB = hexToWorld(PORTALS[1]!);
+const portalMid: [number, number, number] = [(pA.x + pB.x) / 2, 0.5, (pA.z + pB.z) / 2];
 const PLACES: Record<string, Place> = {
-  home:   { target: [0, 0.2, 0.6],  yaw: 0.35, dist: 15, elev: 0.95 },
-  armies: { target: [0.4, 0.2, 0.2], yaw: 0.9,  dist: 9.5, elev: 0.7 },
-  farms:  { target: [-5.5, 0.1, 3],  yaw: -0.4, dist: 8,  elev: 0.8 },
-  ridge:  { target: [5.5, 0.4, -7],  yaw: 2.4,  dist: 9,  elev: 0.6 },
-  temple: { target: [0, 0.6, 0],     yaw: -1.2, dist: 6.5, elev: 0.55 },
+  home:    { target: [0, 0.2, 0.6], yaw: 0.35, dist: 15, elev: 0.95 },
+  duel:    { target: duelMid, yaw: duelYaw, dist: 8.2, elev: 0.45 },                                                    // 2 Players
+  machine: { target: [cat.x * 0.8, 0.5, cat.z * 0.8], yaw: machineYaw, dist: 6.5, elev: 0.5 },                         // vs AI
+  camps:   { target: [0.5, 0, -0.5], yaw: 0.35, dist: 31, elev: 1.2 },                                                  // Custom: every camp, all four colours in frame
+  portals: { target: portalMid, yaw: Math.atan2(pB.x - pA.x, pB.z - pA.z) - Math.PI / 2, dist: 7.5, elev: 0.5 },      // Online: side-on from the south, board behind
+  temple:  { target: [0, 0.7, 0], yaw: -1.2, dist: 8, elev: 0.62 },                                                    // Continue
 };
 let placeFrom: Place = PLACES.home!, placeTo: Place = PLACES.home!, placeT = 1, placeT0 = 0;
 function goTo(name: string): void {
@@ -177,10 +208,13 @@ function samplePlace(): Place {
   const L = (a: number, b: number) => a + (b - a) * e;
   return { target: [L(placeFrom.target[0], placeTo.target[0]), L(placeFrom.target[1], placeTo.target[1]), L(placeFrom.target[2], placeTo.target[2])], yaw: L(placeFrom.yaw, placeTo.yaw), dist: L(placeFrom.dist, placeTo.dist), elev: L(placeFrom.elev, placeTo.elev) };
 }
+const pD = document.getElementById('pD')!;
 document.querySelectorAll<HTMLElement>('#pD [data-cam]').forEach(el => el.addEventListener('click', () => {
   document.querySelectorAll('#pD .mode').forEach(m => m.classList.toggle('on', m === el));
+  pD.classList.add('focused');
   goTo(el.dataset.cam!);
 }));
+canvasD.addEventListener('click', () => { pD.classList.remove('focused'); document.querySelectorAll('#pD .mode').forEach(m => m.classList.remove('on')); goTo('home'); });
 
 function resizeD(): void {
   const w = window.innerWidth, h = window.innerHeight;
@@ -214,9 +248,12 @@ const tD0 = performance.now();
   const pl = samplePlace();
   const yaw = pl.yaw + Math.sin(t * 0.18) * 0.12, elev = pl.elev + Math.sin(t * 0.13) * 0.03;
   const portrait = window.innerWidth < window.innerHeight;
-  const tz = pl.target[2] + (portrait ? 1.6 : 0), tx = pl.target[0] + (portrait ? 0 : -3.5); // keep the board above the sheet / right of the card
+  const tx = pl.target[0] + (portrait ? 0 : -3.5), tz = pl.target[2];       // landscape: board sits right of the card
   camD.position.set(tx + Math.sin(yaw) * Math.cos(elev) * pl.dist, pl.target[1] + Math.sin(elev) * pl.dist, tz + Math.cos(yaw) * Math.cos(elev) * pl.dist);
-  camD.lookAt(tx, pl.target[1], tz);
+  // portrait: look a little BELOW the subject so it lands in the clear band
+  // between the wordmark (top) and the sheet (bottom ~38%) instead of dead centre
+  const drop = portrait ? pl.dist * (pD.classList.contains('focused') ? 0.17 : 0.1) : 0;
+  camD.lookAt(tx, pl.target[1] - drop, tz);
   rD.render(sceneD, camD);
 })();
 

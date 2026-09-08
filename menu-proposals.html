@@ -127,7 +127,8 @@
   #pD .chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 8px; border-radius: 999px; background: rgba(8,20,14,.72); border: 1px solid rgba(255,244,220,.14); font-weight: 800; font-size: 12px; letter-spacing: .02em; color: var(--cream); backdrop-filter: blur(6px); }
   #pD .chip svg { width: 18px; height: 18px; stroke: var(--gold); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   #pD .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #5ee08a; box-shadow: 0 0 8px #5ee08a; }
-  #pD .brand { position: absolute; left: 0; right: 0; top: 13%; text-align: center; pointer-events: none; transform: rotate(-3deg); }
+  #pD .brand { position: absolute; left: 0; right: 0; top: 13%; text-align: center; pointer-events: none; transform: rotate(-3deg); transform-origin: 50% 0; transition: transform .6s cubic-bezier(.2,.8,.2,1), top .6s cubic-bezier(.2,.8,.2,1); }
+  #pD.focused .brand { top: 7%; transform: scale(.52) rotate(-3deg); }   /* a scene is focused: wordmark tucks up, board gets the middle */
   #pD .brand .hex { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(88px, 27vw, 150px); line-height: .9; color: var(--gold); letter-spacing: .02em;
       text-shadow: 0 1px 0 #d9a52e, 0 2px 0 #c9931f, 0 3px 0 #b9821a, 0 4px 0 #a5721a, 0 5px 0 #8f6216, 0 6px 0 #7a5212, 0 7px 0 #654310, 0 12px 24px rgba(0,0,0,.55); }
   #pD .brand .strat { display: inline-block; margin-top: 10px; padding: 6px 16px; border-radius: 8px; background: var(--moss); border: 2px solid rgba(245,196,81,.55); box-shadow: 0 4px 0 #061209, 0 8px 18px rgba(0,0,0,.45);
@@ -154,7 +155,8 @@
   #pD .mode b { font-size: 13px; font-weight: 900; } #pD .mode small { font-size: 10.5px; font-weight: 700; color: rgba(255,244,220,.6); }
   #pD .foot { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,244,220,.45); margin-top: 2px; }
   @media (min-width: 761px) {
-    #pD .brand { left: 6vw; right: auto; top: 12vh; text-align: left; transform: rotate(-3deg); }
+    #pD .brand { left: 6vw; right: auto; top: 12vh; text-align: left; transform: rotate(-3deg); transform-origin: 0 0; }
+    #pD.focused .brand { top: 6vh; transform: scale(.6) rotate(-3deg); }
     #pD .sheet { left: 5vw; right: auto; bottom: 7vh; width: 420px; border-radius: 26px; border: 1px solid rgba(255,244,220,.12); padding: 18px; }
     #pD .sheet::before { display: none; }
     #pD .sky { background: linear-gradient(90deg, rgba(6,14,10,.85) 0%, rgba(6,14,10,.45) 42%, rgba(6,14,10,0) 70%), linear-gradient(180deg, rgba(6,14,10,.5), transparent 30%); }
@@ -197,11 +199,11 @@
     <div class="brand"><div class="hex">HEX</div><div class="strat">STRATEGY</div></div>
     <div class="sheet">
       <div class="cont" data-cam="temple"><div class="av"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 8v8M8 10l4 2 4-2"/></svg></div><div><b>Continue · Round 7</b><small>Temple · vs Normal AI · 2 temples held</small></div><div class="go">RESUME ›</div></div>
-      <button class="play" data-cam="armies">PLAY VS AI <small>NORMAL</small></button>
+      <button class="play" data-cam="machine">PLAY VS AI <small>NORMAL</small></button>
       <div class="modes">
-        <div class="mode" data-cam="armies"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 2-5 4-5s6 2 6 5"/></svg><b>2 Players</b><small>one device</small></div>
-        <div class="mode" data-cam="farms"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg><b>Custom</b><small>2 – 6 seats</small></div>
-        <div class="mode" data-cam="ridge"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><b>Online</b><small>rooms &amp; codes</small></div>
+        <div class="mode" data-cam="duel"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 2-5 4-5s6 2 6 5"/></svg><b>2 Players</b><small>one device</small></div>
+        <div class="mode" data-cam="camps"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg><b>Custom</b><small>2 – 6 seats</small></div>
+        <div class="mode" data-cam="portals"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><b>Online</b><small>rooms &amp; codes</small></div>
       </div>
       <div class="foot"><span>Replays</span><span>Rules v14 · build ee3d7fc</span></div>
     </div>
