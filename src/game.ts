@@ -2414,7 +2414,11 @@ function updateHighlights(state: GameState): void {
     }
   }
 
-  if (!unit.hasMoved && !unit.hasAttacked) {
+  // Move/attack order is agnostic — a unit that already attacked (but hasn't
+  // moved yet) still gets its move range shown, exactly like a fresh unit, so
+  // "attack then move" works identically to "move then attack" (§ agnostic
+  // activation order fix). Only hasMoved gates movement itself.
+  if (!unit.hasMoved) {
     const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
     const wallPositions = [...state.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
     state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, [...occupied, ...wallPositions], state.hills, getZocHexes(state, unit.playerId));
@@ -2488,7 +2492,9 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
   // separate Founding Round to gate on top of that any more.
   if (isAwaitingFactionReveal(state)) return { moved: false };
   const unit = state.units.find(u => u.id === state.selectedUnitId);
-  if (!unit || unit.hasMoved || unit.hasAttacked) return { moved: false };
+  // Attacking first (without moving) still leaves the move available — only
+  // hasMoved itself locks movement, so order is agnostic.
+  if (!unit || unit.hasMoved) return { moved: false };
 
   const isValid = state.moveHexes.some(h => hexEqual(h, dest));
   if (!isValid) return { moved: false };
@@ -2632,14 +2638,18 @@ export function attackUnit(state: GameState, targetPos: HexCoord): CombatResult 
   }
 
   // Melee unit steps onto killed unit's tile. Purely tactical positioning now
-  // (§5 — no capture-by-presence any more, on a site or a Capital).
+  // (§5 — no capture-by-presence any more, on a site or a Capital). This
+  // genuinely repositions the attacker, so it spends the move too — but a
+  // stationary attack (no kill, ranged, or the attacker survives without
+  // follow-through) leaves hasMoved untouched, so attack-then-move works the
+  // same as move-then-attack (order is agnostic).
   if (targetKilled && !attackerKilled && attacker.stats.range === 1) {
     attacker.pos = { ...targetPos };
     revealForPlayer(state, attacker.playerId, attacker.pos, attacker.stats.vision);
+    attacker.hasMoved = true;
   }
 
   attacker.hasAttacked = true;
-  attacker.hasMoved = true;
   updateHighlights(state);
   checkWinCondition(state);
 
@@ -2752,8 +2762,9 @@ export function attackStructure(state: GameState, targetPos: HexCoord): Structur
   }
   // structureCanRevenge = false — no counter-damage, ever (§4).
 
+  // Attacking a structure never repositions the attacker, so hasMoved is left
+  // untouched — the unit can still move afterward (order is agnostic).
   attacker.hasAttacked = true;
-  attacker.hasMoved = true;
   updateHighlights(state);
   checkWinCondition(state);
   gameOver = state.phase === 'gameOver';

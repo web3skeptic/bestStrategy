@@ -121,8 +121,9 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   // choose-faction/resign (neither of which is a per-unit action).
   if (isAwaitingFactionReveal(state)) return actions;
 
-  // Move actions — only available when the unit has not yet moved or attacked.
-  if (!unit.hasMoved && !unit.hasAttacked) {
+  // Move actions — available whenever the unit hasn't moved yet, regardless
+  // of whether it already attacked (move/attack order is agnostic).
+  if (!unit.hasMoved) {
     const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
     const wallPositions: HexCoord[] = [...state.walls].map(k => {
       const [q, r] = k.split(',').map(Number);
@@ -216,7 +217,7 @@ export function computePlayerLegalMoves(state: GameState, playerId: number): Leg
 // ── Hex utilities (re-exported convenience) ──
 
 export function computeUnitMoveHexes(state: GameState, unit: Unit): HexCoord[] {
-  if (unit.hasMoved || unit.hasAttacked) return [];
+  if (unit.hasMoved) return [];
   const occupied = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => u.pos);
   const wallPositions: HexCoord[] = [...state.walls].map(k => {
     const [q, r] = k.split(',').map(Number);
@@ -470,8 +471,8 @@ export function buildRulesPayload(): Record<string, unknown> {
         'choose-faction — { faction: "agrar" | "temple" }. Legal immediately at match start, before any other action, for either player independently — see openingFlow below.',
       ],
       constraints: [
-        'A unit can move then attack, or just attack, or just move — but not attack then move.',
-        'Attacking (unit or structure) also sets hasMoved=true.',
+        'A unit can move then attack, or attack then move, or just one, or neither — order is agnostic, one move and one attack are independent per-round allowances.',
+        'Attacking (unit or structure) does NOT itself spend the move, unless a melee kill triggers follow-through onto the target\'s tile (that repositioning does spend it).',
         'A structure may have MULTIPLE recruit orders queued against it over time — there is no per-structure spawn gate. What actually caps recruiting is aura, the population cap (commandCost-weighted, see command block — queued-but-undeployed orders count against it too), and the player\'s overall production-slot pool (see command.productionSlots).',
         'Founding is a separate action from move/attack — it consumes the founder\'s WHOLE activation (both move and attack) the instant it starts.',
       ],

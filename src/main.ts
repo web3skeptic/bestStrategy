@@ -208,13 +208,14 @@ let destroyArmedUnitId: string | null = null;
 let endTurnArmed = false;
 let announcedAllActedThisTurn = false;
 
-// A unit "has an action left" until it's actually attacked — moving alone
-// (hasMoved but not hasAttacked) still leaves a legal attack available, so
-// only hasAttacked (which the engine always sets alongside hasMoved for
-// every activation that fully spends a unit — move+attack, attack-only,
-// found, build-farm, build-road) means truly done for the round (§22).
+// A unit "has an action left" until BOTH hasMoved and hasAttacked are spent.
+// Move/attack order is agnostic (see game.ts) — a unit that has attacked but
+// not yet moved (or vice versa) still has a legal action available, so only
+// having spent both truly means done for the round (§22). Builder-only
+// actions (found, build-farm, build-road) always set both flags together,
+// since those fully consume the activation regardless of order.
 function unactedUnitCount(state: GameState, playerId: number): number {
-  return state.units.filter(u => u.hp > 0 && u.playerId === playerId && !u.hasAttacked).length;
+  return state.units.filter(u => u.hp > 0 && u.playerId === playerId && !(u.hasMoved && u.hasAttacked)).length;
 }
 
 // Show the contextual destroy slab for `unitId`, reflecting the current armed

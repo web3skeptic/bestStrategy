@@ -185,13 +185,14 @@ export interface Unit {
   hasAttacked: boolean;
 }
 
-// A unit "still needs to move" this turn while it has neither moved nor attacked.
-// This mirrors the engine's own move gate (selectUnit computes move targets only
-// when !hasMoved && !hasAttacked, and attack() spends both flags), so the to-move
-// dot shows for fresh units and clears the instant the unit acts — moves OR
-// attacks. Reset each turn by endTurn (hasMoved/hasAttacked → false).
+// A unit "still needs to move" this turn while it still has its move
+// available. Move/attack order is agnostic (attacking alone no longer spends
+// the move — see game.ts's attackUnit/attackStructure/moveUnit), so a unit
+// that attacked first but hasn't moved yet still shows the dot; it clears
+// only once the unit has actually moved. Reset each turn by endTurn
+// (hasMoved/hasAttacked → false).
 export function unitYetToMove(unit: Unit): boolean {
-  return unit.hp > 0 && !unit.hasMoved && !unit.hasAttacked;
+  return unit.hp > 0 && !unit.hasMoved;
 }
 
 // ── Strategic sites (phase 3 of the "Asymmetric Tribes v0.2" redesign) ──
