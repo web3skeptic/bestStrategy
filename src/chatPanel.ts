@@ -14,6 +14,24 @@
 
 const SID_KEY = 'gu-chat-sid';
 const PASS_KEY = 'gu-chat-pass';
+const MODEL_KEY = 'gu-chat-model';
+const EFFORT_KEY = 'gu-chat-effort';
+
+// Mirrors the whitelists in server/chatAgent.ts; anything else falls back to
+// the server defaults (sonnet / medium).
+const MODEL_OPTIONS: [value: string, label: string][] = [
+  ['haiku', 'Haiku — fastest'],
+  ['sonnet', 'Sonnet — balanced'],
+  ['opus', 'Opus — smart'],
+  ['fable', 'Fable 5.1 — smartest'],
+];
+const EFFORT_OPTIONS: [value: string, label: string][] = [
+  ['low', 'Fast'],
+  ['medium', 'Balanced'],
+  ['high', 'Smart'],
+  ['xhigh', 'Smarter (opus/fable)'],
+  ['max', 'Max (fable)'],
+];
 
 function sessionId(): string {
   let sid = localStorage.getItem(SID_KEY);
@@ -107,6 +125,21 @@ const STYLES = `
   padding: 0 15px; font-weight: 600; cursor: pointer;
 }
 #guChatSend:disabled { opacity: .45; cursor: default; }
+#guChatSettings {
+  display: none; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; background: #262a31; border-bottom: 1px solid #3a3f49;
+}
+#guChatSettings.open { display: flex; }
+#guChatSettings label {
+  display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px;
+  font-size: 11px; color: #8b93a0; letter-spacing: .3px; text-transform: uppercase;
+}
+#guChatSettings select {
+  background: #1c1f25; color: #e6eaf0; border: 1px solid #444a55; border-radius: 4px;
+  padding: 6px 8px; font: 13px system-ui, sans-serif;
+}
+#guChatSettings select:focus { outline: none; border-color: #6b7788; }
+#guChatHead button.active { background: #33506b; border-color: #4a6a8b; color: #eaf2fb; }
 `;
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -148,12 +181,36 @@ export function mountChatPanel(): void {
   const form = el('form', { id: 'guChatForm' }, [input, send]);
   const closeBtn = el('button', { type: 'button', textContent: 'Close' });
   const resetBtn = el('button', { type: 'button', textContent: 'New' });
+  const gearBtn = el('button', { type: 'button', textContent: '⚙', title: 'Model & effort settings' });
   const head = el('div', { id: 'guChatHead' }, [
     el('span', { className: 'title', textContent: 'Game agent' }),
+    gearBtn,
     resetBtn,
     closeBtn,
   ]);
-  const panel = el('div', { id: 'guChatPanel' }, [head, log, form]);
+
+  // ── Settings: which model and how much reasoning effort the next turn uses.
+  // Applied per-request server-side, so changing them mid-conversation is fine.
+  const makeSelect = (key: string, opts: [string, string][], fallback: string): HTMLSelectElement => {
+    const sel = el('select');
+    for (const [value, label] of opts) sel.append(el('option', { value, textContent: label }));
+    const saved = localStorage.getItem(key);
+    sel.value = opts.some(([v]) => v === saved) ? saved! : fallback;
+    sel.addEventListener('change', () => localStorage.setItem(key, sel.value));
+    return sel;
+  };
+  const modelSel = makeSelect(MODEL_KEY, MODEL_OPTIONS, 'sonnet');
+  const effortSel = makeSelect(EFFORT_KEY, EFFORT_OPTIONS, 'medium');
+  const settings = el('div', { id: 'guChatSettings' }, [
+    el('label', {}, ['Model', modelSel]),
+    el('label', {}, ['Effort', effortSel]),
+  ]);
+  gearBtn.addEventListener('click', () => {
+    const open = settings.classList.toggle('open');
+    gearBtn.classList.toggle('active', open);
+  });
+
+  const panel = el('div', { id: 'guChatPanel' }, [head, settings, log, form]);
   document.body.append(btn, panel);
 
   let lastSeq = 0;
@@ -294,7 +351,7 @@ export function mountChatPanel(): void {
     const res = await fetch(base('/api/chat/send'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sid, text, pass }),
+      body: JSON.stringify({ sid, text, pass, model: modelSel.value, effort: effortSel.value }),
     }).catch(() => null);
     if (!res || !res.ok) {
       setRunning(false);

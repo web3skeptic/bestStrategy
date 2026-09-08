@@ -141,6 +141,22 @@ human changelog entry, e.g. "Chat: widen the drawer on mobile".
 - Be careful: this is a live site. Don't delete game features you weren't asked to touch, and
   don't touch /opt/best-strategy (a separate, unrelated deployment).`;
 
+// ── Model & effort selection ──────────────────────────────────────────────
+// Chosen per-turn from the chat panel's settings gear; anything not in these
+// whitelists falls back to the defaults.
+
+const MODEL_IDS: Record<string, string> = {
+  haiku: 'claude-haiku-4-5',
+  sonnet: 'claude-sonnet-5',
+  opus: 'claude-opus-5',
+  fable: 'claude-fable-5-1',
+};
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+type Effort = (typeof EFFORTS)[number];
+
+const DEFAULT_MODEL = 'sonnet';
+const DEFAULT_EFFORT: Effort = 'medium';
+
 // ── Turn execution ────────────────────────────────────────────────────────
 
 function toolSummary(name: string, input: Record<string, unknown>): string {
@@ -156,12 +172,13 @@ function toolSummary(name: string, input: Record<string, unknown>): string {
   }
 }
 
-async function runTurn(s: ChatSession, text: string): Promise<void> {
+async function runTurn(s: ChatSession, text: string, model: string, effort: Effort): Promise<void> {
   s.running = true;
   emit(s, 'user', text);
   try {
     const options: Parameters<typeof query>[0]['options'] = {
-      model: 'claude-sonnet-5',
+      model: MODEL_IDS[model],
+      effort,
       cwd: REPO_ROOT,
       // No 'Agent' tool: this session must not be able to spawn sub-agents.
       tools: ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash'],
@@ -176,6 +193,9 @@ async function runTurn(s: ChatSession, text: string): Promise<void> {
     if (process.env.CLAUDE_CODE_PATH) {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_PATH;
     }
+    // Fable's safety classifiers can refuse; run those turns on opus instead
+    // of erroring (also covers accounts without Fable access).
+    if (model === 'fable') options.fallbackModel = 'claude-opus-5';
     if (s.sessionToken) options.resume = s.sessionToken;
 
     let buffer = '';
@@ -280,8 +300,12 @@ chatRouter.post('/send', (req, res) => {
   if (!sid || !text) { res.status(400).json({ error: 'sid and text required' }); return; }
   const s = getSession(sid);
   if (s.running) { res.status(409).json({ error: 'a turn is already running' }); return; }
+  const model = MODEL_IDS[String(req.body?.model ?? '')] ? String(req.body.model) : DEFAULT_MODEL;
+  const effort = (EFFORTS as readonly string[]).includes(String(req.body?.effort ?? ''))
+    ? (String(req.body.effort) as Effort)
+    : DEFAULT_EFFORT;
   // Fire and forget: the SSE stream carries the output.
-  void runTurn(s, text);
+  void runTurn(s, text, model, effort);
   res.json({ ok: true });
 });
 
