@@ -60,6 +60,9 @@ app.get('/proposals', (_req, res) => {
 app.get('/tech-proposal', (_req, res) => {
   res.sendFile(path.join(distPath, 'tech-proposal.html'));
 });
+app.get('/menu-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'menu-proposals.html'));
+});
 app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });

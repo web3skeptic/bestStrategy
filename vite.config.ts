@@ -18,6 +18,7 @@ export default defineConfig({
         demo: resolve(__dirname, "demo.html"),
         proposals: resolve(__dirname, "proposals.html"),
         techProposal: resolve(__dirname, "tech-proposal.html"),
+        menuProposals: resolve(__dirname, "menu-proposals.html"),
       },
     },
   },
