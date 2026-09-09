@@ -175,7 +175,6 @@ renderer.setHudButtons([
 
 // ── UI elements ──
 const menuOverlay = document.getElementById('menuOverlay')!;
-const menuVsAI = document.getElementById('menuVsAI')!;
 const menu2P = document.getElementById('menu2P')!;
 const menuBtn = document.getElementById('menuBtn')!;
 const menuContinueBtn = document.getElementById('menuContinue') as HTMLButtonElement;
@@ -357,7 +356,7 @@ function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup' 
   lobbyWaiting.classList.toggle('hidden', panel !== 'waiting');
   lobbySetup.classList.toggle('hidden', panel !== 'setup');
   lobbyDifficulty.classList.toggle('hidden', panel !== 'difficulty');
-  if (panel === 'main') updateContinueButton(); // reflect any saved local game
+  if (panel === 'main') { updateContinueButton(); showMenuSheet('main'); } // reflect any saved local game, back to the main stack
   if (panel === 'difficulty') fillOpponentPortraits();
   if (panel === 'setup') renderSetupSlots();
 }
@@ -903,12 +902,50 @@ function startGame(vsAI: boolean, difficulty: AiDifficulty = 'normal'): void {
 
 menuContinueBtn.addEventListener('click', () => restoreGame());
 menu2P.addEventListener('click', () => startGame(false));
-menuVsAI.addEventListener('click', () => showLobbyPanel('difficulty'));
 for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('.difficulty-btn'))) {
   btn.addEventListener('click', () => startGame(true, btn.dataset.difficulty as AiDifficulty));
 }
 difficultyBack.addEventListener('click', () => showLobbyPanel('main'));
 menuBtn.addEventListener('click', () => showMenu());
+
+// ── Main-menu sheets (Polytopia-style menu, /menu-proposals-2 option A) ──
+// The main stack is New game / Multiplayer / Continue / Replays. New game opens
+// one sheet: tribe, then opponent (a friend on this device or an AI level),
+// then Start — the chosen tribe is submitted as the human's faction pick the
+// moment the game starts, so the in-game picker only shows for a second human.
+const menuStack = document.getElementById('menuStack')!;
+const menuNewSheet = document.getElementById('menuNewSheet')!;
+const menuMpSheet = document.getElementById('menuMpSheet')!;
+let menuTribe: FactionId = 'agrar';
+let menuOpp: 'friend' | AiDifficulty = 'normal';
+function showMenuSheet(which: 'main' | 'new' | 'mp'): void {
+  menuStack.classList.toggle('hidden', which !== 'main');
+  menuNewSheet.classList.toggle('hidden', which !== 'new');
+  menuMpSheet.classList.toggle('hidden', which !== 'mp');
+  menuOverlay.classList.toggle('sheet-open', which !== 'main');
+}
+document.getElementById('menuNew')!.addEventListener('click', () => showMenuSheet('new'));
+document.getElementById('menuMultiplayer')!.addEventListener('click', () => showMenuSheet('mp'));
+for (const el of Array.from(document.querySelectorAll<HTMLElement>('[data-menu-back]'))) el.addEventListener('click', () => showMenuSheet('main'));
+for (const el of Array.from(document.querySelectorAll<HTMLButtonElement>('#menuNewSheet .mtribe'))) {
+  el.addEventListener('click', () => {
+    menuTribe = el.dataset.tribe as FactionId;
+    document.querySelectorAll('#menuNewSheet .mtribe').forEach(x => x.classList.toggle('on', x === el));
+  });
+}
+for (const el of Array.from(document.querySelectorAll<HTMLButtonElement>('#menuOppPills .mpill'))) {
+  el.addEventListener('click', () => {
+    menuOpp = el.dataset.opp as 'friend' | AiDifficulty;
+    document.querySelectorAll('#menuOppPills .mpill').forEach(x => x.classList.toggle('on', x === el));
+  });
+}
+document.getElementById('menuStart')!.addEventListener('click', () => {
+  const tribe = menuTribe;
+  if (menuOpp === 'friend') startGame(false); else startGame(true, menuOpp);
+  // Pre-pick the tribe for the first human seat (a second human still picks in-game).
+  if (pendingFactionSlot() !== null) submitFactionChoice(tribe);
+  showMenuSheet('main');
+});
 
 // ── Custom game setup (N players, human/AI mix) ──
 const menuCustom = document.getElementById('menuCustom')!;

@@ -102,7 +102,7 @@ export function createMenuScene(canvas: HTMLCanvasElement, host: HTMLElement): M
   const cat = hexToWorld(CATAPULT);
   const pA = hexToWorld(PORTALS[0]!), pB = hexToWorld(PORTALS[1]!);
   const PLACES: Record<MenuPlace, Place> = {
-    home:    { target: [0, 0.2, 0.6], yaw: 0.35, dist: 15, elev: 0.95 },
+    home:    { target: [0, -1.2, 0.6], yaw: 0.35, dist: 24, elev: 0.82 },  // Polytopia-style: high, wide, drifting
     duel:    { target: [(dA.x + dB.x) / 2, 0.5, (dA.z + dB.z) / 2], yaw: Math.atan2(dB.x - dA.x, dB.z - dA.z) + Math.PI / 2 + 0.55, dist: 8.2, elev: 0.45 },
     machine: { target: [cat.x * 0.8, 0.5, cat.z * 0.8], yaw: Math.atan2(cat.x, cat.z), dist: 6.5, elev: 0.5 },
     camps:   { target: [0.5, 0, -0.5], yaw: 0.35, dist: 31, elev: 1.2 },
@@ -149,9 +149,10 @@ export function createMenuScene(canvas: HTMLCanvasElement, host: HTMLElement): M
     bobbers.forEach((u, i) => { u.position.y = Math.max(0, Math.sin(t * 2.2 + i) * 0.03); });
     if (t01 < 1) t01 = Math.min(1, (performance.now() - t0) / 1400);
     const pl = sample();
-    const yaw = pl.yaw + Math.sin(t * 0.18) * 0.12, elev = pl.elev + Math.sin(t * 0.13) * 0.03;
+    const drift = focused ? Math.sin(t * 0.18) * 0.12 : t * 0.04; // home view slowly circles the world
+    const yaw = pl.yaw + drift, elev = pl.elev + Math.sin(t * 0.13) * 0.03;
     const portrait = (host.clientWidth || window.innerWidth) < (host.clientHeight || window.innerHeight);
-    const tx = pl.target[0] + (portrait ? 0 : -3.5), tz = pl.target[2];
+    const tx = pl.target[0], tz = pl.target[2];
     camera.position.set(tx + Math.sin(yaw) * Math.cos(elev) * pl.dist, pl.target[1] + Math.sin(elev) * pl.dist, tz + Math.cos(yaw) * Math.cos(elev) * pl.dist);
     const drop = portrait ? pl.dist * (focused ? 0.17 : 0.1) : 0; // portrait: subject sits between wordmark and sheet
     camera.lookAt(tx, pl.target[1] - drop, tz);

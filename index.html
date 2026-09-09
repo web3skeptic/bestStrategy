@@ -520,41 +520,45 @@
     .menu-chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 10px; border-radius: 999px; text-decoration: none;
       background: rgba(8,20,14,.72); border: 1px solid rgba(255,244,220,.14); font-weight: 800; font-size: 12px; color: var(--cream); backdrop-filter: blur(6px); cursor: pointer; }
     .menu-chip svg { width: 17px; height: 17px; stroke: var(--gold); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .menu-brand { position: absolute; left: 0; right: 0; top: 13%; text-align: center; pointer-events: none; transform: rotate(-3deg); transform-origin: 50% 0;
-      transition: transform .6s cubic-bezier(.2,.8,.2,1), top .6s cubic-bezier(.2,.8,.2,1); }
-    .menu-overlay.focused .menu-brand { top: 7%; transform: scale(.52) rotate(-3deg); }
-    .menu-brand .hex { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(88px, 27vw, 150px); line-height: .9; color: var(--gold); letter-spacing: .02em;
-      text-shadow: 0 1px 0 #d9a52e, 0 2px 0 #c9931f, 0 3px 0 #b9821a, 0 4px 0 #a5721a, 0 5px 0 #8f6216, 0 6px 0 #7a5212, 0 7px 0 #654310, 0 12px 24px rgba(0,0,0,.55); }
-    .menu-brand .strat { display: inline-block; margin-top: 10px; padding: 6px 16px; border-radius: 8px; background: var(--moss); border: 2px solid rgba(245,196,81,.55); box-shadow: 0 4px 0 #061209, 0 8px 18px rgba(0,0,0,.45);
-      font-weight: 900; font-size: clamp(14px, 4.2vw, 22px); letter-spacing: .42em; padding-left: calc(16px + .42em); color: var(--cream); }
-    .menu-sheet { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 16px calc(env(safe-area-inset-bottom, 0px) + 16px); display: flex; flex-direction: column; gap: 10px;
-      background: linear-gradient(180deg, rgba(13,31,20,.86), rgba(9,22,14,.94)); border-top: 1px solid rgba(255,244,220,.12); border-radius: 26px 26px 0 0; backdrop-filter: blur(10px); box-shadow: 0 -20px 50px rgba(0,0,0,.45); }
-    .menu-sheet::before { content: ''; width: 44px; height: 5px; border-radius: 3px; background: rgba(255,244,220,.25); margin: -4px auto 2px; }
-    .menu-cont { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 12px; padding: 8px 12px 8px 8px; border-radius: 14px; background: rgba(255,244,220,.06); border: 1px solid rgba(255,244,220,.12); cursor: pointer; text-align: left; font: inherit; color: inherit; }
-    .menu-cont:active { background: rgba(255,244,220,.1); }
-    .menu-cont .av { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(160deg, #8f7bff, #4a3f9a); display: grid; place-items: center; }
-    .menu-cont .av svg { width: 26px; height: 26px; stroke: #fff; fill: none; stroke-width: 1.8; }
-    .menu-cont b { display: block; font-size: 14px; font-weight: 900; } .menu-cont small { font-size: 11.5px; color: rgba(255,244,220,.65); font-weight: 700; }
-    .menu-cont .go { font-family: 'Lilita One', sans-serif; font-size: 15px; color: var(--gold); letter-spacing: .04em; }
-    .menu-play { position: relative; width: 100%; height: 62px; border: none; border-radius: 18px; cursor: pointer; color: #2b1c05;
-      font-family: 'Lilita One', 'Nunito', sans-serif; font-size: 26px; letter-spacing: .05em;
-      background: linear-gradient(180deg, #ffd978, #f2b83e); box-shadow: 0 6px 0 var(--gold-dk), 0 10px 22px rgba(0,0,0,.45), inset 0 2px 0 rgba(255,255,255,.55); transition: transform .06s, box-shadow .06s; }
-    .menu-play:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--gold-dk), 0 4px 10px rgba(0,0,0,.4), inset 0 2px 0 rgba(255,255,255,.4); }
-    .menu-play small { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-family: 'Nunito', sans-serif; font-weight: 900; font-size: 11px; letter-spacing: .12em; color: #7a5212; background: rgba(43,28,5,.12); padding: 4px 8px; border-radius: 999px; }
-    .menu-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-    .menu-mode { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px 10px; border-radius: 16px; cursor: pointer; border: 1px solid rgba(255,244,220,.12); font: inherit; color: inherit;
-      background: rgba(255,244,220,.06); box-shadow: 0 4px 0 rgba(0,0,0,.35); transition: transform .06s, box-shadow .06s, background .15s; }
-    .menu-mode:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
-    .menu-mode svg { width: 30px; height: 30px; stroke: var(--gold); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-    .menu-mode b { font-size: 13px; font-weight: 900; } .menu-mode small { font-size: 10.5px; font-weight: 700; color: rgba(255,244,220,.6); }
-    .menu-foot { display: flex; justify-content: space-between; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,244,220,.45); margin-top: 2px; }
+    /* Polytopia-style main menu (picked from /menu-proposals-2, option A): the
+       live world fills the screen, the wordmark sits on top, equal flat
+       buttons stack at the bottom; New Game / Multiplayer open one sheet each. */
+    .menu-brand { position: absolute; left: 0; right: 0; top: 8%; text-align: center; pointer-events: none; line-height: .9;
+      transition: transform .5s cubic-bezier(.2,.8,.2,1), top .5s cubic-bezier(.2,.8,.2,1); }
+    .menu-overlay.sheet-open .menu-brand { top: 4%; transform: scale(.72); }
+    .menu-brand .hex { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(76px, 20vw, 132px); color: var(--cream); letter-spacing: .02em;
+      text-shadow: 0 3px 0 rgba(0,0,0,.28), 0 12px 26px rgba(0,0,0,.45); }
+    .menu-brand .strat { display: block; font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(46px, 12vw, 82px); letter-spacing: .12em; padding-left: .12em; margin-top: 2px; color: var(--gold);
+      text-shadow: 0 3px 0 rgba(0,0,0,.28), 0 12px 26px rgba(0,0,0,.45); }
+    .menu-stack { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 9%); transform: translateX(-50%); width: min(340px, 86vw); display: flex; flex-direction: column; gap: 10px; }
+    .mbtn { display: flex; align-items: center; justify-content: center; gap: 10px; height: 54px; border: none; border-radius: 14px; cursor: pointer; color: var(--cream); text-decoration: none;
+      font: inherit; font-weight: 900; font-size: 18px; letter-spacing: .04em; text-transform: uppercase; background: #2f8f83; box-shadow: 0 4px 0 #226b62, 0 8px 18px rgba(0,0,0,.3); transition: transform .06s, box-shadow .06s; }
+    .mbtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #226b62, 0 4px 10px rgba(0,0,0,.3); }
+    .mbtn.gold { background: var(--gold); color: #3a2604; box-shadow: 0 4px 0 var(--gold-dk), 0 8px 18px rgba(0,0,0,.3); }
+    .mbtn.quiet { background: rgba(23,34,28,.66); box-shadow: 0 4px 0 rgba(0,0,0,.35), 0 8px 18px rgba(0,0,0,.25); }
+    .mbtn small { font-weight: 800; font-size: 11px; opacity: .75; letter-spacing: .08em; text-transform: none; }
+    .mbtn b { font-weight: 900; }
+    .menu-sheet2 { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 5%); transform: translateX(-50%); width: min(420px, 92vw); display: flex; flex-direction: column; gap: 10px; padding: 16px;
+      border-radius: 22px; background: rgba(23,34,28,.78); backdrop-filter: blur(8px); box-shadow: 0 20px 50px rgba(0,0,0,.45); }
+    .menu-sheet2.hidden, .menu-stack.hidden { display: none; }
+    .menu-sheet2 h2 { margin: 0; font-family: 'Lilita One', sans-serif; font-weight: 400; color: var(--cream); font-size: 26px; text-align: center; letter-spacing: .03em; }
+    .mlabel { font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; color: rgba(255,244,220,.7); text-align: center; }
+    .mtribes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mtribe { position: relative; border-radius: 18px; border: 3px solid transparent; background: rgba(255,244,220,.07); cursor: pointer; color: var(--cream); text-align: left; padding: 12px 14px; display: grid; grid-template-columns: 1fr 56px; align-items: center; gap: 8px; font: inherit; }
+    .mtribe.on { border-color: var(--gold); background: rgba(47,143,131,.7); }
+    .mtribe b { display: block; font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 22px; letter-spacing: .03em; }
+    .mtribe small { font-weight: 800; font-size: 11.5px; opacity: .8; }
+    .mtribe .sig { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; }
+    .mtribe .sig.f { background: radial-gradient(circle at 40% 35%, #ffd978, #b9821a); } .mtribe .sig.n { background: radial-gradient(circle at 40% 35%, #b7a8ff, #4a3f9a); }
+    .mtribe .sig svg { width: 32px; height: 32px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .mpills { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+    .mpill { padding: 8px 14px; border-radius: 999px; border: 2px solid rgba(255,244,220,.35); background: rgba(23,34,28,.5); color: var(--cream); font: inherit; font-weight: 900; font-size: 13px; cursor: pointer; }
+    .mpill.on { background: var(--cream); color: #17221c; border-color: var(--cream); }
+    .menu-foot { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); display: flex; justify-content: center; gap: 14px; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,244,220,.5); pointer-events: none; }
     .menu-foot a { color: inherit; text-decoration: none; }
+    .menu-sky { background: linear-gradient(180deg, rgba(6,14,10,.35) 0%, rgba(6,14,10,0) 30%, rgba(6,14,10,0) 55%, rgba(6,14,10,.6) 100%); }
     @media (min-width: 761px) {
-      .menu-brand { left: 6vw; right: auto; top: 12vh; text-align: left; transform-origin: 0 0; }
-      .menu-overlay.focused .menu-brand { top: 6vh; transform: scale(.6) rotate(-3deg); }
-      .menu-sheet { left: 5vw; right: auto; bottom: 7vh; width: 420px; border-radius: 26px; border: 1px solid rgba(255,244,220,.12); padding: 18px; }
-      .menu-sheet::before { display: none; }
-      .menu-sky { background: linear-gradient(90deg, rgba(6,14,10,.85) 0%, rgba(6,14,10,.45) 42%, rgba(6,14,10,0) 70%), linear-gradient(180deg, rgba(6,14,10,.5), transparent 30%); }
+      .menu-stack { bottom: 8%; }
     }
 
     /* ── Custom-game setup panel ── */
@@ -1482,20 +1486,40 @@
           <a class="menu-chip" href="replays"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z"/></svg>Replays</a>
         </div>
         <div class="menu-brand"><div class="hex">TINY</div><div class="strat">TRIBES</div></div>
-        <div class="menu-sheet">
-          <button class="menu-cont" id="menuContinue" data-cam="temple">
-            <div class="av"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 8v8M8 10l4 2 4-2"/></svg></div>
-            <div><b id="menuContinueTitle">Continue</b><small id="menuContinueSub">Saved local game</small></div>
-            <div class="go">RESUME ›</div>
-          </button>
-          <button class="menu-play" id="menuVsAI" data-cam="machine">PLAY VS AI <small>PICK LEVEL</small></button>
-          <div class="menu-modes">
-            <button class="menu-mode" id="menu2P" data-cam="duel"><svg viewBox="0 0 24 24"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="9" r="3"/><path d="M2 20c0-3 3-5 6-5s6 2 6 5M12 20c0-3 2-5 4-5s6 2 6 5"/></svg><b>2 Players</b><small>one device</small></button>
-            <button class="menu-mode" id="menuCustom" data-cam="camps"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="7" cy="17" r="2"/></svg><b>Custom</b><small>2 – 6 seats</small></button>
-            <button class="menu-mode" id="menuOnline" data-cam="portals"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg><b>Online</b><small>rooms &amp; codes</small></button>
-          </div>
-          <div class="menu-foot"><span id="menuRules"></span><span>interslavic.space</span></div>
+        <div class="menu-stack" id="menuStack">
+          <button class="mbtn gold" id="menuNew">New game</button>
+          <button class="mbtn" id="menuMultiplayer">Multiplayer</button>
+          <button class="mbtn quiet" id="menuContinue"><b id="menuContinueTitle">Continue</b><small id="menuContinueSub">Saved local game</small></button>
+          <a class="mbtn quiet" href="replays">Replays</a>
         </div>
+        <!-- New game: tribe, then opponent (a friend on this device or an AI level), then Start -->
+        <div class="menu-sheet2 hidden" id="menuNewSheet">
+          <h2>New game</h2>
+          <div class="mlabel">Your tribe</div>
+          <div class="mtribes">
+            <button class="mtribe on" data-tribe="agrar"><span><b>Farmers</b><small>Fields, roads, walls</small></span><span class="sig f"><svg viewBox="0 0 24 24"><path d="M4 20c4-8 12-8 16 0M12 4v8M8 8l4 4 4-4"/></svg></span></button>
+            <button class="mtribe" data-tribe="temple"><span><b>Nomads</b><small>Horses, raids, tents</small></span><span class="sig n"><svg viewBox="0 0 24 24"><path d="M4 20l8-14 8 14zM9 20v-5h6v5"/></svg></span></button>
+          </div>
+          <div class="mlabel">Opponent</div>
+          <div class="mpills" id="menuOppPills">
+            <button class="mpill" data-opp="friend">Friend, same device</button>
+            <button class="mpill" data-opp="easy">Easy</button>
+            <button class="mpill on" data-opp="normal">Normal</button>
+            <button class="mpill" data-opp="hard">Hard</button>
+            <button class="mpill" data-opp="expert">Expert</button>
+          </div>
+          <button class="mbtn gold" id="menuStart">Start</button>
+          <button class="mbtn quiet" data-menu-back>Back</button>
+        </div>
+        <!-- Multiplayer: same device, online rooms, custom seats -->
+        <div class="menu-sheet2 hidden" id="menuMpSheet">
+          <h2>Multiplayer</h2>
+          <button class="mbtn" id="menu2P">Same device <small>pass &amp; play</small></button>
+          <button class="mbtn" id="menuOnline">Online <small>rooms &amp; codes</small></button>
+          <button class="mbtn quiet" id="menuCustom">Custom seats <small>2 – 6, humans or AI</small></button>
+          <button class="mbtn quiet" data-menu-back>Back</button>
+        </div>
+        <div class="menu-foot"><span id="menuRules"></span><span>·</span><span>interslavic.space</span></div>
       </div>
 
       <!-- Custom local game setup: player count + per-seat human/AI picker -->
