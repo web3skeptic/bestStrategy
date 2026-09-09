@@ -334,6 +334,10 @@ export class Renderer3D {
 
   private moveAnims = new Map<string, { from: HexCoord; start: number }>();
   private unitFacing = new Map<string, { cur: number; tgt: number }>(); // animated facing (rot.y)
+  // Units idle facing the camera (fixed-perspective pass); faceUnitToward holds
+  // an explicit facing (e.g. toward an attack target) until this timestamp.
+  private facingHold = new Map<string, number>();
+  private static readonly FACING_HOLD_MS = 900;
   private unitFaded = new Map<string, boolean>(); // current forest-stealth fade state
   private lastFacingNow = 0;
   // Polytopia-style Capital-occupant presentation (see CAPITAL_OCCUPANT_OFFSET
@@ -400,102 +404,43 @@ export class Renderer3D {
     this.scene.background = new THREE.Color(0x12131a);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
-    // Steeper, more top-down default pitch (~33° from vertical vs the old ~48°):
-    // a flatter, more bird's-eye view makes individual hexes easier to pick and
-    // keeps raised hills from hiding tiles behind them. Distance is scaled to
-    // 1/1.3 of the original (0,20,13) framing — same pitch, ~30% closer, so the
-    // whole board reads ~30% larger on screen (this is the base offset that
-    // both the initial view AND focusOnHex's default zoom dolly from).
-    this.camera.position.set(0, 15.4, 10);
+    // Fixed perspective (Polytopia-style camera pass): ONE pitch, ONE yaw, no
+    // orbiting — ~50° from vertical, low enough that every unit's face reads
+    // (units idle facing the camera, see advanceAnimations) while the board
+    // still lays out clearly and hexes stay easy to tap. Pan and zoom remain.
+    // Same ~18.4 distance as the old default so focusOnHex's dolly feels alike.
+    const FIXED_POLAR = THREE.MathUtils.degToRad(50), START_DIST = 18.4;
+    this.camera.position.set(0, Math.cos(FIXED_POLAR) * START_DIST, Math.sin(FIXED_POLAR) * START_DIST);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 6;
     this.controls.maxDistance = 70;
-    // Clamp the tilt well above the horizon (~72° from vertical). Letting the
-    // player flatten the view to near-horizontal made hex raycast picking flaky
-    // and let hills occlude the tiles behind them, so the low-angle range is cut.
-    this.controls.maxPolarAngle = Math.PI * 0.40; // stay comfortably above the board
+    this.controls.minPolarAngle = FIXED_POLAR;
+    this.controls.maxPolarAngle = FIXED_POLAR;
+    this.controls.minAzimuthAngle = 0;
+    this.controls.maxAzimuthAngle = 0;
     this.controls.enablePan = true;
-    this.controls.enableRotate = true;
+    this.controls.enableRotate = false; // fixed perspective — no orbit on any input
     this.controls.enableZoom = true;
     // Pan parallel to the ground plane (map-style) rather than in screen space,
     // so a one-finger drag slides the camera across the board.
     this.controls.screenSpacePanning = false;
-    // Mobile (touch) gesture map: one finger pans the camera position across the
-    // board; two fingers pinch-to-zoom AND orbit the view angle (azimuth + pitch).
-    this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
-    // Desktop mouse map: PRIMARY (left) drag pans the camera across the map — parity
-    // with mobile's one-finger pan, so the natural drag moves the view instead of
-    // being stuck orbiting the home temple. Rotate/orbit moves to the RIGHT button
-    // (like mobile's secondary two-finger orbit); middle-drag dollies; wheel zooms.
+    // Mobile (touch) gesture map: one finger pans the camera across the board;
+    // two fingers pinch-to-zoom (and pan). No rotate gesture at all.
+    this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
+    // Desktop mouse map: any drag pans, middle-drag dollies, wheel zooms.
     this.controls.mouseButtons = {
       LEFT: THREE.MOUSE.PAN,
       MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: THREE.MOUSE.ROTATE,
+      RIGHT: THREE.MOUSE.PAN,
     };
     // Snappier pan (default is 1.0). panSpeed affects mouse + touch; kept high so
-    // one-finger pan feels fast. rotateSpeed only affects desktop mouse-drag orbit
-    // now (two-finger touch rotate is handled manually below via twist).
-    this.controls.rotateSpeed = 1.1;
+    // one-finger pan feels fast.
     this.controls.panSpeed = 2.0;
 
-    // ── Touch two-finger camera: map-style TWIST-to-rotate + pinch-zoom ──
-    // OrbitControls' built-in DOLLY_ROTATE rotates from the two-finger MIDPOINT
-    // ("hold one, drag the other"), which felt confusing and coupled zoom↔rotate.
-    // Instead, while ≥2 fingers are down we turn OrbitControls' rotate OFF (so its
-    // two-finger path is pure pinch-zoom) and rotate the azimuth ourselves from the
-    // TWIST — the change in angle of the finger-to-finger vector, like Google/Apple
-    // Maps. Pitch is kept locked during the gesture (no accidental tilt). Desktop
-    // fires no touch events, so its mouse map (left-pan / right-orbit / wheel-zoom)
-    // is untouched.
-    const TWIST_DEADZONE = 0.006; // rad per move: ignore micro-jitter
-    const TWIST_MULT = 1.0;       // 1:1 twist, like a paper map under your fingers
-    const _twOff = new THREE.Vector3();
-    const _twSph = new THREE.Spherical();
-    let twistPrev: number | null = null;
-    const twoFingerAngle = (t: TouchList) =>
-      Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX);
-
-    canvas.addEventListener('touchstart', (e) => {
-      if (e.touches.length >= 2) {
-        this.controls.enableRotate = false;              // pinch-zoom only from OrbitControls
-        const pol = this.controls.getPolarAngle();
-        this.controls.minPolarAngle = this.controls.maxPolarAngle = pol; // freeze tilt
-        twistPrev = twoFingerAngle(e.touches);
-      }
-    }, { passive: true });
-
-    canvas.addEventListener('touchmove', (e) => {
-      if (e.touches.length < 2 || twistPrev === null) return;
-      const cur = twoFingerAngle(e.touches);
-      let d = cur - twistPrev;
-      if (d > Math.PI) d -= 2 * Math.PI;               // unwrap the ±π seam
-      else if (d < -Math.PI) d += 2 * Math.PI;
-      twistPrev = cur;
-      if (Math.abs(d) < TWIST_DEADZONE) return;
-      // Twisting the fingers turns the map with them (verified empirically:
-      // clockwise twist → world rotates clockwise under the fingers). Orbit
-      // azimuth about controls.target; the render-loop controls.update() reads
-      // camera.position back each frame, so damping isn't fought.
-      _twOff.copy(this.camera.position).sub(this.controls.target);
-      _twSph.setFromVector3(_twOff);
-      _twSph.theta += d * TWIST_MULT;
-      _twOff.setFromSpherical(_twSph);
-      this.camera.position.copy(this.controls.target).add(_twOff);
-    }, { passive: true });
-
-    const endTwoFinger = (e: TouchEvent) => {
-      if (e.touches.length < 2) {                        // dropped below two fingers
-        this.controls.enableRotate = true;               // restore desktop/other orbit
-        this.controls.minPolarAngle = 0;
-        this.controls.maxPolarAngle = Math.PI * 0.40;    // restore tilt range (matches init clamp)
-        twistPrev = null;                                // no jump when a finger lingers
-      }
-    };
-    canvas.addEventListener('touchend', endTwoFinger);
-    canvas.addEventListener('touchcancel', endTwoFinger);
+    // (The old two-finger twist-to-rotate gesture is gone with the fixed perspective.)
 
     // Main lighting — dimmed so the map / terrain / structures read less bright.
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.48));
@@ -766,19 +711,7 @@ export class Renderer3D {
 
     const target = this.controls.target;
 
-    // Rotate the view around the target (azimuth only), mirroring the two-finger
-    // twist path so OrbitControls damping isn't fought.
-    const ROT_SPEED = 1.6; // rad/s
-    let dTheta = 0;
-    if (this.camKeys.has('rotL')) dTheta += ROT_SPEED * dt;
-    if (this.camKeys.has('rotR')) dTheta -= ROT_SPEED * dt;
-    if (dTheta !== 0) {
-      const off = this.camera.position.clone().sub(target);
-      const sph = new THREE.Spherical().setFromVector3(off);
-      sph.theta += dTheta;
-      off.setFromSpherical(sph);
-      this.camera.position.copy(target).add(off);
-    }
+    // Fixed perspective: the rotate keys (Q/E) are accepted but do nothing.
 
     // Pan the target (and camera) across the ground plane, relative to the current
     // facing. Speed scales with zoom distance so it feels consistent at any zoom.
@@ -837,7 +770,11 @@ export class Renderer3D {
     const from = hexToWorld(unit.pos);
     const to = hexToWorld(target);
     const dx = to.x - from.x, dz = to.z - from.z;
-    if (dx || dz) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type);
+    const player = this.lastState?.players.find(p => p.id === unit.playerId);
+    if (dx || dz) {
+      f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type, player?.faction);
+      this.facingHold.set(unitId, performance.now() + Renderer3D.FACING_HOLD_MS);
+    }
   }
 
   // Expanding ground ring marking a splash/AoE impact, centred on a tile.
@@ -1863,7 +1800,9 @@ export class Renderer3D {
         // unit's heading; the outer group carries position + the HP bar (so the
         // billboarded HP bar never inherits the unit's facing rotation).
         const model = this.buildUnitMesh(unit, colorNum, player.faction);
-        const off = forwardOffset(unit.type, player.faction);
+        // Spawn already facing the camera (see advanceAnimations) — no turn-in.
+        const w0 = hexToWorld(unit.pos);
+        const off = Math.atan2(this.camera.position.x - w0.x, this.camera.position.z - w0.z) + forwardOffset(unit.type, player.faction);
         model.rotation.y = off;
         mesh = new THREE.Group();
         mesh.add(model);
@@ -1910,7 +1849,7 @@ export class Renderer3D {
         const toLogical = hexToWorld(unit.pos);
         const dx = toLogical.x - fromLogical.x, dz = toLogical.z - fromLogical.z;
         const f = this.unitFacing.get(unit.id);
-        if (f && (dx || dz)) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type);
+        if (f && (dx || dz)) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type, player.faction);
         if (t >= 1) this.moveAnims.delete(unit.id);
       }
       mesh.position.set(x, y, z);
@@ -1927,6 +1866,7 @@ export class Renderer3D {
         this.unitHpBars.delete(id);
         this.toMoveTintIds.delete(id);
         this.unitFacing.delete(id);
+        this.facingHold.delete(id);
         this.capitalOccupants.delete(id);
         this.capitalOccupantAngle.delete(id);
         this.unitFaded.delete(id);
@@ -2248,20 +2188,21 @@ export class Renderer3D {
       const base = (mesh.userData.pulseBaseOpacity as number) ?? 0.5;
       (mesh.material as THREE.MeshBasicMaterial).opacity = base * pulseOsc;
     }
-    // Capital occupants always face the camera (Polytopia-style presentation
-    // pass) — reads oddly to have a unit standing in the foreground of the
-    // Capital but facing some unrelated gameplay direction. Overrides the
-    // facing TARGET only; the actual rotation still glides toward it at the
-    // normal TURN_SPEED via the existing smoothing loop just below, same as
-    // every other facing change.
-    if (this.capitalOccupants.size > 0 && this.lastState) {
-      for (const [unitId, capHex] of this.capitalOccupants) {
+    // Every idle unit faces the camera (fixed-perspective pass — the whole
+    // point of the lower fixed pitch is that faces read). Exceptions: a unit
+    // mid-move faces its direction of travel (set in syncUnits), and a unit
+    // that just attacked keeps facing its target for FACING_HOLD_MS. Only the
+    // facing TARGET is set here; the rotation glides at TURN_SPEED below.
+    if (this.unitFacing.size > 0 && this.lastState) {
+      for (const [unitId, f] of this.unitFacing) {
+        if (this.moveAnims.has(unitId)) continue;
+        const hold = this.facingHold.get(unitId);
+        if (hold !== undefined) { if (now < hold) continue; this.facingHold.delete(unitId); }
+        const mesh = this.unitMeshes.get(unitId);
         const unit = this.lastState.units.find(u => u.id === unitId);
-        const f = this.unitFacing.get(unitId);
-        if (!unit || !f) continue;
-        const { x: cx, z: cz } = hexToWorld(capHex);
+        if (!mesh || !unit) continue;
         const player = this.lastState.players.find(p => p.id === unit.playerId);
-        f.tgt = Math.atan2(this.camera.position.x - cx, this.camera.position.z - cz) + forwardOffset(unit.type, player?.faction);
+        f.tgt = Math.atan2(this.camera.position.x - mesh.position.x, this.camera.position.z - mesh.position.z) + forwardOffset(unit.type, player?.faction);
       }
     }
     // Smoothly rotate each unit toward its facing target (set by moves/attacks).
