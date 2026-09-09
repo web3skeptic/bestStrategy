@@ -81,6 +81,9 @@ app.get('/nomad-proposals', (_req, res) => {
 app.get('/menu-proposals-2', (_req, res) => {
   res.sendFile(path.join(distPath, 'menu-proposals-2.html'));
 });
+app.get('/fertile-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'fertile-proposals.html'));
+});
 app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
