@@ -24,6 +24,7 @@ export default defineConfig({
         hatProposals: resolve(__dirname, "hat-proposals.html"),
         faceProposals: resolve(__dirname, "face-proposals.html"),
         nomadProposals: resolve(__dirname, "nomad-proposals.html"),
+        menuProposals2: resolve(__dirname, "menu-proposals-2.html"),
       },
     },
   },
