@@ -35,7 +35,7 @@ function ring(g: THREE.Object3D, r: number, n: number, h: number, m: THREE.Mater
 export interface FertileOption { id: string; name: string; blurb: string; build: (owner: number | null) => THREE.Group; }
 
 // A · Sacred Oak — an ancient oak on a grass mound, owner ribbons on the boughs.
-const sacredOak = (owner: number | null): THREE.Group => {
+export const sacredOak = (owner: number | null): THREE.Group => {
   const g = new THREE.Group(); const t = trimMat(owner);
   plate(g, 0.9, 0.06, mat(GRASS_DK)); plate(g, 0.55, 0.12, mat(SOIL), 0.06);
   cyl(g, 0.16, 0.24, 0.8, 8, mat(BARK), 0, 0.58, 0);

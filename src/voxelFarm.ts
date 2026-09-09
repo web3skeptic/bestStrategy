@@ -6,6 +6,7 @@
 // (0 = healthy, 1 = damaged, 2 = heavily damaged) so a Farm under fire
 // visibly degrades before it's destroyed outright (structure combat pass).
 import * as THREE from 'three';
+import { sacredOak } from './proposals/fertileSites';
 
 const SOIL = 0x8a6b45;
 const SOIL_DK = 0x5f4a30;
@@ -181,55 +182,12 @@ function cyl(rTop: number, rBot: number, h: number, seg: number, material: THREE
   return m;
 }
 
+// Fertile Site — the Sacred Oak (picked on /fertile-proposals): an ancient oak
+// on a mound inside a stone ring, owner ribbons tied in its boughs. Grey
+// ribbons while neutral. Deliberately NOT a farm any more — it used to be a
+// bigger golden plot with a windmill and read as just another Farm.
 export function buildFertileSite(ownerColor: number | null): THREE.Group {
-  const g = new THREE.Group();
-  const soilMat = mat(SOIL);
-  const cropMat = mat(FERTILE_CROP_GOLD, 0.8);
-  const trimColor = ownerColor ?? NEUTRAL_TRIM;
-  const trimMat = new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.6, metalness: 0.1 });
-
-  // Larger hex-prism plot than an ordinary Farm.
-  const plotR = 0.92;
-  g.add(hexPlot(plotR, 0.08, soilMat, 0.04));
-
-  // Denser golden crop rows, filling most of the plot.
-  const rows = 4, cols = 5;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x = (c - (cols - 1) / 2) * 0.30;
-      const z = (r - (rows - 1) / 2) * 0.30 - 0.05;
-      if (Math.hypot(x, z) > plotR * 0.82) continue; // keep within the hex footprint
-      g.add(cropCluster(cropMat, x, z, true));
-    }
-  }
-
-  // Windmill landmark — a tower + 4 blades, owner-tinted trim ring.
-  const millX = 0.5, millZ = 0.5;
-  const towerMat = mat(MILL_WALL, 0.8);
-  g.add(cyl(0.14, 0.2, 0.5, 8, towerMat, millX, 0.25, millZ));
-  g.add(cyl(0.16, 0.16, 0.04, 8, trimMat, millX, 0.42, millZ)); // owner-tinted trim band
-  const roofMat = mat(MILL_ROOF, 0.7);
-  g.add(cone(0.17, 0.16, roofMat, millX, 0.58, millZ));
-
-  const bladeMat = mat(BLADE, 0.6);
-  const bladeHub = new THREE.Group();
-  bladeHub.position.set(millX, 0.52, millZ + 0.18);
-  for (let i = 0; i < 4; i++) {
-    const blade = block(0.05, 0.32, 0.02, bladeMat, 0, 0.16, 0);
-    blade.rotation.z = (i * Math.PI) / 2;
-    bladeHub.add(blade);
-  }
-  g.add(bladeHub);
-
-  // Golden banner posts at two opposite hex corners — richer than a Farm's
-  // plain fence, and doubles as the "who controls this" ownership tell
-  // alongside the windmill trim.
-  const bannerMat = trimMat;
-  for (const [x, z] of [hexCorners(plotR + 0.05)[0]!, hexCorners(plotR + 0.05)[3]!]) {
-    g.add(block(0.05, 0.22, 0.05, mat(FENCE, 0.9), x, 0.11, z));
-    g.add(block(0.14, 0.1, 0.02, bannerMat, x, 0.2, z));
-  }
-
+  const g = sacredOak(ownerColor);
   g.scale.setScalar(FERTILE_SCALE);
   return g;
 }
