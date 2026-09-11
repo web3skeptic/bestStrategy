@@ -334,10 +334,6 @@ export class Renderer3D {
 
   private moveAnims = new Map<string, { from: HexCoord; start: number }>();
   private unitFacing = new Map<string, { cur: number; tgt: number }>(); // animated facing (rot.y)
-  // Units idle facing the camera (fixed-perspective pass); faceUnitToward holds
-  // an explicit facing (e.g. toward an attack target) until this timestamp.
-  private facingHold = new Map<string, number>();
-  private static readonly FACING_HOLD_MS = 900;
   private unitFaded = new Map<string, boolean>(); // current forest-stealth fade state
   private lastFacingNow = 0;
   // Polytopia-style Capital-occupant presentation (see CAPITAL_OCCUPANT_OFFSET
@@ -771,10 +767,7 @@ export class Renderer3D {
     const to = hexToWorld(target);
     const dx = to.x - from.x, dz = to.z - from.z;
     const player = this.lastState?.players.find(p => p.id === unit.playerId);
-    if (dx || dz) {
-      f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type, player?.faction);
-      this.facingHold.set(unitId, performance.now() + Renderer3D.FACING_HOLD_MS);
-    }
+    if (dx || dz) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type, player?.faction);
   }
 
   // Expanding ground ring marking a splash/AoE impact, centred on a tile.
@@ -1800,7 +1793,9 @@ export class Renderer3D {
         // unit's heading; the outer group carries position + the HP bar (so the
         // billboarded HP bar never inherits the unit's facing rotation).
         const model = this.buildUnitMesh(unit, colorNum, player.faction);
-        // Spawn already facing the camera (see advanceAnimations) — no turn-in.
+        // A new unit spawns facing the camera (a static one-off — units keep
+        // whatever way they last moved/attacked afterwards; they do NOT track
+        // the camera, that read as staring at the player).
         const w0 = hexToWorld(unit.pos);
         const off = Math.atan2(this.camera.position.x - w0.x, this.camera.position.z - w0.z) + forwardOffset(unit.type, player.faction);
         model.rotation.y = off;
@@ -1866,7 +1861,6 @@ export class Renderer3D {
         this.unitHpBars.delete(id);
         this.toMoveTintIds.delete(id);
         this.unitFacing.delete(id);
-        this.facingHold.delete(id);
         this.capitalOccupants.delete(id);
         this.capitalOccupantAngle.delete(id);
         this.unitFaded.delete(id);
@@ -2188,23 +2182,8 @@ export class Renderer3D {
       const base = (mesh.userData.pulseBaseOpacity as number) ?? 0.5;
       (mesh.material as THREE.MeshBasicMaterial).opacity = base * pulseOsc;
     }
-    // Every idle unit faces the camera (fixed-perspective pass — the whole
-    // point of the lower fixed pitch is that faces read). Exceptions: a unit
-    // mid-move faces its direction of travel (set in syncUnits), and a unit
-    // that just attacked keeps facing its target for FACING_HOLD_MS. Only the
-    // facing TARGET is set here; the rotation glides at TURN_SPEED below.
-    if (this.unitFacing.size > 0 && this.lastState) {
-      for (const [unitId, f] of this.unitFacing) {
-        if (this.moveAnims.has(unitId)) continue;
-        const hold = this.facingHold.get(unitId);
-        if (hold !== undefined) { if (now < hold) continue; this.facingHold.delete(unitId); }
-        const mesh = this.unitMeshes.get(unitId);
-        const unit = this.lastState.units.find(u => u.id === unitId);
-        if (!mesh || !unit) continue;
-        const player = this.lastState.players.find(p => p.id === unit.playerId);
-        f.tgt = Math.atan2(this.camera.position.x - mesh.position.x, this.camera.position.z - mesh.position.z) + forwardOffset(unit.type, player?.faction);
-      }
-    }
+    // Units keep the facing their last move/attack gave them — no camera
+    // tracking (it read as every unit staring at the player).
     // Smoothly rotate each unit toward its facing target (set by moves/attacks).
     if (this.unitFacing.size > 0) {
       const dt = Math.min((now - this.lastFacingNow) / 1000, 0.1);
