@@ -1824,7 +1824,7 @@ export class Renderer3D {
       // camera-follow (see getDisplayHexPos) — never read for anything
       // gameplay-affecting, which all keeps reading unit.pos straight off
       // GameState like before.
-      const onCapital = state.capitals.some(c => hexKey(c.pos) === key);
+      const onCapital = state.capitals.some(c => hexKey(c.pos) === key) || state.fertileSites.some(f => hexKey(f.pos) === key);
       if (onCapital) this.capitalOccupants.set(unit.id, { ...unit.pos });
       else if (this.capitalOccupants.delete(unit.id)) this.capitalOccupantAngle.delete(unit.id);
 
@@ -1889,9 +1889,11 @@ export class Renderer3D {
   // callers in syncUnits/advanceAnimations) so nothing computes a separate,
   // possibly-inconsistent Capital offset of its own.
   private getDisplayHexPos(state: GameState, hex: HexCoord, unitId: string): { x: number; y: number; z: number } {
-    const capital = state.capitals.find(c => hexKey(c.pos) === hexKey(hex));
+    // Capitals AND Fertile Sites (the Sacred Oak) are tall landmarks that
+    // would swallow a unit standing on them — both get the foreground offset.
+    const landmark = state.capitals.some(c => hexKey(c.pos) === hexKey(hex)) || state.fertileSites.some(f => hexKey(f.pos) === hexKey(hex));
     const { x: cx, z: cz } = hexToWorld(hex);
-    if (!capital) return { x: cx, y: this.elevationAt(state, hex), z: cz };
+    if (!landmark) return { x: cx, y: this.elevationAt(state, hex), z: cz };
     const angle = this.smoothedCapitalOccupantAngle(unitId, cx, cz);
     const off = CAPITAL_OCCUPANT_OFFSET * HEX_R;
     const groundY = (state.hills.has(hexKey(hex)) ? HILL_ELEV : 0) + CAPITAL_OCCUPANT_Y_EPSILON;

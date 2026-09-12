@@ -172,7 +172,7 @@ const MILL_WALL = 0xb7a98a;
 const MILL_ROOF = 0x6b4a2e;
 const BLADE = 0xe8ddc8;
 const NEUTRAL_TRIM = 0x8a8a8a;
-const FERTILE_SCALE = 1.3; // noticeably bigger than an ordinary Farm (FARM_SCALE 1.15)
+const FERTILE_SCALE = 1.05; // the Sacred Oak: kept modest so a unit standing on the tile stays visible
 
 function cyl(rTop: number, rBot: number, h: number, seg: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, seg), material);

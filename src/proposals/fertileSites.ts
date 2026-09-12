@@ -35,16 +35,22 @@ function ring(g: THREE.Object3D, r: number, n: number, h: number, m: THREE.Mater
 export interface FertileOption { id: string; name: string; blurb: string; build: (owner: number | null) => THREE.Group; }
 
 // A · Sacred Oak — an ancient oak on a grass mound, owner ribbons on the boughs.
+// The tree sits toward the BACK of the tile (-z, away from the game's fixed
+// camera) with a slimmer trunk and canopy, so a unit standing on the tile
+// (drawn in the foreground, see the renderer's landmark offset) is never
+// swallowed by the trunk.
 export const sacredOak = (owner: number | null): THREE.Group => {
   const g = new THREE.Group(); const t = trimMat(owner);
-  plate(g, 0.9, 0.06, mat(GRASS_DK)); plate(g, 0.55, 0.12, mat(SOIL), 0.06);
-  cyl(g, 0.16, 0.24, 0.8, 8, mat(BARK), 0, 0.58, 0);
-  for (const [dx, dz, ry] of [[0.28, 0.1, 0.4], [-0.25, -0.15, -0.5], [0.05, -0.3, 0.9]]) cyl(g, 0.05, 0.08, 0.6, 6, mat(BARK), dx as number * 0.7, 0.95, dz as number * 0.7, { z: (dx as number) * -1.2, x: (dz as number) * 1.2, y: ry as number });
-  sph(g, 0.55, mat(LEAF), 0, 1.35, 0); sph(g, 0.38, mat(LEAF_LT), 0.35, 1.5, 0.15); sph(g, 0.34, mat(LEAF_LT), -0.32, 1.45, -0.2); sph(g, 0.3, mat(LEAF), 0.05, 1.7, -0.3);
-  for (const [x, z] of [[0.45, 0.35], [-0.5, 0.2], [0.1, -0.55], [-0.2, 0.5]]) ribbon(g, x as number, 1.15, z as number, 0.45, t, (x as number) * 2);
-  ring(g, 0.62, 8, 0.12, mat(STONE_MID), 0.12);
-  cyl(g, 0.1, 0.12, 0.14, 6, mat(STONE), 0.42, 0.25, -0.1); sph(g, 0.05, mat(FRUIT, 0.7), 0.42, 0.36, -0.1); // offering stone
-  flowers(g, 10, 0.66, 0.84, 5);
+  const bz = -0.28; // tree centre, pushed back
+  plate(g, 0.9, 0.06, mat(GRASS_DK));
+  const mound = cyl(g, 0.48, 0.5, 0.12, 6, mat(SOIL), 0, 0.12, bz, { y: Math.PI / 6 }); mound.position.y = 0.12;
+  cyl(g, 0.12, 0.18, 0.75, 8, mat(BARK), 0, 0.55, bz);
+  for (const [dx, dz, ry] of [[0.28, 0.1, 0.4], [-0.25, -0.15, -0.5], [0.05, -0.3, 0.9]]) cyl(g, 0.04, 0.07, 0.5, 6, mat(BARK), dx as number * 0.6, 0.9, bz + (dz as number) * 0.6, { z: (dx as number) * -1.2, x: (dz as number) * 1.2, y: ry as number });
+  sph(g, 0.44, mat(LEAF), 0, 1.22, bz); sph(g, 0.3, mat(LEAF_LT), 0.3, 1.34, bz + 0.1); sph(g, 0.27, mat(LEAF_LT), -0.28, 1.3, bz - 0.15); sph(g, 0.24, mat(LEAF), 0.04, 1.52, bz - 0.22);
+  for (const [x, z] of [[0.38, 0.28], [-0.42, 0.18], [0.1, -0.45], [-0.18, 0.4]]) ribbon(g, x as number, 1.05, bz + (z as number), 0.4, t, (x as number) * 2);
+  for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; if (Math.sin(a) > 0.6) continue; box(g, 0.12, 0.12, 0.09, mat(STONE_MID), Math.cos(a) * 0.56, 0.06, bz + Math.sin(a) * 0.56, { y: -a }); } // stone ring, open at the front
+  cyl(g, 0.09, 0.11, 0.12, 6, mat(STONE), 0.5, 0.12, bz - 0.15); sph(g, 0.045, mat(FRUIT, 0.7), 0.5, 0.22, bz - 0.15); // offering stone
+  flowers(g, 8, 0.66, 0.84, 5);
   return g;
 };
 
