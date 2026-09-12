@@ -105,7 +105,7 @@ function emit(s: ChatSession, type: ChatEvent['type'], text?: string): void {
 
 // ── System prompt ─────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are the in-game engineering assistant for **Tiny Tribes** (repo/service name game-upgradable), a hex strategy game.
+const SYSTEM_PROMPT = `You are the in-game engineering assistant for **Tactical Tribes** (repo/service name game-upgradable), a hex strategy game.
 
 Your working directory IS the live deployment: ${REPO_ROOT}. It is a git repository and you may commit to it.
 

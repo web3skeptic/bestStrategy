@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Tiny Tribes</title>
+  <title>Tactical Tribes</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -526,9 +526,9 @@
     .menu-brand { position: absolute; left: 0; right: 0; top: 8%; text-align: center; pointer-events: none; line-height: .9;
       transition: transform .5s cubic-bezier(.2,.8,.2,1), top .5s cubic-bezier(.2,.8,.2,1); }
     .menu-overlay.sheet-open .menu-brand { top: 4%; transform: scale(.72); }
-    .menu-brand .hex { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(76px, 20vw, 132px); color: var(--cream); letter-spacing: .02em;
+    .menu-brand .hex { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(50px, 12vw, 100px); color: var(--cream); letter-spacing: .02em;
       text-shadow: 0 3px 0 rgba(0,0,0,.28), 0 12px 26px rgba(0,0,0,.45); }
-    .menu-brand .strat { display: block; font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(46px, 12vw, 82px); letter-spacing: .12em; padding-left: .12em; margin-top: 2px; color: var(--gold);
+    .menu-brand .strat { display: block; font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(42px, 10.5vw, 84px); letter-spacing: .14em; padding-left: .14em; margin-top: 2px; color: var(--gold);
       text-shadow: 0 3px 0 rgba(0,0,0,.28), 0 12px 26px rgba(0,0,0,.45); }
     .menu-stack { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 9%); transform: translateX(-50%); width: min(340px, 86vw); display: flex; flex-direction: column; gap: 10px; }
     .mbtn { display: flex; align-items: center; justify-content: center; gap: 10px; height: 54px; border: none; border-radius: 14px; cursor: pointer; color: var(--cream); text-decoration: none;
@@ -1485,7 +1485,7 @@
         <div class="menu-top">
           <a class="menu-chip" href="replays"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z"/></svg>Replays</a>
         </div>
-        <div class="menu-brand"><div class="hex">TINY</div><div class="strat">TRIBES</div></div>
+        <div class="menu-brand"><div class="hex">TACTICAL</div><div class="strat">TRIBES</div></div>
         <div class="menu-stack" id="menuStack">
           <button class="mbtn gold" id="menuNew">New game</button>
           <button class="mbtn" id="menuMultiplayer">Multiplayer</button>
