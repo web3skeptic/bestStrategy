@@ -133,6 +133,19 @@ let spectatorMode = false;
 let myPlayerSlot = 0;
 let mpClient: MultiplayerClient | null = null;
 
+// Online session bookkeeping, used to get back into the same room/game after a
+// dropped connection.
+let mpRoomId: string | null = null;            // room we're seated (or waiting) in
+let mpSpectatingGameId: string | null = null;  // game we're watching
+let mpReconnecting = false;                    // logged in again, rejoin still to send
+let mpRetryTimer: number | null = null;
+let mpRetryCount = 0;
+
+// Instant selection (online): the latest select/deselect applied locally while
+// actions are still awaiting the server. Re-applied on top of replies to older
+// actions so the selection doesn't flicker back. See sendOrCall.
+let pendingLocalSelection: (() => void) | null = null;
+
 // Optimistic-research rollback snapshot (MP only). Set when a research purchase
 // is applied locally before the server confirms; cleared on the next authoritative
 // state_update, or restored if the server rejects the action.
@@ -377,8 +390,22 @@ function fillOpponentPortraits(): void {
 
 // ── sendOrCall: in multiplayer mode send action to server; locally call fn ──
 
+function isSelectionAction(action: object): boolean {
+  const t = (action as { type?: string }).type;
+  return t === 'action_select_unit' || t === 'action_select_temple' || t === 'action_deselect';
+}
+
 function sendOrCall(action: object, localFn: () => void): void {
   if (multiplayerMode && mpClient) {
+    // Selection changes only UI state, so apply it locally at once instead of
+    // waiting a round-trip for the server's echo (which used to make every tap
+    // lag on a slow connection). The server's reply then confirms it.
+    if (isSelectionAction(action) && !spectatorMode) {
+      try { localFn(); } catch { /* the server's reply will correct it */ }
+      if (mpClient.sendAction(action as Parameters<MultiplayerClient['sendAction']>[0])) pendingLocalSelection = localFn;
+      render();
+      return;
+    }
     mpClient.sendAction(action as Parameters<MultiplayerClient['sendAction']>[0]);
   } else {
     localFn();
@@ -397,16 +424,17 @@ function sendOrCall(action: object, localFn: () => void): void {
 // never draw a slide out of a hidden origin, so no hidden disposition leaks.
 function applyStateWithAnimation(newState: GameState): void {
   const viewer = renderViewerSlot();
-  if (gameStarted && !spectatorMode && multiplayerMode && viewer !== undefined) {
+  // Spectators see every unit, so every move animates for them.
+  if (gameStarted && multiplayerMode && (spectatorMode || viewer !== undefined)) {
     const prev = state;
-    const prevVisible = getPlayerVisible(prev, viewer);
+    const prevVisible = spectatorMode || viewer === undefined ? null : getPlayerVisible(prev, viewer);
     const prevById = new Map(prev.units.map(u => [u.id, u]));
     for (const u of newState.units) {
       if (u.hp <= 0) continue;
       const old = prevById.get(u.id);
       if (!old || old.hp <= 0 || hexEqual(old.pos, u.pos)) continue;
       const mine = u.playerId === viewer;
-      if (mine || prevVisible.has(hexKey(old.pos))) {
+      if (!prevVisible || mine || prevVisible.has(hexKey(old.pos))) {
         renderer.startMoveAnimation(u.id, old.pos);
       }
     }
@@ -434,6 +462,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
 function handleMultiplayerEventInner(event: ServerMessage): void {
   switch (event.type) {
     case 'logged_in': {
+      if (mpReconnecting) { finishReconnect(); break; }
       lobbyLoginStatus.textContent = '';
       lobbyWelcomeMsg.textContent = `Logged in as ${event.username}`;
       showLobbyPanel('rooms');
@@ -442,11 +471,15 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       break;
     }
     case 'error': {
+      // During a reconnect the server may still hold our old session for a
+      // moment ("Username already taken") — just try again shortly.
+      if (mpReconnecting && mpClient) { mpReconnecting = false; mpClient.disconnect(); scheduleReconnect(); break; }
       lobbyLoginStatus.textContent = event.message;
       lobbyLoginStatus.className = 'lobby-status err';
       break;
     }
     case 'room_created': {
+      mpRoomId = event.roomId;
       lobbyRoomCode.textContent = event.roomId;
       lobbyWaitingStatus.textContent = event.expectedPlayers > 2
         ? `Waiting for players… 1/${event.expectedPlayers} joined`
@@ -455,6 +488,7 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       break;
     }
     case 'room_waiting': {
+      mpRoomId = event.roomId;
       lobbyRoomCode.textContent = event.roomId;
       lobbyWaitingStatus.textContent = `Waiting for players… ${event.joined}/${event.expected} joined`;
       showLobbyPanel('waiting');
@@ -472,10 +506,13 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
         const size = room.expectedPlayers > 2
           ? ` <span style="color:#89a">[${room.joinedPlayers}/${room.expectedPlayers}]</span>`
           : '';
-        item.innerHTML = `<span>${room.id} — ${room.player1Name}${size}</span>`;
+        // Names come from other players: escape them (a name like
+        // <img onerror=…> used to run script in everyone's lobby).
+        item.innerHTML = `<span>${escapeHtml(room.id)} — ${escapeHtml(room.player1Name)}${size}</span>`;
         const btn = document.createElement('button');
         btn.textContent = 'Join';
         btn.addEventListener('click', () => {
+          mpRoomId = room.id;
           mpClient!.joinRoom(room.id);
         });
         item.appendChild(btn);
@@ -487,6 +524,9 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       cancelAITurn();
       myPlayerSlot = event.playerSlot;
       multiplayerMode = true;
+      researchRollback = null;
+      pendingLocalSelection = null;
+      hideOpponentCountdown();
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
       snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
@@ -508,14 +548,32 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
     case 'state_update': {
       researchRollback = null;   // authoritative state supersedes any optimistic research
       applyStateWithAnimation(deserialize(event.state)); // tween visible moves, don't teleport
+      // A reply to an older action still carries the older selection; keep the
+      // newer one the player already sees until every action is answered.
+      mpClient?.actionAnswered();
+      if (pendingLocalSelection && mpClient && mpClient.inflight > 0) {
+        try { pendingLocalSelection(); } catch { /* server state wins */ }
+      } else {
+        pendingLocalSelection = null;
+      }
+      if (state.phase === 'gameOver' && opponentCountdown) {
+        const won = state.winner?.id === state.players[myPlayerSlot]?.id;
+        hideOpponentCountdown();
+        if (won) showToast('Your opponent left — you win!', 'good');
+      }
       // If the tech tree is open (view-only browsing during the opponent's turn),
       // re-render it so node clickability tracks whose turn it now is.
       if (!techOverlay.classList.contains('hidden')) renderTechTree();
       render();
-      logCombat(event.lastAction);
+      // The server drops log lines about hexes we can't see, which can leave
+      // this empty.
+      if (event.lastAction) logCombat(event.lastAction);
       break;
     }
     case 'action_error': {
+      mpClient?.actionAnswered();
+      if (!mpClient || mpClient.inflight === 0) pendingLocalSelection = null;
+      showToast(event.message, 'bad');
       // If an optimistic research purchase was rejected, roll it back so the UI
       // matches the server. (Card gating makes this path rare — a desync only.)
       if (researchRollback) {
@@ -528,11 +586,16 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       break;
     }
     case 'opponent_disconnected': {
-      logCombat('Opponent disconnected. Waiting for reconnect…');
+      const name = event.playerName ?? 'Opponent';
+      logCombat(`${name} disconnected. Waiting for them to reconnect…`);
+      if (gameStarted && !spectatorMode && state.phase !== 'gameOver') {
+        showOpponentCountdown(name, event.graceMs ?? 30000);
+      }
       break;
     }
     case 'opponent_reconnected': {
-      logCombat('Opponent reconnected.');
+      logCombat(`${event.playerName ?? 'Opponent'} reconnected.`);
+      hideOpponentCountdown();
       break;
     }
     case 'game_list': {
@@ -546,10 +609,11 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
         item.className = 'lobby-room-item';
         const statusLabel = game.status === 'done' ? ' (finished)' : '';
         const specLabel = game.spectatorCount > 0 ? ` [${game.spectatorCount} watching]` : '';
-        item.innerHTML = `<span>${game.player1Name} vs ${game.player2Name}${statusLabel}${specLabel}</span>`;
+        item.innerHTML = `<span>${escapeHtml(game.player1Name)} vs ${escapeHtml(game.player2Name)}${statusLabel}${specLabel}</span>`;
         const btn = document.createElement('button');
         btn.textContent = 'Watch';
         btn.addEventListener('click', () => {
+          mpSpectatingGameId = game.gameId;
           mpClient!.spectateGame(game.gameId);
         });
         item.appendChild(btn);
@@ -582,6 +646,173 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
   }
 }
 
+// ── HTML escaping for player-provided text ──
+
+function escapeHtml(text: unknown): string {
+  return String(text ?? '').replace(/[&<>"'`]/g, c => `&#${c.charCodeAt(0)};`);
+}
+
+// Player colours come from the server; only allow plain colour syntax inside style="".
+function safeCssColor(color: unknown): string {
+  const c = String(color ?? '');
+  return /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,20}|(rgb|hsl)a?\([0-9.,%\s]+\))$/.test(c) ? c : '#888';
+}
+
+// ── Connection loss: banner + automatic reconnect ──
+
+const RECONNECT_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 15000];
+let connBanner: HTMLDivElement | null = null;
+
+function showConnBanner(text: string, buttons: [string, () => void][]): void {
+  if (!connBanner) {
+    connBanner = document.createElement('div');
+    connBanner.id = 'mpConnBanner';
+    connBanner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;background:#3a1210;color:#fff4dc;border:1px solid #c0503c;border-radius:10px;padding:8px 14px;font:600 14px Nunito,system-ui,sans-serif;display:flex;gap:10px;align-items:center;box-shadow:0 4px 16px rgba(0,0,0,.4);max-width:calc(100vw - 32px)';
+    document.body.appendChild(connBanner);
+  }
+  connBanner.replaceChildren();
+  const label = document.createElement('span');
+  label.textContent = text;
+  connBanner.appendChild(label);
+  for (const [name, onClick] of buttons) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.style.cssText = 'font:inherit;padding:3px 10px;border-radius:6px;border:0;cursor:pointer';
+    b.addEventListener('click', onClick);
+    connBanner.appendChild(b);
+  }
+}
+
+function hideConnBanner(): void {
+  connBanner?.remove();
+  connBanner = null;
+}
+
+function stopReconnect(): void {
+  if (mpRetryTimer !== null) { clearTimeout(mpRetryTimer); mpRetryTimer = null; }
+  mpReconnecting = false;
+  hideConnBanner();
+}
+
+function leaveAfterConnectionLoss(): void {
+  leaveActiveGame();
+  spectatorBanner.style.display = 'none';
+  gameStarted = false;
+  showMenu();
+}
+
+function onConnectionDropped(): void {
+  if (!mpClient) return;
+  if (gameStarted && multiplayerMode) logCombat('Connection to the server lost. Reconnecting…');
+  lobbyLoginStatus.textContent = 'Connection lost. Reconnecting…';
+  lobbyLoginStatus.className = 'lobby-status err';
+  mpReconnecting = false;
+  mpRetryCount = 0;
+  scheduleReconnect();
+}
+
+function scheduleReconnect(): void {
+  const client = mpClient;
+  if (!client) return;
+  if (mpRetryCount >= RECONNECT_DELAYS_MS.length) {
+    showConnBanner('Could not reconnect to the server.', [
+      ['Retry', () => { mpRetryCount = 0; scheduleReconnect(); }],
+      ['Leave', leaveAfterConnectionLoss],
+    ]);
+    lobbyLoginStatus.textContent = 'Could not reconnect to the server';
+    return;
+  }
+  const delay = RECONNECT_DELAYS_MS[mpRetryCount++]!;
+  showConnBanner(mpRetryCount > 1 ? `Connection lost. Reconnecting (attempt ${mpRetryCount})…` : 'Connection lost. Reconnecting…',
+    [['Leave', leaveAfterConnectionLoss]]);
+  mpRetryTimer = window.setTimeout(async () => {
+    mpRetryTimer = null;
+    if (mpClient !== client) return;
+    try {
+      await client.connect();
+      if (mpClient !== client) { client.disconnect(); return; }
+      if (!client.username) { finishReconnect(); return; }
+      mpReconnecting = true;
+      client.login(client.username); // → logged_in → finishReconnect()
+    } catch {
+      if (mpClient === client) scheduleReconnect();
+    }
+  }, delay);
+}
+
+// Logged in again: get back into the room / game we were in.
+function finishReconnect(): void {
+  mpReconnecting = false;
+  hideConnBanner();
+  lobbyLoginStatus.textContent = '';
+  lobbyLoginStatus.className = 'lobby-status';
+  if (!mpClient) return;
+  if (spectatorMode && mpSpectatingGameId) mpClient.spectateGame(mpSpectatingGameId);
+  else if (mpRoomId) mpClient.rejoinRoom(mpRoomId); // server answers with game_start (or room_waiting)
+  else { mpClient.listRooms(); mpClient.listGames(); }
+  if (gameStarted && multiplayerMode) logCombat('Reconnected to the server.');
+  showToast('Reconnected', 'good');
+}
+
+// ── Opponent disconnected: 30-second countdown ──
+// The server owns the timeout: if the opponent hasn't rejoined when it runs
+// out, the server resigns them and a game-over state_update follows. This card
+// just shows the wait.
+
+let opponentCountdown: { el: HTMLDivElement; until: number; timer: number; last: number } | null = null;
+
+function showOpponentCountdown(name: string, graceMs: number): void {
+  hideOpponentCountdown();
+  const el = document.createElement('div');
+  el.id = 'mpOppOverlay';
+  el.style.cssText = 'position:fixed;inset:0;z-index:9998;display:flex;align-items:center;justify-content:center;background:rgba(6,14,10,.55);padding:16px';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#14241b;color:#fff4dc;border:1px solid #f5c451;border-radius:14px;padding:20px 24px;width:min(340px,100%);text-align:center;font-family:Nunito,system-ui,sans-serif;box-shadow:0 10px 40px rgba(0,0,0,.5)';
+  const title = document.createElement('div');
+  title.style.cssText = "font:400 22px 'Lilita One',Nunito,sans-serif;margin-bottom:6px";
+  title.textContent = `${name} disconnected`;
+  const sub = document.createElement('div');
+  sub.style.cssText = 'font-size:14px;opacity:.85;margin-bottom:12px';
+  const time = document.createElement('div');
+  time.style.cssText = "font:400 40px 'Lilita One',Nunito,sans-serif;color:#f5c451";
+  const track = document.createElement('div');
+  track.style.cssText = 'height:6px;background:#0a1510;border-radius:3px;overflow:hidden;margin-top:10px';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'height:100%;background:#f5c451;width:100%';
+  track.appendChild(bar);
+  const foot = document.createElement('div');
+  foot.style.cssText = 'font-size:12px;opacity:.65;margin-top:10px';
+  foot.textContent = "If they don't return, you win.";
+  card.append(title, sub, time, track, foot);
+  el.appendChild(card);
+  document.body.appendChild(el);
+
+  const now = performance.now();
+  const cd = { el, until: now + graceMs, timer: 0, last: now };
+  const tick = (): void => {
+    const t = performance.now();
+    // Paused while we're offline ourselves; the server keeps its own clock.
+    if (!mpClient?.isOpen()) cd.until += t - cd.last;
+    cd.last = t;
+    const left = Math.max(0, cd.until - t);
+    const secs = Math.ceil(left / 1000);
+    time.textContent = `0:${String(secs).padStart(2, '0')}`;
+    bar.style.width = `${(left / graceMs) * 100}%`;
+    sub.textContent = !mpClient?.isOpen() ? 'You are offline too — timer paused'
+      : left > 0 ? 'Waiting for them to reconnect…' : 'Confirming with the server…';
+  };
+  tick();
+  cd.timer = window.setInterval(tick, 250);
+  opponentCountdown = cd;
+}
+
+function hideOpponentCountdown(): void {
+  if (!opponentCountdown) return;
+  clearInterval(opponentCountdown.timer);
+  opponentCountdown.el.remove();
+  opponentCountdown = null;
+}
+
 // ── Lobby button wiring ──
 
 menuOnline.addEventListener('click', () => {
@@ -591,6 +822,11 @@ menuOnline.addEventListener('click', () => {
 lobbyLoginBack.addEventListener('click', () => showLobbyPanel('main'));
 lobbyRoomBack.addEventListener('click', () => showLobbyPanel('main'));
 lobbyWaitingBack.addEventListener('click', () => {
+  // Tell the server we're leaving so the room doesn't linger in everyone's list.
+  // A message queued before close() is still delivered.
+  if (mpClient?.isOpen() && mpRoomId) mpClient.leaveRoom(mpRoomId);
+  mpRoomId = null;
+  stopReconnect();
   mpClient?.disconnect();
   mpClient = null;
   multiplayerMode = false;
@@ -612,8 +848,11 @@ lobbyLoginBtn.addEventListener('click', async () => {
   const wsUrl = (import.meta.env.VITE_WS_URL as string | undefined) ??
     `${wsScheme}://${window.location.host}${import.meta.env.BASE_URL}ws`;
 
+  stopReconnect();
   if (!mpClient) {
     mpClient = new MultiplayerClient(wsUrl, handleMultiplayerEvent);
+    mpClient.onDrop = onConnectionDropped;
+    mpClient.onSendFail = () => showToast(mpRetryTimer !== null || mpReconnecting ? 'Not connected — reconnecting…' : 'Not connected to the server', 'bad');
   }
   try {
     await mpClient.connect();
@@ -650,6 +889,7 @@ lobbyJoinCodeBtn.addEventListener('click', () => {
   if (code.length < 1) return;
   lobbyRoomStatus.textContent = 'Joining…';
   lobbyRoomStatus.className = 'lobby-status';
+  mpRoomId = code;
   mpClient!.joinRoom(code);
 });
 
@@ -662,10 +902,15 @@ lobbyJoinCodeInput.addEventListener('keydown', (e) => {
 // Disconnect from any live multiplayer game (player or spectator) and reset the
 // multiplayer flags. Safe to call when not in a multiplayer game (no-op).
 function leaveActiveGame(): void {
+  stopReconnect();
+  hideOpponentCountdown();
   if (mpClient) {
     mpClient.disconnect();
     mpClient = null;
   }
+  mpRoomId = null;
+  mpSpectatingGameId = null;
+  pendingLocalSelection = null;
   multiplayerMode = false;
   spectatorMode = false;
 }
@@ -696,11 +941,11 @@ function showMenu(): void {
     endTurnBtn.style.display = '';
     techTreeBtn.style.display = '';
     if (DEBUG) settingsBtn.style.display = 'inline-flex';
-  } else if (multiplayerMode) {
-    // Leaving a live multiplayer PLAYER game — disconnect the socket so its
-    // state_update can't clobber a subsequent local game.
-    leaveActiveGame();
   }
+  // An online PLAYER game stays connected while the menu is up: the menu is a
+  // pause screen, not a forfeit. (Closing the socket here used to drop players
+  // out of their match the moment they pressed Esc.) Starting or resuming a
+  // local game from the menu still disconnects, via leaveActiveGame().
   if (!gameStarted) showLobbyPanel('main');
   // Refresh the Continue CTA every time the menu opens — including mid-game,
   // where showLobbyPanel('main') is skipped (gameStarted is true) but the main
@@ -802,6 +1047,12 @@ function restoreGame(): void {
 // Show the "Continue" card only when a valid local save exists, and describe
 // the save (round, who you're playing) so resuming is an informed tap.
 function updateContinueButton(): void {
+  if (gameStarted && multiplayerMode && !spectatorMode) {
+    menuContinueBtn.style.display = '';
+    document.getElementById('menuContinueTitle')!.textContent = 'Resume online game';
+    document.getElementById('menuContinueSub')!.textContent = mpClient?.isOpen() ? 'Your match is still running' : 'Reconnecting to the server…';
+    return;
+  }
   const save = loadSavedGame();
   menuContinueBtn.style.display = save ? '' : 'none';
   if (!save) return;
@@ -900,7 +1151,10 @@ function startGame(vsAI: boolean, difficulty: AiDifficulty = 'normal'): void {
   startLocalGame(vsAI ? ['human', difficulty] : ['human', 'human']);
 }
 
-menuContinueBtn.addEventListener('click', () => restoreGame());
+menuContinueBtn.addEventListener('click', () => {
+  if (gameStarted && multiplayerMode && !spectatorMode) { hideMenu(); render(); return; }
+  restoreGame();
+});
 menu2P.addEventListener('click', () => startGame(false));
 for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('.difficulty-btn'))) {
   btn.addEventListener('click', () => startGame(true, btn.dataset.difficulty as AiDifficulty));
@@ -1348,8 +1602,8 @@ function updatePlayerList(): void {
       ? `<span class="chip-stat">⚡${p.aura} · ${getPopulationCount(state, p.id)}/${getPopulationCap(state, p.id)}</span>`
       : '';
     chip.innerHTML =
-      `<span class="chip-dot" style="background:${p.color}"></span>` +
-      `<span>${p.name}${you}</span>` +
+      `<span class="chip-dot" style="background:${safeCssColor(p.color)}"></span>` +
+      `<span>${escapeHtml(p.name)}${you}</span>` +
       statHtml;
     playerListEl.appendChild(chip);
   }
@@ -1735,7 +1989,7 @@ function updateOpponentTurnOverlay(): void {
     opponentTurnCardEl.innerHTML =
       `<div class="spinner"><svg viewBox="0 0 24 24"><path d="M12 2l8.7 5v10L12 22l-8.7-5V7z"/><path d="M12 7v10M7.7 9.5l4.3 2.5 4.3-2.5M7.7 14.5l4.3-2.5 4.3 2.5"/></svg></div>` +
       `<div class="label">Pass the device to</div>` +
-      `<div class="hand-name">${getCurrentPlayer(state).name}</div>` +
+      `<div class="hand-name">${escapeHtml(getCurrentPlayer(state).name)}</div>` +
       `<div class="sublabel">Tap anywhere to start their turn</div>`;
     opponentTurnOverlay.classList.remove('hidden');
     waitingIndicator.classList.add('hidden');
@@ -2428,7 +2682,6 @@ function techMedallion(node: typeof TECH_NODES[number], color: string): string {
 }
 
 const techName = (id: TechId): string => TECH_NODES.find(n => n.id === id)?.name ?? id;
-const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 function renderTechTree(): void {
   const player = getCurrentPlayer(state);
@@ -2530,7 +2783,11 @@ function renderTechTree(): void {
         // pill drops, unit unlocks appear) instead of waiting for the server
         // round-trip. Snapshot first so a (rare) server rejection can roll it
         // back; the authoritative state_update otherwise reconciles it.
-        researchRollback = serialize(state);
+        // Deep copy: serialize() shares the player objects with the live state,
+        // so a shallow snapshot already contained the deducted aura and a
+        // rejection never refunded it. Keep the oldest snapshot while a
+        // purchase is still unanswered.
+        researchRollback ??= structuredClone(serialize(state));
         applyLocal();
         render();                       // reflect deducted aura / unlocks now
         mpClient.sendAction({ type: 'action_research', techId: node.id });
@@ -2828,6 +3085,8 @@ function handleHexClick(clientX: number, clientY: number): void {
         } else {
           logCombat(`Moved to (${hex.q}, ${hex.r})`);
         }
+      } else if (moveResult.blocked) {
+        showToast('Something blocks the way — an unseen unit stands there.', 'bad');
       }
     });
     return;
