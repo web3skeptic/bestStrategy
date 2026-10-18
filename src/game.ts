@@ -2439,15 +2439,34 @@ export function getImpassableStructureHexes(state: GameState): HexCoord[] {
 }
 
 // The single blocked-hex list every movement BFS must use: other living
-// units, mountains, and standing Temples.
+// units the mover's side can actually see, mountains, and standing Temples.
+//
+// Fog of war: an enemy unit hidden from the mover's player (outside its vision,
+// or in a forest without an adjacent friendly) does NOT block the search. If it
+// did, the hole it punched in the move highlight would give its position away.
+// Moving onto its hex is refused by moveUnit instead ("blocked").
 export function getMoveBlockedHexes(state: GameState, unit: Unit): HexCoord[] {
-  const blocked: HexCoord[] = state.units.filter(u => u.hp > 0 && u.id !== unit.id).map(u => ({ ...u.pos }));
+  const visible = getPlayerVisible(state, unit.playerId);
+  const blocked: HexCoord[] = state.units
+    .filter(u => u.hp > 0 && u.id !== unit.id)
+    .filter(u => u.playerId === unit.playerId
+      || (visible.has(hexKey(u.pos)) && isForestUnitRevealed(state, u.pos, unit.playerId)))
+    .map(u => ({ ...u.pos }));
   for (const key of state.walls) {
     const [q, r] = key.split(',').map(Number);
     blocked.push({ q: q!, r: r! });
   }
   for (const h of getImpassableStructureHexes(state)) blocked.push(h);
   return blocked;
+}
+
+// Every hex a unit may move to this activation — the one list the highlights,
+// move validation, the AI and the server's legal-move queries all share.
+// It can include unexplored hexes (a fast unit outruns its own vision); the
+// renderer highlights those too, so no legal move is ever invisible.
+export function getUnitMoveHexes(state: GameState, unit: Unit): HexCoord[] {
+  if (unit.hasMoved) return [];
+  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, getMoveBlockedHexes(state, unit), state.hills, getZocHexes(state, unit.playerId));
 }
 
 // ── Highlights ──
@@ -2484,7 +2503,7 @@ function updateHighlights(state: GameState): void {
   // "attack then move" works identically to "move then attack" (§ agnostic
   // activation order fix). Only hasMoved gates movement itself.
   if (!unit.hasMoved) {
-    state.moveHexes = getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, getMoveBlockedHexes(state, unit), state.hills, getZocHexes(state, unit.playerId));
+    state.moveHexes = getUnitMoveHexes(state, unit);
   }
 
   const canAttack = !unit.hasAttacked && !(unit.stats.cantShootAfterMove && unit.hasMoved);
@@ -2498,19 +2517,26 @@ function updateHighlights(state: GameState): void {
       .filter(e => isForestUnitRevealed(state, e.pos, unit.playerId))
       .map(e => e.pos);
 
+    // Structures, like units, can only be targeted while visible. Without this
+    // an enemy building inside the fog got a red highlight and could be shot at.
+    // A structure right next to the attacker always counts as seen (the same
+    // adjacency rule that reveals units in forests).
+    const seesStructure = (pos: HexCoord): boolean => visible.has(hexKey(pos)) || hexDistance(unit.pos, pos) <= 1;
     const enemyStructures: HexCoord[] = [];
     for (const capital of state.capitals) {
-      if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange) enemyStructures.push(capital.pos);
+      if (capital.playerId !== unit.playerId && hexDistance(unit.pos, capital.pos) <= effectiveRange
+        && seesStructure(capital.pos)) enemyStructures.push(capital.pos);
     }
     // v13 — ANY unit of either faction may attack an active Temple; the
     // only way to change its ownership is destroy it to Ruins, then have
     // any Temple unit reconsecrate it (see canStartFounding).
     for (const site of state.strategicSites) {
       if ((site.state === 'temple' || site.state === 'upgradingTemple') && site.ownerId !== unit.playerId
-        && hexDistance(unit.pos, site.pos) <= effectiveRange) enemyStructures.push(site.pos);
+        && hexDistance(unit.pos, site.pos) <= effectiveRange && seesStructure(site.pos)) enemyStructures.push(site.pos);
     }
     for (const farm of state.farms) {
-      if (farm.state === 'farm' && farm.ownerId !== unit.playerId && hexDistance(unit.pos, farm.pos) <= effectiveRange) enemyStructures.push(farm.pos);
+      if (farm.state === 'farm' && farm.ownerId !== unit.playerId && hexDistance(unit.pos, farm.pos) <= effectiveRange
+        && seesStructure(farm.pos)) enemyStructures.push(farm.pos);
     }
     state.structureAttackHexes = enemyStructures;
   }
@@ -2548,6 +2574,8 @@ export function deselectAll(state: GameState): void {
 
 export interface MoveResult {
   moved: boolean;
+  /** True when the destination holds a unit the mover couldn't see. */
+  blocked?: boolean;
 }
 
 export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
@@ -2561,6 +2589,10 @@ export function moveUnit(state: GameState, dest: HexCoord): MoveResult {
 
   const isValid = state.moveHexes.some(h => hexEqual(h, dest));
   if (!isValid) return { moved: false };
+  // The move highlight ignores enemies hidden in the fog (see getMoveBlockedHexes),
+  // so the destination can turn out to be occupied. The move is refused and the
+  // activation is not spent.
+  if (state.units.some(u => u.hp > 0 && u.id !== unit.id && hexEqual(u.pos, dest))) return { moved: false, blocked: true };
 
   unit.pos = { ...dest };
   unit.hasMoved = true;

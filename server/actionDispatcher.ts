@@ -21,6 +21,7 @@ import {
   moveUnit, attackUnit,
   canStartFounding, startFounding,
   getMoveBlockedHexes,
+  getUnitMoveHexes,
   attackStructure, getStructureAt,
   canDestroyUnit, destroyUnit,
   spawnUnit, endTurn,
@@ -125,15 +126,7 @@ export function computeUnitActions(state: GameState, unit: Unit): LegalAction[] 
   // Move actions — available whenever the unit hasn't moved yet, regardless
   // of whether it already attacked (move/attack order is agnostic).
   if (!unit.hasMoved) {
-    const reachable = getReachableHexes(
-      unit.pos,
-      getEffectiveSpeed(state, unit),
-      state.mapRadius,
-      getMoveBlockedHexes(state, unit),
-      state.hills,
-      getZocHexes(state, unit.playerId),
-    );
-    for (const h of reachable) actions.push({ type: 'move', to: h });
+    for (const h of getUnitMoveHexes(state, unit)) actions.push({ type: 'move', to: h });
   }
 
   // Attack actions — available unless already attacked, or cantShootAfterMove+hasMoved.
@@ -213,8 +206,7 @@ export function computePlayerLegalMoves(state: GameState, playerId: number): Leg
 // ── Hex utilities (re-exported convenience) ──
 
 export function computeUnitMoveHexes(state: GameState, unit: Unit): HexCoord[] {
-  if (unit.hasMoved) return [];
-  return getReachableHexes(unit.pos, getEffectiveSpeed(state, unit), state.mapRadius, getMoveBlockedHexes(state, unit), state.hills, getZocHexes(state, unit.playerId));
+  return getUnitMoveHexes(state, unit);
 }
 
 export function computeUnitAttackTargets(state: GameState, unit: Unit): Unit[] {
@@ -549,6 +541,7 @@ export function executeAction(
         const result = moveUnit(state, to);
         if (!result.moved) {
           deselectAll(state);
+          if (result.blocked) return fail(state, playerSlot, action, 'Something blocks the way — an unseen unit stands there.');
           return fail(state, playerSlot, action, `Invalid move for unit ${unitId} to (${to.q},${to.r})`);
         }
         log.push(`Unit ${unitId} moved to (${to.q},${to.r})`);
