@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import { resolve } from "path";
 
-// iPhone app build (`npm run build:ios`, consumed by Capacitor from dist-ios/).
+// Native app build (`npm run build:ios` / `build:android`, consumed by Capacitor from dist-app/).
 // The app bundles the game itself and talks to the live server at
 // interslavic.space for online play (VITE_WS_URL is set by the script).
 const NATIVE_APP = process.env.VITE_NATIVE_APP === "1";
@@ -9,7 +9,8 @@ const PUBLIC_SITE = "https://interslavic.space/game-upgradable/";
 
 // Page tweaks for the app shell, applied to index.html at build time only:
 //  • viewport-fit=cover so the existing env(safe-area-inset-*) padding works
-//    under the notch / Dynamic Island,
+//    under the notch / Dynamic Island (and Android's camera cutout, via
+//    Capacitor's --safe-area-inset-* variables),
 //  • no in-game agent chat panel (it calls same-origin HTTP APIs that don't
 //    exist inside the app, and is a site-admin tool),
 //  • the Replays link opens the website (Capacitor hands it to Safari); the
@@ -25,6 +26,11 @@ function nativeAppHtml(): Plugin {
       handler(html) {
         return html
           .replace('user-scalable=no">', 'user-scalable=no, viewport-fit=cover">')
+          // Android: Capacitor reports insets as --safe-area-inset-* variables
+          // (its WebView may not fill env() in edge-to-edge mode); iOS fills
+          // env(). Prefer the variable, fall back to env().
+          .replace(/env\(safe-area-inset-(top|right|bottom|left)(?:,\s*0px)?\)/g,
+            (_m, side) => `var(--safe-area-inset-${side}, env(safe-area-inset-${side}, 0px))`)
           .replace(/\s*<script type="module" src="\.\/src\/chatPanel\.ts"><\/script>/, "")
           .replace(/<div class="menu-top">\s*<a class="menu-chip" href="replays">[\s\S]*?<\/a>\s*<\/div>/, "")
           .replace(/href="replays"/g, `href="${PUBLIC_SITE}replays"`);
@@ -43,7 +49,7 @@ export default defineConfig({
   base: NATIVE_APP ? "./" : (process.env.VITE_BASE ?? "/game-upgradable/"),
   plugins: NATIVE_APP ? [nativeAppHtml()] : [],
   build: {
-    outDir: NATIVE_APP ? "dist-ios" : "dist",
+    outDir: NATIVE_APP ? "dist-app" : "dist",
     rollupOptions: {
       input: NATIVE_APP ? { main: resolve(__dirname, "index.html") } : {
         main: resolve(__dirname, "index.html"),
