@@ -33,6 +33,8 @@ export type ClientMessage =
   | { type: 'join_room';            roomId: string }
   | { type: 'list_rooms' }
   | { type: 'rejoin_room';          roomId: string }
+  // Leave a room that hasn't started yet (the waiting screen's Back button).
+  | { type: 'leave_room';           roomId: string }
   | { type: 'list_games' }
   | { type: 'spectate';             gameId: string }
   | { type: 'action_select_unit';   unitId: string }
@@ -98,8 +100,12 @@ export type ServerMessage =
   // bad actions without polling. The field is additive — existing FE clients
   // that ignore unknown keys are unaffected.
   | { type: 'action_error';          message: string; legalMoves?: Record<string, unknown> }
-  | { type: 'opponent_disconnected' }
-  | { type: 'opponent_reconnected' }
+  // A seated player's connection dropped. If they don't rejoin within graceMs
+  // the server resigns them, and the remaining player wins (a normal
+  // state_update with phase 'gameOver' follows). Fields are optional so an
+  // older client/server pair still interoperates.
+  | { type: 'opponent_disconnected'; playerSlot?: number; playerName?: string; graceMs?: number }
+  | { type: 'opponent_reconnected';  playerSlot?: number; playerName?: string }
   // Replies to the read-only query messages.
   | { type: 'legal_moves';           unitId: string | null; actions: Record<string, unknown>[]; legalMoves: Record<string, unknown> | null }
   | { type: 'rules';                 rules: Record<string, unknown> }

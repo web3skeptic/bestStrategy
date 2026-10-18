@@ -197,7 +197,11 @@ async function main(): Promise<void> {
   const deployedUnit = deployA.state.units.find((u: any) => u.playerId === nowActingSlot);
   check('the Warrior deploys at the start of the recruiting player\'s next round', !!deployedUnit, `units now: ${JSON.stringify(deployA.state.units.map((u: any) => ({ p: u.playerId, t: u.type })))}`);
   check('the deployed unit is the correct type (warrior)', deployedUnit?.type === 'warrior');
-  check('both clients agree on the deployed unit', deployB.state.units.some((u: any) => u.id === deployedUnit?.id));
+  // Fog of war is enforced server-side: the unit deploys at the recruiter's
+  // Capital, on the far side of the map from the opponent's vision, so the
+  // opponent's state must NOT contain it (it used to — the full state went to
+  // both seats, readable in DevTools).
+  check('the opponent does not receive the deployed unit (it is outside their vision)', !deployB.state.units.some((u: any) => u.id === deployedUnit?.id));
   check('the deployed unit can act immediately (hasMoved/hasAttacked false)', deployedUnit && !deployedUnit.hasMoved && !deployedUnit.hasAttacked);
 
   A.close(); B.close();
