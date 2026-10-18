@@ -12,6 +12,7 @@ import { buildFarm, buildFertileSite } from './voxelFarm';
 import { buildRoad as buildRoadModel } from './voxelRoad';
 import { buildUnitModel } from './voxelUnits';
 import { getSharedFaceTexture } from './voxelWarrior';
+import { IS_TOUCH, renderPixelRatio } from './perfProfile';
 
 interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; faction: FactionId | null; }
 
@@ -33,6 +34,8 @@ interface FarmCollapse {
   scorchMat: THREE.MeshBasicMaterial;
 }
 const FARM_COLLAPSE_MS = 4600;
+// How long after the last interaction / state change the board keeps full frame rate.
+const ACTIVE_HOLD_MS = 1500;
 
 const MOVE_ANIM_MS = 260;
 const EXPLOSION_MS = 440;
@@ -303,6 +306,12 @@ export class Renderer3D {
   // happen in practice — an attackable structure is always enemy-owned, so
   // it's never also a legal move/found destination for the same unit).
   private structureAttackTintIds = new Set<string>();
+  // Frame pacing (see startLoop): paused behind the menu, throttled when idle.
+  private paused = false;
+  private framesDrawn = 0;
+  private lastActivity = 0;
+  private shadowDirty = true;
+  private facingBusy = false;
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
   // ── Fog-of-war memory (per viewer id) ──
   // Explored hexes outside current vision show structures and roads as the viewer
@@ -424,9 +433,14 @@ export class Renderer3D {
     this.P = makePalette();
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // Mobile budget (see perfProfile.ts): capped render resolution and plain
+    // PCF shadows on touch devices; desktop keeps full quality.
+    this.renderer.setPixelRatio(renderPixelRatio(1.5));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = IS_TOUCH ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    // The sun never moves, so the shadow map only needs re-rendering when
+    // something on the board changes (see startLoop / markActive).
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputEncoding = THREE.sRGBEncoding;
 
     this.scene = new THREE.Scene();
@@ -476,7 +490,7 @@ export class Renderer3D {
     const sun = new THREE.DirectionalLight(0xffffff, 0.8);
     sun.position.set(-14, 24, 12);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 90;
     const d = 24;
@@ -548,6 +562,11 @@ export class Renderer3D {
     hudRim.position.set(0.6, -0.4, 0.5);
     this.hudScene.add(hudRim);
     this.canvas.addEventListener('pointermove', e => this.onHudHover(e));
+    // Any touch / drag / zoom keeps the board at full frame rate for a moment.
+    for (const ev of ['pointerdown', 'pointermove', 'wheel'] as const) {
+      this.canvas.addEventListener(ev, () => this.markActive(), { passive: true });
+    }
+    this.controls.addEventListener('change', () => this.markActive());
 
     this.startLoop();
   }
@@ -943,6 +962,7 @@ export class Renderer3D {
   // ── state → scene sync ──
 
   render(state: GameState, viewerPlayerId?: number, omniscient?: boolean): void {
+    this.markActive();
     this.lastState = state;
     this.lastViewer = viewerPlayerId;
     this.lastOmniscient = omniscient;
@@ -2256,11 +2276,26 @@ export class Renderer3D {
   // ── render loop + animation ──
 
   private startLoop(): void {
+    this.renderer.info.autoReset = false; // count the board + HUD passes of one frame together (see perfInfo)
+    let frameNo = 0;
     const tick = () => {
+      requestAnimationFrame(tick);
+      // Hidden behind the full-screen menu: draw nothing (the menu has its own scene).
+      if (this.paused) return;
+      frameNo++;
       this.resizeToContainer();
       this.applyCameraKeys();
       this.controls.update();
+      // Full frame rate while anything moves or the player is interacting;
+      // otherwise ~20 fps on touch devices (~30 on desktop) — the pulses and
+      // the spinning selection pointer still animate, just less often.
+      const busy = this.isBusy() || performance.now() - this.lastActivity < ACTIVE_HOLD_MS;
+      if (!busy && frameNo % (IS_TOUCH ? 3 : 2) !== 0) return;
+      this.renderer.info.reset();
+      this.framesDrawn++;
       this.advanceAnimations();
+      this.renderer.shadowMap.needsUpdate = this.shadowDirty || busy || frameNo % 60 === 0;
+      this.shadowDirty = false;
       this.renderer.render(this.scene, this.camera);
       // HUD pass: draw the screen-space buttons on top of the board.
       if (this.hudVisible && this.hudButtons.length) {
@@ -2269,9 +2304,33 @@ export class Renderer3D {
         this.renderer.render(this.hudScene, this.hudCamera);
         this.renderer.autoClear = true;
       }
-      requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
+  }
+
+  /** Something changed or the player is interacting: full frame rate + fresh shadows. */
+  markActive(): void {
+    this.lastActivity = performance.now();
+    this.shadowDirty = true;
+  }
+
+  /** Stop drawing while the board is fully covered (e.g. by the menu). */
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    if (!paused) this.markActive();
+  }
+
+  private isBusy(): boolean {
+    return this.moveAnims.size > 0 || this.explosions.length > 0 || this.shockwaves.length > 0
+      || this.farmCollapses.length > 0 || this.tileFades.size > 0 || this.structFades.size > 0
+      || this.structFlashUntil.size > 0 || this.facingBusy;
+  }
+
+  // Debug-only perf readout (draw calls / triangles of the last frame).
+  perfInfo(): { calls: number; triangles: number; pixelRatio: number; size: [number, number]; framesDrawn: number; paused: boolean } {
+    const r = this.renderer;
+    return { calls: r.info.render.calls, triangles: r.info.render.triangles, pixelRatio: r.getPixelRatio(), size: [r.domElement.width, r.domElement.height], framesDrawn: this.framesDrawn, paused: this.paused };
   }
 
   // ── HUD buttons (Three.js screen-space layer) ──
@@ -2495,6 +2554,7 @@ export class Renderer3D {
     // Units keep the facing their last move/attack gave them — no camera
     // tracking (it read as every unit staring at the player).
     // Smoothly rotate each unit toward its facing target (set by moves/attacks).
+    this.facingBusy = false;
     if (this.unitFacing.size > 0) {
       const dt = Math.min((now - this.lastFacingNow) / 1000, 0.1);
       this.lastFacingNow = now;
@@ -2504,7 +2564,7 @@ export class Renderer3D {
         const facer = mesh?.userData.facer as THREE.Object3D | undefined;
         if (!facer) continue;
         let d = Math.atan2(Math.sin(f.tgt - f.cur), Math.cos(f.tgt - f.cur)); // shortest path
-        if (Math.abs(d) <= step) f.cur = f.tgt; else f.cur += Math.sign(d) * step;
+        if (Math.abs(d) <= step) f.cur = f.tgt; else { f.cur += Math.sign(d) * step; this.facingBusy = true; }
         facer.rotation.y = f.cur;
       }
     } else {

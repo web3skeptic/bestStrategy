@@ -41,3 +41,31 @@ Play needs a release build signed with your own upload key. Use an Android App B
 - Icons (legacy, round and adaptive) and splash images are made from the game's warrior art.
   The adaptive-icon master is in `ios-assets/android/`.
 - App id `space.interslavic.tacticaltribes`, minSdk 24 (Android 7), targetSdk 36.
+
+## Performance on phones
+
+Measured on an Android 16 emulator (Pixel-class screen, 411×914 CSS px at 2.625×), before and after the
+mobile performance pass:
+
+| | Before | After |
+|---|---|---|
+| Menu frame rate | 48.7 fps, worst frame 67 ms | 60 fps, worst frame 17 ms |
+| Menu draw calls per frame | 1,441 | 112 |
+| Menu pixels rendered | 822×1828 | 513×1142 |
+| Board rendering while the menu is open | full speed, behind the menu | paused |
+| Board draw calls | 294 | 166 |
+| Board redraws while idle | 60 per second | ~20 per second (full speed while anything moves) |
+
+What changed (`src/perfProfile.ts`, `src/menuScene.ts`, `src/renderer3d.ts`, `index.html`):
+
+- Touch devices render the 3D scene at a capped resolution: 1.5× for the board and 1.25× for the menu backdrop.
+  Budget phones get 1.25× for both. The interface itself is HTML and stays sharp.
+- The menu's static board and each menu unit are merged into a few meshes (colour-only differences become
+  vertex colours). The menu draws at 30 fps on phones, and its shadows refresh a few times a second.
+- The board stops drawing while the menu covers it. It drops to about 20 fps when nothing moves and the
+  player isn't touching it, and it redraws shadows only when something changes.
+- Phones skip CSS `backdrop-filter` blur (19 panels re-blurred the animated board every frame).
+- Buttons: no tap highlight or double-tap delay, press feedback on touch, and the Continue card no longer wraps.
+
+Debug readouts in the page console: `__menuPerf()` and `__perf()` give draw calls, triangles, render size and
+frames drawn.

@@ -163,6 +163,20 @@ renderer.init(state.mapRadius);
 // Debug-only getters for automated verification of touch camera controls.
 (window as any).__cam = () => renderer.cameraDebug();
 (window as any).__tinted = () => renderer.tintedUnitCount();
+(window as any).__perf = () => renderer.perfInfo();
+// iOS Safari only applies :active (button press feedback) when the page has a
+// touch listener; a passive no-op is enough and costs nothing.
+document.addEventListener('touchstart', () => {}, { passive: true });
+
+// The board is completely covered while the menu is up (the menu draws its own
+// living-board scene), so stop rendering it — two 3D scenes at once was the
+// main cause of menu lag on phones. Tracks every way the menu opens/closes.
+{
+  const overlay = document.getElementById('menuOverlay')!;
+  const sync = () => renderer.setPaused(!overlay.classList.contains('hidden'));
+  new MutationObserver(sync).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  sync();
+}
 (window as any).__sel = () => ({
   mode: state.selectionMode,
   siteId: state.selectedSiteId,

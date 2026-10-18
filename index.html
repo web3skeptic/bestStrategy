@@ -536,6 +536,9 @@
     .mbtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #226b62, 0 4px 10px rgba(0,0,0,.3); }
     .mbtn.gold { background: var(--gold); color: #3a2604; box-shadow: 0 4px 0 var(--gold-dk), 0 8px 18px rgba(0,0,0,.3); }
     .mbtn.quiet { background: rgba(23,34,28,.66); box-shadow: 0 4px 0 rgba(0,0,0,.35), 0 8px 18px rgba(0,0,0,.25); }
+    /* Continue card: title over the save summary, so neither wraps or squeezes on a phone. */
+    #menuContinue { flex-direction: column; gap: 2px; height: auto; min-height: 54px; padding: 8px 16px; line-height: 1.15; }
+    #menuContinue small { font-size: 11.5px; }
     .mbtn small { font-weight: 800; font-size: 11px; opacity: .75; letter-spacing: .08em; text-transform: none; }
     .mbtn b { font-weight: 900; }
     .menu-sheet2 { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 5%); transform: translateX(-50%); width: min(420px, 92vw); display: flex; flex-direction: column; gap: 10px; padding: 16px;
@@ -1481,6 +1484,26 @@
     @media (max-height: 480px) {
       .tech-panel, .settings-panel { max-height: 96vh; }
       #combatLog.open { max-height: 70px; }
+    }
+    /* ── Touch devices (phones / tablets) ── */
+    /* Instant, clean taps: no grey tap flash, no double-tap-zoom wait, no text
+       selection when a finger lingers on a button. */
+    button, a, .mbtn, .mtribe, .mpill, .hud-chip, .opp-card, .fc-card, .lobby-room-item button {
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      -webkit-user-select: none; user-select: none;
+    }
+    @media (hover: none) and (pointer: coarse) {
+      /* backdrop-filter re-blurs everything behind an element on every frame;
+         over the animated 3D board that is one of the most expensive things a
+         mobile WebView can do (19 blurred panels here). Use slightly more
+         opaque fills instead — they read the same at phone size. */
+      *, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+      .menu-sheet2 { background: rgba(23,34,28,.93); }
+      .mbtn.quiet { background: rgba(23,34,28,.86); }
+      .menu-chip { background: rgba(8,20,14,.88); }
+      /* Clear press feedback the moment a finger lands. */
+      .mbtn:active, .mtribe:active, .mpill:active { filter: brightness(1.12); }
     }
   </style>
 </head>
