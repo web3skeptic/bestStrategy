@@ -543,7 +543,7 @@
     .menu-sheet2.hidden, .menu-stack.hidden { display: none; }
     .menu-sheet2 h2 { margin: 0; font-family: 'Lilita One', sans-serif; font-weight: 400; color: var(--cream); font-size: 26px; text-align: center; letter-spacing: .03em; }
     .mlabel { font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; color: rgba(255,244,220,.7); text-align: center; }
-    .mtribes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .mtribes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
     .mtribe { position: relative; border-radius: 18px; border: 3px solid transparent; background: rgba(255,244,220,.07); cursor: pointer; color: var(--cream); text-align: left; padding: 12px 14px; display: grid; grid-template-columns: 1fr 56px; align-items: center; gap: 8px; font: inherit; }
     .mtribe.on { border-color: var(--gold); background: rgba(47,143,131,.7); }
     .mtribe b { display: block; font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 22px; letter-spacing: .03em; }
@@ -1086,7 +1086,7 @@
        bottom 3D HUD slabs: #5e6470 fill, octagon bevel, chiselled rim). */
     #waitingIndicator {
       position: fixed;
-      top: 16px;
+      top: calc(env(safe-area-inset-top, 0px) + 16px);
       left: 50%;
       transform: translateX(-50%);
       z-index: 120;               /* above the board, below menus/overlays */
@@ -1110,7 +1110,7 @@
     #waitingIndicator.hidden { display: none; }
     #trainingQueueBanner {
       position: fixed;
-      top: 16px;
+      top: calc(env(safe-area-inset-top, 0px) + 16px);
       left: 50%;
       transform: translateX(-50%);
       z-index: 120;
@@ -1143,7 +1143,7 @@
     /* Toast notifications — small carved-stone chips, auto-dismissed, stacked. */
     #toastStack {
       position: fixed;
-      top: 70px;
+      top: calc(env(safe-area-inset-top, 0px) + 70px);
       right: 14px;
       z-index: 121;               /* above the board / banner, below overlays */
       display: flex;
@@ -1330,7 +1330,7 @@
     #spectatorBanner {
       display: none;
       position: absolute;
-      top: 44px;
+      top: calc(env(safe-area-inset-top, 0px) + 44px);
       left: 0;
       right: 0;
       z-index: 25;
@@ -1382,7 +1382,17 @@
 
     /* ── Phones (≤480px) ── */
     @media (max-width: 480px) {
-      .top-bar { padding: 6px 8px 0; }
+      /* Keep the notch / Dynamic Island inset (0 in a normal browser tab). */
+      .top-bar { padding: calc(env(safe-area-inset-top, 0px) + 6px) 8px 0 calc(env(safe-area-inset-left, 0px) + 8px); }
+      /* Phones: the HUD fills the top two rows, so the banners stack below the
+         player chips instead of covering them — training, then waiting, then toasts. */
+      #trainingQueueBanner { top: calc(env(safe-area-inset-top, 0px) + 100px); max-width: 94vw; }
+      #waitingIndicator { top: calc(env(safe-area-inset-top, 0px) + 150px); }
+      #toastStack { top: calc(env(safe-area-inset-top, 0px) + 200px); }
+      .mtribe { padding: 10px 10px; grid-template-columns: minmax(0, 1fr) 44px; }
+      .mtribe b { font-size: 19px; }
+      .mtribe .sig { width: 44px; height: 44px; }
+      .mtribe .sig svg { width: 26px; height: 26px; }
       .stone-plaque {
         width: 94vw;
         margin-top: 20px;
@@ -1581,7 +1591,7 @@
       <!-- Online lobby: login step -->
       <div class="lobby-panel hidden" id="lobbyLogin">
         <div class="lobby-title">Online Multiplayer</div>
-        <input class="lobby-input" id="lobbyUsernameInput" placeholder="Enter username…" maxlength="24" />
+        <input class="lobby-input" id="lobbyUsernameInput" placeholder="Enter username…" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" maxlength="24" />
         <button class="lobby-btn primary" id="lobbyLoginBtn">Connect</button>
         <div class="lobby-status" id="lobbyLoginStatus"></div>
         <div class="lobby-back" id="lobbyLoginBack">← Back</div>
@@ -1599,7 +1609,7 @@
         <hr class="lobby-divider" />
         <div class="lobby-section">Join by code</div>
         <div style="display:flex;gap:8px">
-          <input class="lobby-input" id="lobbyJoinCodeInput" placeholder="Room code…" maxlength="4" style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center" />
+          <input class="lobby-input" id="lobbyJoinCodeInput" placeholder="Room code…" maxlength="4" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center" />
           <button class="lobby-btn" id="lobbyJoinCodeBtn" style="white-space:nowrap">Join</button>
         </div>
         <div class="lobby-status" id="lobbyRoomStatus"></div>

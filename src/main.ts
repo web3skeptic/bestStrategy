@@ -539,6 +539,11 @@ function handleMultiplayerEventInner(event: ServerMessage): void {
       hideMenu();
       closeTechTree();
       combatLog.innerHTML = '';
+      // Open on our own Capital, as local games do. The default board-centre
+      // framing showed only fog online, and on a phone the home area was
+      // entirely off-screen.
+      const homeCapital = getPlayerCapital(state, state.players[myPlayerSlot]?.id ?? myPlayerSlot);
+      if (homeCapital) renderer.focusOnHex(homeCapital.pos);
       const myPlayer = state.players[myPlayerSlot];
       console.log(`[MP] game_start: slot=${myPlayerSlot} name="${myPlayer?.name}" color=${myPlayer?.color} currentPlayerIndex=${state.currentPlayerIndex}`);
       logCombat(`--- Online Game started (you are Player ${myPlayerSlot + 1}) ---`);
@@ -1040,6 +1045,11 @@ function restoreGame(): void {
   logCombat('--- Resumed saved game ---');
   // Preselect the human's temple unless it's the AI's move to resume.
   if (!isAISlot(state.currentPlayerIndex)) autoSelectTemple();
+  // Open on the local human's Capital, as a new game does (the default
+  // board-centre framing can show nothing but fog, especially on a phone).
+  const humanSeat = controllers.findIndex(k => k === 'human');
+  const homeCapital = humanSeat >= 0 ? getPlayerCapital(state, humanSeat) : undefined;
+  if (homeCapital) renderer.focusOnHex(homeCapital.pos);
   render();
   maybeRunAITurn();              // if it was the AI's turn, let it continue
 }
