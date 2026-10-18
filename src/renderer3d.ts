@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId, Road } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
 import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory, getAgrarCultivation } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
@@ -12,6 +12,27 @@ import { buildFarm, buildFertileSite } from './voxelFarm';
 import { buildRoad as buildRoadModel } from './voxelRoad';
 import { buildUnitModel } from './voxelUnits';
 import { getSharedFaceTexture } from './voxelWarrior';
+
+interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; faction: FactionId | null; }
+
+// A structure as the viewer last saw it. `remembered` marks an entry drawn from
+// memory (its hex is explored but out of vision), not from the live state.
+interface RememberedStructure extends StructureVisual { remembered?: boolean; own?: boolean; }
+
+// A farm drawn in the previous frame, kept so a farm that disappears can be
+// told apart: destroyed in plain sight (animate) vs. discovered gone (quiet).
+interface FarmSighting { pos: HexCoord; hp: number; maxHp: number; colorNum: number; live: boolean; }
+
+// One running farm-destruction effect (see startFarmCollapse).
+interface FarmCollapse {
+  start: number; last: number;
+  group: THREE.Group; building: THREE.Object3D; buildingMats: THREE.Material[];
+  debris: { mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial; vel: THREE.Vector3; spin: THREE.Vector3; bounced: boolean }[];
+  smoke: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; delay: number; drift: THREE.Vector3 }[];
+  embers: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vel: THREE.Vector3; life: number }[];
+  scorchMat: THREE.MeshBasicMaterial;
+}
+const FARM_COLLAPSE_MS = 4600;
 
 const MOVE_ANIM_MS = 260;
 const EXPLOSION_MS = 440;
@@ -283,6 +304,18 @@ export class Renderer3D {
   // it's never also a legal move/found destination for the same unit).
   private structureAttackTintIds = new Set<string>();
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
+  // ── Fog-of-war memory (per viewer id) ──
+  // Explored hexes outside current vision show structures and roads as the viewer
+  // last saw them, not their live state — otherwise a new enemy farm, a destroyed
+  // one, or a new road would appear/vanish under the fog and give the enemy away.
+  private seenStructs = new Map<number, Map<string, RememberedStructure>>();
+  private seenRoads = new Map<number, Map<string, Road>>();
+  private prevFarms = new Map<string, FarmSighting>();
+  private curFarms = new Map<string, FarmSighting>();
+  private frameExplored: Set<string> | null = null;
+  private frameVisible: Set<string> | null = null;
+  private frameViewer = -1;
+  private farmCollapses: FarmCollapse[] = [];
   private lastStructHp = new Map<string, number>(); // Capital/Temple/Farm — same purpose, structure combat pass
   private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number; stage: number; faction: FactionId | null }>();
   private structHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number }>();
@@ -546,6 +579,11 @@ export class Renderer3D {
     this.structureAttackTintIds.clear();
     this.lastUnitHp.clear();
     this.lastStructHp.clear();
+    this.seenStructs.clear();
+    this.seenRoads.clear();
+    this.prevFarms.clear();
+    this.curFarms.clear();
+    this.farmCollapses = []; // their groups lived in overlayGroup, disposed above
     this.roadSelectionHexes = [];
     this.ghostRoadMeshes = []; // disposed already via disposeGroup(overlayGroup) above
     this.farmSelectionHex = null;
@@ -924,6 +962,10 @@ export class Renderer3D {
     // only while it is that viewer's turn to act (never during an AI/opponent
     // turn or an omniscient/spectator view). Also gates the pending-capture
     // temple tint (case b) below.
+    this.frameExplored = explored;
+    this.frameVisible = visible;
+    this.frameViewer = playerId;
+
     const showToMove = viewerPlayerId !== undefined && !omniscient
       && state.phase === 'playing' && state.currentPlayerIndex === viewerPlayerId;
     this.lastShowToMove = showToMove;
@@ -1208,7 +1250,7 @@ export class Renderer3D {
     // model is what actually makes a Road unmistakable; this flat tint is
     // just a faint reinforcement, same relationship Farms have with their
     // own territory/cultivation washes.
-    const roadSet = new Set(state.roads.map(r => hexKey(r.pos)));
+    const roadSet = new Set(this.fogRoads(state.roads, this.frameVisible).map(r => hexKey(r.pos)));
     // §26 — a lowest-priority amber warning tint on enemy ZOC hexes, so the
     // player can see WHY a unit's move range stops short before they even
     // click it, not just infer it from the highlight's shorter-than-expected
@@ -1272,14 +1314,22 @@ export class Renderer3D {
 
     for (const hex of this.mapHexes) {
       const key = hexKey(hex);
-      if (!explored.has(key)) continue;
+      // Unexplored hexes get no highlight — except a legal move target: a fast
+      // unit can outrun its own vision, and a move that's allowed but not shown
+      // used to be clickable only by accident.
+      if (!explored.has(key)) {
+        if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
+        continue;
+      }
       // Attackable enemies get a bold red tint. The set comes straight from the
       // engine's state.attackHexes (updateHighlights → getEffectiveRange, fog /
       // forest visibility, hasAttacked & cantShootAfterMove gating) — i.e. the
       // exact legal-target set combat validation uses, never re-derived here.
       if (roadSelectionSet.has(key)) place(hex, 0xffd23f, 0.7, true); // strong pulsing gold "ghost" — committed Road selection
       else if (farmSelectionKey === key) place(hex, 0xf0ffb0, 0.78, true); // Farm-placement UX pass — much stronger pulse for the tentatively-selected Farm tile, above the plain candidate pulse
-      else if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
+      // Red only where the viewer can see now: a target list from an older server
+      // or rules version must never mark a hex inside the fog.
+      else if (attackSet.has(key) && (!this.frameVisible || this.frameVisible.has(key))) place(hex, 0xff2020, 0.62);
       else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
       else if (buildSet.has(key) && state.buildKind === 'farm') place(hex, 0x2ee65a, 0.55, true); // pulsating agricultural green — see place()
       else if (buildSet.has(key) && state.buildKind === 'road') place(hex, 0x22d0ff, 0.5, true); // Road-placement UX pass — pulsing cyan/blue, distinct from Farm's green
@@ -1312,6 +1362,256 @@ export class Renderer3D {
     }
   }
 
+  // ── Fog-of-war memory ──
+
+  // Returns the structures to draw: live ones on visible hexes (and the viewer's
+  // own, which they always know), remembered ones on explored-but-dark hexes.
+  // A structure first seen on a dark hex (built there unseen) stays hidden; one
+  // that vanished from a dark hex (destroyed unseen) stays as last seen until the
+  // hex is visible again.
+  private applyStructureMemory(live: StructureVisual[], state: GameState, visible: Set<string>): RememberedStructure[] {
+    const viewer = this.frameViewer;
+    let shown: RememberedStructure[] = live;
+    if (!this.lastOmniscient) {
+      let memory = this.seenStructs.get(viewer);
+      if (!memory) {
+        // First frame for this viewer (new page load / reconnect): seed from the
+        // explored area so the map isn't empty until everything is re-seen.
+        memory = new Map();
+        this.seenStructs.set(viewer, memory);
+        for (const st of live) if (this.frameExplored?.has(hexKey(st.pos))) memory.set(st.id, { ...st, remembered: true });
+      }
+      const own = new Set<string>();
+      for (const c of state.capitals) if (c.playerId === viewer) own.add(c.id);
+      for (const f of state.farms) if (f.ownerId === viewer) own.add(f.id);
+      for (const s of state.strategicSites) if (s.ownerId === viewer) own.add(s.id);
+      for (const f of state.fertileSites) if (f.ownerId === viewer) own.add(f.id);
+
+      const liveIds = new Set(live.map(st => st.id));
+      shown = [];
+      for (const st of live) {
+        const isOwn = own.has(st.id);
+        if (isOwn || visible.has(hexKey(st.pos))) {
+          memory.set(st.id, { ...st, remembered: true, own: isOwn });
+          shown.push(st);
+        } else {
+          const seen = memory.get(st.id);
+          if (seen) shown.push(seen);
+        }
+      }
+      for (const [id, seen] of [...memory]) {
+        if (liveIds.has(id)) continue;
+        if (seen.own || visible.has(hexKey(seen.pos))) memory.delete(id);
+        else shown.push(seen);
+      }
+    }
+    this.prevFarms = this.curFarms;
+    this.curFarms = new Map();
+    for (const st of shown) {
+      if (st.kind === 'farm') this.curFarms.set(st.id, { pos: st.pos, hp: st.hp, maxHp: st.maxHp, colorNum: st.colorNum, live: !st.remembered });
+    }
+    return shown;
+  }
+
+  // Same memory for roads (keyed by hex). Own roads always show their true state.
+  private fogRoads(roads: Road[], visible: Set<string> | null): Road[] {
+    if (!visible || this.lastOmniscient) return roads;
+    const viewer = this.frameViewer;
+    let memory = this.seenRoads.get(viewer);
+    if (!memory) {
+      memory = new Map();
+      this.seenRoads.set(viewer, memory);
+      for (const r of roads) if (this.frameExplored?.has(hexKey(r.pos))) memory.set(hexKey(r.pos), r);
+    }
+    const liveKeys = new Set<string>();
+    const shown: Road[] = [];
+    for (const r of roads) {
+      const key = hexKey(r.pos);
+      liveKeys.add(key);
+      if (r.ownerId === viewer || visible.has(key)) { memory.set(key, r); shown.push(r); }
+      else { const seen = memory.get(key); if (seen) shown.push(seen); }
+    }
+    for (const [key, r] of [...memory]) {
+      if (liveKeys.has(key)) continue;
+      if (r.ownerId === viewer || visible.has(key)) memory.delete(key);
+      else shown.push(r);
+    }
+    return shown;
+  }
+
+  // ── Farm destruction ──
+
+  // Called when a structure mesh is about to be removed. If it is a built farm
+  // the viewer watched get destroyed, takes over the mesh and plays the effect;
+  // otherwise returns false and the caller disposes the mesh as before.
+  private startFarmCollapse(id: string, building: THREE.Object3D): boolean {
+    const farm = this.prevFarms.get(id);
+    if (!farm || !farm.live || !(farm.maxHp > 0) || !this.frameVisible?.has(hexKey(farm.pos))) return false;
+    const bar = this.structHpBars.get(id);
+    if (bar) bar.group.parent?.remove(bar.group);
+
+    const now = performance.now();
+    const { x, z } = hexToWorld(farm.pos);
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+    this.overlayGroup.add(group);
+    this.structureGroup.remove(building);
+    building.position.set(0, 0, 0);
+    group.add(building);
+
+    // Private, fadeable copies of the building's (possibly shared) materials.
+    const buildingMats: THREE.Material[] = [];
+    building.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.material) return;
+      const list = (Array.isArray(m.material) ? m.material : [m.material]).map(mat => {
+        const c = mat.clone();
+        c.transparent = true;
+        buildingMats.push(c);
+        return c;
+      });
+      m.material = Array.isArray(m.material) ? list : list[0]!;
+    });
+
+    // Debris: straw, timber, crop green and the owner's colour.
+    const box = new THREE.BoxGeometry(0.14, 0.14, 0.14);
+    const colours = [0xe8c35a, 0xc99f4a, 0x8b5a2b, 0x6b4423, 0x6fa84b, farm.colorNum];
+    const debris: FarmCollapse['debris'] = [];
+    for (let i = 0; i < 18; i++) {
+      const mat = new THREE.MeshStandardMaterial({ color: colours[i % colours.length], roughness: 0.9, metalness: 0, transparent: true });
+      const mesh = new THREE.Mesh(box, mat);
+      const angle = (i / 18) * Math.PI * 2 + Math.random() * 0.5;
+      const speed = 1.4 + Math.random() * 2.2;
+      mesh.position.set((Math.random() - 0.5) * 0.4, 0.25 + Math.random() * 0.3, (Math.random() - 0.5) * 0.4);
+      mesh.scale.setScalar(0.6 + Math.random() * 0.9);
+      mesh.visible = false;
+      group.add(mesh);
+      debris.push({
+        mesh, mat,
+        vel: new THREE.Vector3(Math.cos(angle) * speed, 2.6 + Math.random() * 2.8, Math.sin(angle) * speed),
+        spin: new THREE.Vector3(Math.random() * 9, Math.random() * 9, Math.random() * 9),
+        bounced: false,
+      });
+    }
+
+    const puff = new THREE.SphereGeometry(0.32, 8, 6);
+    const smoke: FarmCollapse['smoke'] = [];
+    for (let i = 0; i < 8; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: i % 2 ? 0x6b6b6b : 0x5a5a5a, transparent: true, opacity: 0, depthWrite: false });
+      const mesh = new THREE.Mesh(puff, mat);
+      mesh.position.set((Math.random() - 0.5) * 0.6, 0.2, (Math.random() - 0.5) * 0.6);
+      mesh.visible = false;
+      group.add(mesh);
+      smoke.push({ mesh, mat, delay: 150 + i * 85, drift: new THREE.Vector3((Math.random() - 0.5) * 0.5, 1 + Math.random() * 0.6, (Math.random() - 0.5) * 0.5) });
+    }
+
+    const spark = new THREE.SphereGeometry(0.045, 5, 4);
+    const embers: FarmCollapse['embers'] = [];
+    for (let i = 0; i < 14; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: i % 3 ? 0xff8a2a : 0xffdc66, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const mesh = new THREE.Mesh(spark, mat);
+      mesh.position.set((Math.random() - 0.5) * 0.5, 0.3, (Math.random() - 0.5) * 0.5);
+      mesh.visible = false;
+      group.add(mesh);
+      embers.push({ mesh, mat, vel: new THREE.Vector3((Math.random() - 0.5) * 1.2, 1.2 + Math.random() * 1.8, (Math.random() - 0.5) * 1.2), life: 900 + Math.random() * 700 });
+    }
+
+    // Scorched hex left on the ground (a 6-segment disc is a hexagon).
+    const scorchMat = new THREE.MeshBasicMaterial({ color: 0x2a1d12, transparent: true, opacity: 0, depthWrite: false });
+    const scorch = new THREE.Mesh(new THREE.RingGeometry(0, 0.86, 6), scorchMat);
+    scorch.rotation.x = -Math.PI / 2;
+    scorch.rotation.z = Math.PI / 6;
+    scorch.position.y = (this.lastState ? this.elevationAt(this.lastState, farm.pos) : 0) + 0.03;
+    group.add(scorch);
+
+    // The final blow never reaches detectHits (the farm is already gone from
+    // the state), so the impact flash and shockwaves are fired here.
+    this.startHitAnimation(farm.pos, 0, Math.max(8, farm.hp || 8));
+    this.startShockwave(farm.pos, 0);
+    this.startShockwave(farm.pos, 200);
+
+    this.farmCollapses.push({ start: now, last: now, group, building, buildingMats, debris, smoke, embers, scorchMat });
+    return true;
+  }
+
+  private updateFarmCollapses(now: number): void {
+    this.farmCollapses = this.farmCollapses.filter(fx => {
+      const t = now - fx.start;
+      const dt = Math.min((now - fx.last) / 1000, 0.05);
+      fx.last = now;
+      if (t >= FARM_COLLAPSE_MS) {
+        this.overlayGroup.remove(fx.group);
+        this.disposeObject(fx.group);
+        return false;
+      }
+
+      // Building: shudder and pop, then crumple into the ground and fade.
+      const b = fx.building;
+      if (b.visible) {
+        if (t < 170) {
+          const k = 1 - t / 170;
+          b.position.set((Math.random() - 0.5) * 0.09 * k, 0, (Math.random() - 0.5) * 0.09 * k);
+          b.scale.setScalar(1 + 0.08 * Math.sin((t / 170) * Math.PI));
+        } else if (t < 1150) {
+          const k = Math.min((t - 170) / 730, 1);
+          const e = k * k * k;
+          b.position.set(0, -0.18 * e, 0);
+          b.scale.set(1 + 0.25 * e, Math.max(0.06, 1 - 0.94 * e), 1 + 0.25 * e);
+          b.rotation.z = 0.22 * e;
+          b.rotation.x = -0.12 * e;
+          const opacity = t < 650 ? 1 : Math.max(0, 1 - (t - 650) / 500);
+          for (const m of fx.buildingMats) m.opacity = opacity;
+        } else {
+          b.visible = false;
+        }
+      }
+
+      // Debris: thrown out, falls, bounces once, slides to a stop, fades.
+      for (const d of fx.debris) {
+        if (t < 110) continue;
+        d.mesh.visible = true;
+        d.vel.y -= 9.8 * dt;
+        d.mesh.position.addScaledVector(d.vel, dt);
+        d.mesh.rotation.x += d.spin.x * dt;
+        d.mesh.rotation.y += d.spin.y * dt;
+        d.mesh.rotation.z += d.spin.z * dt;
+        if (d.mesh.position.y < 0.04) {
+          d.mesh.position.y = 0.04;
+          if (d.bounced) { d.vel.set(d.vel.x * 0.6, 0, d.vel.z * 0.6); d.spin.multiplyScalar(0.7); }
+          else { d.vel.y = -d.vel.y * 0.32; d.vel.x *= 0.7; d.vel.z *= 0.7; d.bounced = true; }
+        }
+        d.mat.opacity = t < 1700 ? 1 : Math.max(0, 1 - (t - 1700) / 900);
+      }
+
+      // Smoke: rises, swells and thins out.
+      for (const p of fx.smoke) {
+        const a = t - p.delay;
+        if (a < 0) continue;
+        const k = Math.min(a / 1600, 1);
+        p.mesh.visible = k < 1;
+        p.mesh.position.addScaledVector(p.drift, dt * 0.9);
+        p.mesh.scale.setScalar(0.45 + k * 1.5);
+        p.mat.opacity = 0.36 * (1 - k) * (1 - k) * Math.min(a / 120, 1);
+      }
+
+      // Embers: float up and flicker out.
+      for (const p of fx.embers) {
+        const a = t - 120;
+        if (a < 0) continue;
+        const k = a / p.life;
+        p.mesh.visible = k < 1;
+        p.vel.y -= 0.6 * dt;
+        p.mesh.position.addScaledVector(p.vel, dt);
+        p.mat.opacity = k < 1 ? (1 - k) * (0.6 + 0.4 * Math.sin(a * 0.05 + p.life)) : 0;
+      }
+
+      // Scorch mark: appears as the dust settles, lingers, fades.
+      fx.scorchMat.opacity = t < 300 ? 0 : t < 520 ? 0.62 * (t - 300) / 220 : t < 2600 ? 0.62 : Math.max(0, 0.62 * (1 - (t - 2600) / 2000));
+      return true;
+    });
+  }
+
+
   // Placement-UX pass — a built Road previously had no 3D presence at all
   // (just a faint flat ground tint, §23-25 — easy to lose among the other
   // placement-mode highlight tints layered on top of it). Every Road tile
@@ -1319,7 +1619,8 @@ export class Renderer3D {
   // by-position pattern as the structure loop below, so it reads clearly
   // regardless of what highlight happens to be drawn over the same hex.
   private syncRoads(state: GameState, explored: Set<string>, visible: Set<string>): void {
-    const liveKeys = new Set(state.roads.map(r => hexKey(r.pos)));
+    const roads = this.fogRoads(state.roads, visible);
+    const liveKeys = new Set(roads.map(r => hexKey(r.pos)));
     for (const [key, mesh] of this.roadMeshes) {
       if (liveKeys.has(key)) continue;
       this.overlayGroup.remove(mesh);
@@ -1327,7 +1628,7 @@ export class Renderer3D {
       this.roadMeshes.delete(key);
       this.structFogState.delete('R' + key);
     }
-    for (const road of state.roads) {
+    for (const road of roads) {
       const key = hexKey(road.pos);
       if (!explored.has(key)) continue;
       let mesh = this.roadMeshes.get(key);
@@ -1354,7 +1655,6 @@ export class Renderer3D {
     // stays visible), only structureAttackHexes.
     const attackableStructSet = new Set(state.structureAttackHexes.map(h => hexKey(h)));
 
-    interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; faction: FactionId | null; }
     const structures: StructureVisual[] = [];
     for (const capital of state.capitals as Capital[]) {
       const owner = state.players.find(p => p.id === capital.playerId);
@@ -1415,13 +1715,21 @@ export class Renderer3D {
       });
     }
 
+    // Fog of war: out-of-vision hexes show what this viewer last saw.
+    const shown = this.applyStructureMemory(structures, state, visible);
+    structures.length = 0;
+    structures.push(...shown);
+
     // Farms are the only structure that can vanish outright (destroyed, not
     // Ruins) — prune any mesh whose id no longer appears in the live state.
+    // A farm destroyed in plain sight hands its mesh to the collapse effect.
     const liveIds = new Set(structures.map(s => s.id));
     for (const [id, entry] of this.structureMeshes) {
       if (liveIds.has(id)) continue;
-      this.structureGroup.remove(entry.mesh);
-      this.disposeObject(entry.mesh);
+      if (!this.startFarmCollapse(id, entry.mesh)) {
+        this.structureGroup.remove(entry.mesh);
+        this.disposeObject(entry.mesh);
+      }
       this.structureMeshes.delete(id);
       this.structureTintIds.delete(id);
       this.structureAttackTintIds.delete(id);
@@ -1484,7 +1792,7 @@ export class Renderer3D {
       //       gated like the unit to-move tint (own unit, viewer's turn).
       // Red "attackable" tint takes priority — checked first, and skips the
       // warm-yellow logic entirely when it applies (see structureAttackTintIds).
-      const attackable = explored.has(key) && attackableStructSet.has(key);
+      const attackable = visible.has(key) && attackableStructSet.has(key);
       if (attackable) {
         this.structureAttackTintIds.add(st.id);
         if (this.structureTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
@@ -2307,6 +2615,7 @@ export class Renderer3D {
         mesh.position.set(x, y, z);
       }
     }
+    if (this.farmCollapses.length > 0) this.updateFarmCollapses(now);
     if (this.explosions.length > 0) {
       this.explosions = this.explosions.filter(ex => {
         const t = (now - ex.start) / EXPLOSION_MS;
