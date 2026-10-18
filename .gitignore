@@ -30,3 +30,6 @@ ml/weights/policy-*.json
 
 # runtime sqlite + chat transcripts for this instance
 data/
+dist-ios/
+ios-build/
+ios-build.log

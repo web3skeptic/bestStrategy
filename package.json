@@ -37,13 +37,16 @@
     "test:farmer-roster": "tsx scripts/verify-farmer-roster.ts",
     "test:placement-ux": "tsx scripts/verify-placement-ux.ts",
     "test": "npm run test:combat && npm run test:opening-flow && npm run test:strategic-sites && npm run test:economy && npm run test:faction-rosters && npm run test:command && npm run test:roads && npm run test:terrain && npm run test:move-attack-order && npm run test:zoc && npm run test:fog && npm run test:tech && npm run test:fertile-sites && npm run test:ai-difficulty && npm run test:ai-eval && npm run test:ai-search && npm run test:ai-search-candidates && npm run test:ai-search-engine && npm run test:ai-search-tt && npm run test:ai-search-quiescence && npm run test:ai-benchmarks && npm run test:ai-search-activation-order && npm run test:ai-search-telemetry && npm run test:ai-macro-plan && npm run test:agrar-balance && npm run test:farmer-roster && npm run test:placement-ux",
-    "build:root": "vite build"
+    "build:root": "vite build",
+    "build:ios": "VITE_NATIVE_APP=1 VITE_WS_URL=wss://interslavic.space/game-upgradable/ws vite build && cap sync ios",
+    "ios:open": "cap open ios"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@capacitor/cli": "8.5.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
@@ -56,6 +59,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.138",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",
     "express": "^5.2.1",
