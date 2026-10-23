@@ -2,10 +2,10 @@
 import { GameState } from '../src/types';
 import { applyMicro, cloneState, reset, isAlive, Micro } from './gameEnv';
 import { runHardAITurn, runAITurn } from '../src/ai';
-import { endTurn, canAfford, canUpgradeTemple, canResearch, canBuildTeleportPair,
-  getUnlockedUnits, getPopulationCap, getPopulationCount, getUnitAt,
-  getValidTeleportHexes, getValidTeleportHexesForOtherTemples,
-  getEffectiveRange, getPlayerVisible, isForestUnitRevealed, canCaptureTemple } from '../src/game';
+import { endTurn, canAfford, canResearch, canBuildTeleportPair,
+  getUnlockedUnits, getPopulationCap, getPopulationCount,
+  getValidTeleportHexes, getValidTeleportHexesForOtherTemples, getOwnedStructures,
+  getEffectiveRange, getEffectiveSpeed, getZocHexes, getPlayerVisible, isForestUnitRevealed, canStartFounding, getMoveBlockedHexes } from '../src/game';
 import { TECH_NODES, UnitType } from '../src/types';
 import { hexDistance, hexKey, hexEqual, getReachableHexes } from '../src/hex';
 import { featurize } from './features';
@@ -24,7 +24,8 @@ export function botCandidates(s: GameState): Micro[] {
   const myUnits = s.units.filter(u => u.hp > 0 && u.playerId === pid);
   const enemies = s.units.filter(u => u.hp > 0 && u.playerId !== pid);
   const objectives = [
-    ...s.temples.filter(t => t.ownerId !== pid).map(t => t.pos),
+    ...s.strategicSites.filter(t => t.ownerId !== pid).map(t => t.pos),
+    ...s.capitals.filter(c => c.playerId !== pid).map(c => c.pos),
     ...enemies.map(e => e.pos),
   ];
   const nearestObj = (p: { q: number; r: number }) => {
@@ -35,7 +36,7 @@ export function botCandidates(s: GameState): Micro[] {
   // Cheap captures + the single best attack per unit (lowest-HP reachable target
   // = easiest kill). One attack/unit keeps the lookahead candidate count bounded.
   for (const u of myUnits) {
-    if (canCaptureTemple(s, u)) out.push({ action: 'capture', params: { unitId: u.id } });
+    if (canStartFounding(s, u)) out.push({ action: 'found', params: { unitId: u.id } });
     if (u.hasAttacked || (u.stats.cantShootAfterMove && u.hasMoved)) continue;
     const rng = getEffectiveRange(s, u);
     let best: string | null = null, bestHp = Infinity;
@@ -48,13 +49,11 @@ export function botCandidates(s: GameState): Micro[] {
   }
 
   // Moves: only the MOVE_UNITS movable units nearest an objective get a BFS.
-  const wallPositions = [...s.walls].map(k => { const [q, r] = k.split(',').map(Number); return { q: q!, r: r! }; });
   const movable = myUnits.filter(u => !u.hasMoved && !u.hasAttacked)
     .map(u => ({ u, d: nearestObj(u.pos) }))
     .sort((a, b) => a.d - b.d).slice(0, MOVE_UNITS);
   for (const { u } of movable) {
-    const occupied = s.units.filter(x => x.hp > 0 && x.id !== u.id).map(x => x.pos);
-    const reachable = getReachableHexes(u.pos, u.stats.speed, s.mapRadius, [...occupied, ...wallPositions], s.hills);
+    const reachable = getReachableHexes(u.pos, getEffectiveSpeed(s, u), s.mapRadius, getMoveBlockedHexes(s, u), s.hills, getZocHexes(s, u.playerId));
     const scored = reachable.map(h => ({
       to: h,
       adj: enemies.some(e => hexDistance(h, e.pos) === 1) ? 0 : 1,
@@ -63,21 +62,22 @@ export function botCandidates(s: GameState): Micro[] {
     for (const m of scored.slice(0, MOVES_PER_UNIT)) out.push({ action: 'move', params: { unitId: u.id, to: m.to } });
   }
 
-  // Recruit (few free temples × unlocked affordable types).
+  // Recruit (structures × unlocked affordable types). §5 (phase 11) — recruiting
+  // only QUEUES a TrainingOrder now; tile occupancy is checked at deployment
+  // time (resolveTrainingForPlayer), not here, so a structure with a unit
+  // standing on it is still a legal recruit target.
   if (getPopulationCount(s, pid) < getPopulationCap(s, pid)) {
-    const unlocked = getUnlockedUnits(s.playerTech[pid]!);
-    for (const temple of s.temples.filter(t => t.ownerId === pid)) {
-      if (getUnitAt(s, temple.pos)) continue;
-      for (const type of unlocked) if (canAfford(s, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: temple.id } });
+    const unlocked = getUnlockedUnits(s.playerTech[pid]!, s.players[pid]?.faction);
+    for (const structure of getOwnedStructures(s, pid)) {
+      for (const type of unlocked) if (canAfford(s, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: structure.id } });
     }
   }
-  for (const temple of s.temples.filter(t => t.ownerId === pid)) {
-    if (canUpgradeTemple(s, temple.id) !== null) out.push({ action: 'upgrade-temple', params: { templeId: temple.id } });
-    if (canBuildTeleportPair(s, temple.id)) {
-      const a = getValidTeleportHexes(s, temple.id); const bs = getValidTeleportHexesForOtherTemples(s, temple.id);
+  for (const structure of getOwnedStructures(s, pid)) {
+    if (canBuildTeleportPair(s, structure.id)) {
+      const a = getValidTeleportHexes(s, structure.id); const bs = getValidTeleportHexesForOtherTemples(s, structure.id);
       if (a.length && bs.length) {
-        let posB = bs[0]!, bd = -1; for (const h of bs) { const d = hexDistance(temple.pos, h); if (d > bd) { bd = d; posB = h; } }
-        out.push({ action: 'build-teleport', params: { templeId: temple.id, pos: a[0]!, targetPos: posB } });
+        let posB = bs[0]!, bd = -1; for (const h of bs) { const d = hexDistance(structure.pos, h); if (d > bd) { bd = d; posB = h; } }
+        out.push({ action: 'build-teleport', params: { templeId: structure.id, pos: a[0]!, targetPos: posB } });
       }
     }
   }
@@ -85,16 +85,21 @@ export function botCandidates(s: GameState): Micro[] {
   return out;
 }
 
-// Decide a bounded-game outcome when the round cap is hit: winner = most temples,
-// tie-broken by total unit HP; otherwise a draw.
+// Decide a bounded-game outcome when the round cap is hit: winner = highest
+// Capital HP (the real win condition, §11), tie-broken by owned structures
+// then total unit HP; otherwise a draw.
 export function materialWinner(s: GameState): number | null {
-  let best: number | null = null, bestT = -1, bestHp = -1;
+  let best: number | null = null, bestCap = -1, bestT = -1, bestHp = -1;
   for (const p of s.players) {
     if (!isAlive(s, p.id)) continue;
-    const t = s.temples.filter(x => x.ownerId === p.id).length;
+    const cap = s.capitals.find(c => c.playerId === p.id)?.hp ?? 0;
+    const t = getOwnedStructures(s, p.id).length;
     const hp = s.units.filter(u => u.hp > 0 && u.playerId === p.id).reduce((a, u) => a + u.hp, 0);
-    if (t > bestT || (t === bestT && hp > bestHp)) { best = p.id; bestT = t; bestHp = hp; }
-    else if (t === bestT && hp === bestHp) best = null; // ambiguous tie
+    if (cap > bestCap || (cap === bestCap && (t > bestT || (t === bestT && hp > bestHp)))) {
+      best = p.id; bestCap = cap; bestT = t; bestHp = hp;
+    } else if (cap === bestCap && t === bestT && hp === bestHp) {
+      best = null; // ambiguous tie
+    }
   }
   return best;
 }

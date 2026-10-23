@@ -1,0 +1,246 @@
+// Phase 6 verification (updated phase 11): the Command system — population
+// cap tiers, commandCost-weighted population spend (now including queued,
+// not-yet-deployed training orders), and the production-slot pool (design
+// brief §19-22). Exercises the real engine mutators end-to-end (no forked
+// logic) — createGameState, chooseFaction, researchTech, spawnUnit, endTurn.
+//
+// Run with: npx tsx scripts/verify-command.ts
+import {
+  createGameState, endTurn, chooseFaction, spawnUnit, canAfford, canResearch,
+  researchTech, getPopulationCap, getPopulationCount, getProductionSlots,
+  getBusyProductionSlotCount, getPlayerCapital, startFounding, startTempleUpgrade,
+} from '../src/game';
+import { COMMAND_TIERS, PRODUCTION_BASE_SLOTS } from '../src/factions';
+import { TECH_NODES } from '../src/types';
+import type { GameState, TechId } from '../src/types';
+
+let failures = 0;
+function check(name: string, cond: boolean, detail?: string): void {
+  if (cond) console.log(`  ok   ${name}`);
+  else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
+}
+
+// A fresh 2-player game with factions chosen immediately (phase 11 — no more
+// Founding Round to skip past), with generous aura for testing.
+function setup(): GameState {
+  const state = createGameState();
+  chooseFaction(state, 0, 'agrar');
+  chooseFaction(state, 1, 'temple');
+  for (const p of state.players) p.aura = 200;
+  return state;
+}
+
+function capitalId(state: GameState, playerId: number): string {
+  return getPlayerCapital(state, playerId)!.id;
+}
+
+function advanceOneRound(state: GameState): void {
+  endTurn(state);
+  endTurn(state);
+}
+
+// Tech-tree pacing pass — research is single-slot and multi-round now:
+// starts it, then advances exactly that tech's researchTime rounds so it
+// resolves. Comprehensive tech-mechanic coverage lives in verify-tech.ts;
+// this is just for this file's Command/population integration checks.
+function researchAndComplete(state: GameState, playerId: number, techId: TechId): boolean {
+  state.currentPlayerIndex = playerId;
+  if (!researchTech(state, techId)) return false;
+  const node = TECH_NODES.find(n => n.id === techId)!;
+  for (let i = 0; i < node.researchTime; i++) advanceOneRound(state);
+  return state.playerTech[playerId]!.researched.has(techId);
+}
+
+// §5 (phase 11) — a deployed recruit that lands ON the Capital tile blocks
+// every FUTURE deployment there until it moves off (resolveTrainingForPlayer
+// just leaves a blocked order queued forever, it never fails it) — sweep it
+// away between rounds so repeated recruiting in these tests keeps flowing.
+let sweepCounter = 0;
+function sweepUnitsOffCapital(state: GameState, playerId: number): void {
+  const pos = getPlayerCapital(state, playerId)!.pos;
+  for (const u of state.units) {
+    if (u.playerId === playerId && u.hp > 0 && u.pos.q === pos.q && u.pos.r === pos.r) {
+      u.pos = { q: 200 + sweepCounter, r: 200 + sweepCounter };
+      sweepCounter++;
+    }
+  }
+}
+
+// Queues 'warrior' recruits (commandCost 1 each) for playerId until
+// getPopulationCount reaches `target`, advancing rounds (and sweeping the
+// Capital clear) whenever the production-slot pool fills up.
+function fillPopulationTo(state: GameState, playerId: number, target: number): void {
+  const cap = capitalId(state, playerId);
+  let guard = target + PRODUCTION_BASE_SLOTS + 20; // safety valve against an infinite loop on a real bug
+  while (getPopulationCount(state, playerId) < target && guard-- > 0) {
+    state.currentPlayerIndex = playerId;
+    if (getBusyProductionSlotCount(state, playerId) >= getProductionSlots(state, playerId)) {
+      advanceOneRound(state);
+      sweepUnitsOffCapital(state, playerId);
+      continue;
+    }
+    if (!spawnUnit(state, cap, 'warrior')) break;
+  }
+}
+
+// ── Population cap tiers (§6, economy/pacing balance pass) ──
+console.log('\n=== Population cap tiers (§6) ===');
+{
+  check('COMMAND_TIERS is 6 -> 9 -> 12 (was 8 -> 10 -> 12)', COMMAND_TIERS.start === 6 && COMMAND_TIERS.commandI === 9 && COMMAND_TIERS.commandII === 12,
+    `got ${COMMAND_TIERS.start}/${COMMAND_TIERS.commandI}/${COMMAND_TIERS.commandII}`);
+  const state = setup();
+  check('starts at COMMAND_TIERS.start', getPopulationCap(state, 0) === COMMAND_TIERS.start, `got ${getPopulationCap(state, 0)}`);
+  state.currentPlayerIndex = 0;
+  check('command_2 not researchable before command_1', !canResearch(state, 'command_2'));
+  const r1 = researchTech(state, 'command_1');
+  check('research command_1 succeeds (starts it — does not apply immediately)', r1);
+  check('cap unchanged the instant Command I STARTS (only completion applies it)', getPopulationCap(state, 0) === COMMAND_TIERS.start, `got ${getPopulationCap(state, 0)}`);
+  check('command_2 still not researchable — Command I hasn\'t completed yet', !canResearch(state, 'command_2'));
+  for (let i = 0; i < TECH_NODES.find(n => n.id === 'command_1')!.researchTime; i++) advanceOneRound(state);
+  check('cap raised to COMMAND_TIERS.commandI once Command I completes', getPopulationCap(state, 0) === COMMAND_TIERS.commandI, `got ${getPopulationCap(state, 0)}`);
+  check('command_2 still not researchable — needs 2 OTHER completed technologies too', !canResearch(state, 'command_2'));
+  // Complete two unrelated, faction-agnostic techs to satisfy Command II's
+  // "at least 2 other completed technologies" requirement.
+  check('research + complete unlock_healer', researchAndComplete(state, 0, 'unlock_healer'));
+  check('command_2 still not researchable — only 1 other completed tech so far', !canResearch(state, 'command_2'));
+  check('research + complete horse_sight', researchAndComplete(state, 0, 'horse_sight'));
+  state.currentPlayerIndex = 0;
+  check('command_2 now researchable (Command I + 2 other completed techs)', canResearch(state, 'command_2'));
+  check('research + complete command_2', researchAndComplete(state, 0, 'command_2'));
+  check('cap raised to COMMAND_TIERS.commandII', getPopulationCap(state, 0) === COMMAND_TIERS.commandII, `got ${getPopulationCap(state, 0)}`);
+  check('territory never raises the cap (only tech does)', COMMAND_TIERS.commandII > COMMAND_TIERS.commandI && COMMAND_TIERS.commandI > COMMAND_TIERS.start);
+}
+
+// ── Raider Command cost caps army size correctly (v14 balance pass) ──
+console.log('\n=== Raider Command cost caps at 3, not 6, under Command 6 (v14) ===');
+{
+  const state = setup();
+  state.currentPlayerIndex = 1; // Temple
+  const cap = getPopulationCap(state, 1);
+  check('starting population cap is COMMAND_TIERS.start (6)', cap === COMMAND_TIERS.start, `got ${cap}`);
+  const capId = capitalId(state, 1);
+  for (let i = 0; i < 3; i++) {
+    state.currentPlayerIndex = 1;
+    const ok = spawnUnit(state, capId, 'horserider');
+    check(`Raider ${i + 1}/3 recruits successfully`, ok);
+    advanceOneRound(state); // deploy it, freeing the production slot for the next
+  }
+  check('population count is exactly 6 after 3 Raiders (commandCost 2 each)', getPopulationCount(state, 1) === 6, `got ${getPopulationCount(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  check('a 4th Raider does NOT fit at Command 6 — cap is 3 Raiders, not 6', !canAfford(state, 'horserider'));
+}
+
+// ── commandCost-weighted population spend (§19) ──
+console.log('\n=== Population cost is commandCost-weighted, not flat 1-per-unit ===');
+{
+  const state = setup();
+  check('research + complete Heavy Armor', researchAndComplete(state, 0, 'agrar_heavy_armor'));
+  check('research + complete Command I', researchAndComplete(state, 0, 'command_1'));
+  check('research + complete Heavy Knight tech', researchAndComplete(state, 0, 'agrar_heavy_knight_tech'));
+  state.currentPlayerIndex = 0;
+  const cap = getPopulationCap(state, 0);
+  // §3 (phase 11) — zero starting units: a fresh player starts at population 0.
+  check('fresh player starts at population 0 (zero starting units)', getPopulationCount(state, 0) === 0, `got ${getPopulationCount(state, 0)}`);
+
+  fillPopulationTo(state, 0, cap - 1);
+  const popBefore = getPopulationCount(state, 0);
+  check(`population sits at cap-1 (${cap - 1})`, popBefore === cap - 1, `got ${popBefore}`);
+
+  // Make sure a production slot + a clear Capital tile are both available
+  // for a clean check.
+  while (getBusyProductionSlotCount(state, 0) >= getProductionSlots(state, 0)) {
+    advanceOneRound(state);
+    sweepUnitsOffCapital(state, 0);
+  }
+  sweepUnitsOffCapital(state, 0);
+  state.currentPlayerIndex = 0;
+
+  // Agrar elite/heavy balance pass — Warrior is commandCost 2 now (was 1),
+  // Heavy Knight is commandCost 3 now (was 2); founder (the Builder) is a
+  // support-slot unit untouched by this pass and stays commandCost 1, so it
+  // takes over as the "light unit" probe here — the property being tested
+  // (a commandCost-1 unit still fits at cap-1; nothing heavier does) is
+  // unaffected by which specific commandCost-1 unit type is used.
+  check('a light unit (commandCost 1) still fits at cap-1', canAfford(state, 'founder'));
+  check('a heavy unit (commandCost 3) does NOT fit at cap-1, even though count < cap', !canAfford(state, 'heavyknight'));
+}
+
+// ── Production slots (§19-20) ──
+console.log('\n=== Production slots (§19-20) ===');
+{
+  const state = setup();
+  state.currentPlayerIndex = 0;
+  check('a fresh player has PRODUCTION_BASE_SLOTS slots (Capital only, no expansions)', getProductionSlots(state, 0) === PRODUCTION_BASE_SLOTS, `got ${getProductionSlots(state, 0)}`);
+  check('no slots busy at game start', getBusyProductionSlotCount(state, 0) === 0);
+
+  const cap = capitalId(state, 0);
+
+  const s1 = spawnUnit(state, cap, 'warrior');
+  check('recruit 1/2 succeeds', s1);
+  check('1 slot busy after one recruit', getBusyProductionSlotCount(state, 0) === 1);
+  const s2 = spawnUnit(state, cap, 'warrior');
+  check('recruit 2/2 succeeds (still within slot pool)', s2);
+  check('2 slots busy after two recruits', getBusyProductionSlotCount(state, 0) === 2);
+  check('canAfford is false once every slot is busy, regardless of aura/pop room', !canAfford(state, 'warrior'));
+  const s3 = spawnUnit(state, cap, 'warrior');
+  check('a 3rd recruit is rejected while all slots are busy', !s3);
+  check('a queued recruit does NOT exist on the battlefield yet (§5)', state.units.filter(u => u.playerId === 0).length === 0);
+
+  advanceOneRound(state); // this player's next round — both orders target the
+  // SAME Capital tile, so only the first can actually deploy there; the
+  // second stays queued (pending, not lost — §5) until the tile is clear.
+  check('one recruit deploys and frees its slot', getBusyProductionSlotCount(state, 0) === 1, `got ${getBusyProductionSlotCount(state, 0)}`);
+  check('exactly one queued recruit deployed this round', state.units.filter(u => u.playerId === 0 && u.type === 'warrior' && u.hp > 0).length === 1);
+  sweepUnitsOffCapital(state, 0);
+  state.currentPlayerIndex = 0;
+  check('recruiting is available again once a slot is free', canAfford(state, 'warrior'));
+
+  advanceOneRound(state); // now the Capital is clear — the second one deploys too
+  sweepUnitsOffCapital(state, 0);
+  check('the second queued recruit deploys once the Capital is clear', getBusyProductionSlotCount(state, 0) === 0);
+  check('both queued recruits eventually deployed', state.units.filter(u => u.playerId === 0 && u.type === 'warrior' && u.hp > 0).length === 2);
+}
+{
+  // Only a FULLY-developed (Temple II, v11) owned Temple grants +1
+  // production slot — a merely founded Temple I grants none (see
+  // verify-economy.ts for the full per-faction production curve, including
+  // Agrar's Farm-based one).
+  const state = setup();
+  const site = state.strategicSites[0]!;
+  state.currentPlayerIndex = 1;
+  const recruited = spawnUnit(state, capitalId(state, 1), 'warrior');
+  check('Temple can queue a recruit to later use for founding (no Acolyte needed, v15)', recruited);
+  const before = getProductionSlots(state, 1);
+  advanceOneRound(state); // deploy the recruit
+  sweepUnitsOffCapital(state, 1);
+  const founder = state.units.find(u => u.playerId === 1 && u.type === 'warrior' && u.hp > 0)!;
+  founder.pos = { ...site.pos };
+  founder.hasMoved = false; founder.hasAttacked = false;
+  state.currentPlayerIndex = 1;
+  startFounding(state, founder.id);
+  endTurn(state); // opponent's turn
+  endTurn(state); // back to this player -> founding resolves (uncontested)
+  const site0 = state.strategicSites.find(s => s.id === site.id)!;
+  check('site founded into a Temple I', site0.state === 'temple' && site0.templeLevel === 1, `got ${site0.state}/${site0.templeLevel}`);
+  check('a merely-founded Temple I grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
+  state.currentPlayerIndex = 1;
+  startTempleUpgrade(state, site0.id);
+  check('a Temple I mid-upgrade still grants NO production slot', getProductionSlots(state, 1) === before, `before=${before} after=${getProductionSlots(state, 1)}`);
+  endTurn(state); // opponent's turn
+  endTurn(state); // back to this player -> upgrade resolves
+  check('a fully-developed (Temple II) Temple grants +1 production slot', getProductionSlots(state, 1) === before + 1, `before=${before} after=${getProductionSlots(state, 1)}`);
+}
+
+// ── Players are independent ──
+console.log('\n=== Per-player independence ===');
+{
+  const state = setup();
+  state.currentPlayerIndex = 0;
+  const p1PopBefore = getPopulationCount(state, 1);
+  spawnUnit(state, capitalId(state, 0), 'warrior');
+  check('P0 recruiting does not touch P1 slots', getBusyProductionSlotCount(state, 1) === 0);
+  check('P0 recruiting does not touch P1 population', getPopulationCount(state, 1) === p1PopBefore, `before=${p1PopBefore} after=${getPopulationCount(state, 1)}`);
+}
+
+console.log(`\n${failures === 0 ? 'PASS' : 'FAIL'}: ${failures} failing check(s)`);
+process.exit(failures === 0 ? 0 : 1);

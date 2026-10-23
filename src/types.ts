@@ -4,7 +4,135 @@ export interface HexCoord {
   r: number;
 }
 
-export type UnitType = 'warrior' | 'archer' | 'catapult' | 'horserider' | 'heavyknight' | 'spearsman' | 'healer' | 'damageBooster' | 'rangeBooster';
+export type UnitType = 'warrior' | 'archer' | 'catapult' | 'horserider' | 'heavyknight' | 'spearsman' | 'healer' | 'damageBooster' | 'rangeBooster' | 'founder';
+
+// The two civilizations of the "Asymmetric Tribes v0.2" redesign. Chosen
+// secretly right at match start, before Round 1 begins — see chooseFaction
+// in game.ts and the reveal-secrecy handling in server/gameManager.ts.
+export type FactionId = 'agrar' | 'temple';
+
+// Bumped whenever the match/save shape changes incompatibly. Saved games,
+// replays and rooms are versioned against this — an old blob is rejected
+// cleanly rather than silently misinterpreted (see assertCompatibleRulesVersion
+// in serializer.ts). Bump this on any future breaking change to GameState.
+// v3 (phase 3): temples -> strategicSites + capitals, selectedTempleId ->
+// selectedSiteId, spawnedTempleIds -> spawnedSiteIds, hasCaptured removed,
+// structureAttackHexes added.
+// v5 (phase 6): productionOrders added (Command system's production-slot cooldowns).
+// v6 (phase 7): roads + pillagedRoadHexes added (Agrar-only physical Roads).
+// v7 (phase 10): macro-economy correction — "Agrar controls area, Temple
+// controls points". StrategicSiteState drops 'foundingCity'/'city' (Agrar no
+// longer founds sites at all); Farm drops citySiteId, gains state/founding
+// (Farms are now Capital/Farm-network-placed, not City-owned, and found over
+// a round like a site instead of instantly).
+// v8 (phase 11): opening/recruitment correction — no more Founding Round or
+// starting units (players choose faction immediately, then start with an
+// empty Capital); Builder/Acolyte are now ordinary recruitable units;
+// recruiting queues a unit for one round instead of creating it instantly
+// (ProductionOrder -> TrainingOrder, carries unitType/structureId); Farm
+// placement is adjacency-only (drops the old distance-chain constants);
+// Roads' speed bonus is Agrar-only; the tech tree drops the old
+// Roads/Teleports movement techs and the flat Catapult/Heavy Knight
+// unlocks in favor of faction-specific, prerequisite-gated ones.
+// v9 (economy/pacing balance pass): STARTING_ENERGY/BASE_INCOME_PER_ROUND
+// halved (6->3), new max income 7 (was 10); AGRAR_FARM_COST 5->6;
+// TEMPLE_DEVOTION_COST 3->4 per level; Temple production slots now require
+// Devotion II (a merely founded/partially-developed Temple grants none,
+// was any owned Temple); COMMAND_TIERS 8/10/12 -> 6/9/12; TECH_COST 5->6
+// (and the redundant duplicate TECH_COST export in factions.ts removed —
+// types.ts, next to TECH_NODES, is the only source of truth now);
+// FARM_DEFENSE_BONUS removed entirely (Agrar Territory grants no combat
+// bonus); the old unified "Agrar Territory" split back into two distinct
+// radii — AGRAR_TERRITORY_RADIUS (2, infrastructure/placement only, no area
+// denial) and CULTIVATION_RADIUS (1, farm-only, shrine-denial only);
+// 'infantry_move' tech removed from TechId/TECH_NODES; 'longrange_hp' now
+// +3 HP (was +5); Agrar Knight/Heavy Knight/Builder speed restored to 2
+// (was 1 for every Agrar unit).
+// v10 (tech-tree pacing pass): research is single-slot and timed now —
+// PlayerTech gains `researching: ResearchProgress | null`; TECH_COST (a
+// single flat constant) removed, every TechNode carries its own cost and a
+// new `researchTime` (rounds until the effect applies, same semantics as
+// Farm/Temple founding); new cost/time table (Command I 12⚡/1rd, Support/
+// Stat-bonus 14⚡/2rd, Siege unlock 16⚡/2rd, Heavy prereq 16⚡/2rd, Splash
+// 18⚡/2rd, Command II 18⚡/2rd, Heavy Knight/Champion Rite 22⚡/3rd);
+// Command II now additionally requires >=2 other completed technologies
+// (COMMAND_2_MIN_OTHER_TECHS in game.ts) on top of Command I; the Champion
+// unlock renamed to 'temple_champion_rite' ("Champion Rite"), and the splash
+// upgrades renamed to 'agrar_siegecraft_splash' ("Explosive Shot") /
+// 'temple_mobile_siege_splash' ("Blast Rite").
+// v11 (Temple conquest + upgrade system): the old Devotion I/II (4+4⚡,
+// +1 income each) purchase ladder is GONE — StrategicSite drops
+// `devotionLevel`/`investmentOwnerId` entirely, gains `templeLevel: 1 | 2 |
+// null` and `upgrade: TempleUpgradeProgress | null`. Two flat 6⚡/1-round
+// steps now: founding a neutral/ruined site (SITE_ESTABLISH_COST 4->6)
+// produces Temple I (+1 income, +0 production); a second 6⚡/1-round
+// TEMPLE_UPGRADE_COST step turns it into Temple II (+2 income total, +1
+// production — matching 2 Farms exactly). A destroyed Temple (either level,
+// mid-upgrade or not) always becomes Ruins with template level cleared —
+// investment is NEVER preserved across a Ruins state any more, not even for
+// the same player re-founding their own former site (no more "reclaim"
+// exception) — every reconstruction restarts at Temple I. See
+// canStartTempleUpgrade/startTempleUpgrade/resolveTempleUpgradeForPlayer in
+// game.ts.
+// v12 (conquest redesign — instant-presence conquest, Agrar-only destruction):
+// the Acolyte ('temple_acolyte') is REMOVED from TEMPLE_UNITS entirely —
+// Temple no longer has a founder-slot unit at all. Founding/conquering a
+// site is no longer Acolyte-gated: ANY Temple-faction unit standing on a
+// valid site with an unused attack action can start it (may move onto the
+// site the same turn — "just step on it"), still resolving one round later
+// (FoundingProgress unchanged in shape). The big behavioral flip: a Temple
+// player can now target an ACTIVE enemy-owned Temple directly (no need to
+// destroy it first) — completing that conquest INHERITS the site's current
+// templeLevel as-is (a Temple II stays Temple II under the new owner)
+// rather than resetting to Temple I; the defender keeps full income/
+// production throughout the contest. Conversely, ONLY Agrar may attack/
+// destroy an active Temple structure via attack-structure any more —
+// Temple-faction players can no longer reduce a rival Temple to Ruins by
+// combat, only by walking onto it and outlasting the 1-round contest.
+// Founding a virgin neutral site, or reconsecrating Ruins (destroyed via
+// Agrar combat — those have no level on record), is unchanged: always
+// produces Temple I.
+// v13 (structure combat + reconstruction-memory pass): v12's instant-
+// presence conquest is REVERTED — a Temple can only change hands by being
+// destroyed to Ruins first (ANY unit of EITHER faction may now attack/
+// destroy an active Temple, not just Agrar), then reconsecrated by a Temple
+// Acolyte — which is BACK (temple_acolyte re-added to TEMPLE_UNITS,
+// canStartFounding is founder-type-gated again, and only targets neutral/
+// ruined sites, never an active enemy Temple directly). New: reconstruction
+// memory — destroying a Temple stores its level/owner on the Ruins
+// (StrategicSite.previousTempleLevel/previousOwnerId); the SAME player
+// reconsecrating those Ruins is RESTORED directly to that previous level
+// for the same flat SITE_ESTABLISH_COST/1-round cost (no extra upgrade
+// needed), while a DIFFERENT player always gets Temple I regardless of the
+// previous level (see completeFounding). Also: Farm HP 12->18, DEF 4->5
+// (STRUCTURES.farm) — a healthy Farm should generally survive one ordinary
+// non-siege hit.
+// v14 (balance + map + UX pass): Temple Raider commandCost 1->2 (a speed-3,
+// ZOC-projecting cavalry piece shouldn't field twice the bodies of Agrar's
+// Knight under the same population cap — Energy cost/stats unchanged). Farm
+// min-spacing is BACK as a simple, readable rule (FARM_MIN_SPACING=2 —
+// exactly 2 apart is legal, directly adjacent is not; briefly removed
+// entirely, that was overcorrecting). New: GameState.fertileSites — in a 1v1
+// Agrar-vs-Agrar match ONLY, the 2 neutral objective positions become
+// Fertile Sites (occupy + spend an activation to claim, +1 income each,
+// no HP/level/production/Command/territory effect) instead of Temple sacred
+// sites, which would otherwise be permanently useless to both players — see
+// resolveMatchupObjectives, canClaimFertileSite/claimFertileSite in game.ts.
+// Road pillage is no longer automatic-on-move-through — an enemy unit must
+// spend a full activation on the "pillage-road" action to actually destroy
+// a Road segment (see canPillageRoad/pillageRoad in game.ts).
+// v15 (Acolyte removed, for good): temple_acolyte is REMOVED from
+// TEMPLE_UNITS entirely, again — Temple has no founder-slot unit at all.
+// Unlike v12's removal, this does NOT also restore instant-presence
+// conquest of an ACTIVE enemy Temple — v13's "destroy to Ruins first, ANY
+// unit of either faction may attack it" stands unchanged. The only thing
+// that changes is WHO may perform the founding/reconsecration step once a
+// site IS neutral/Ruins: canStartFounding no longer gates on unit type at
+// all, so any Temple unit with a fully unused activation standing on one
+// may Consecrate/Restore it — not just a dedicated founder-type unit. Fixes
+// a recurring point of confusion where a regular combat unit standing on a
+// capturable Temple showed no action and no explanation why.
+export const RULES_VERSION = 15;
 
 // Maximum support reach. Damage-booster and healer effects reach this far, with
 // distance falloff (full strength within radius 1, half at radius 2 — see
@@ -24,8 +152,6 @@ export interface UnitStats {
   canBeRevenged: boolean;      // whether the target can hit back after being hit
   vision: number;              // exploration/visibility radius
   cantShootAfterMove: boolean; // whether the unit cannot attack on a turn it moved
-  attackBonusAgainst?: Partial<Record<UnitType, number>>;  // outgoing damage multiplier vs specific unit types
-  defenseBonusAgainst?: Partial<Record<UnitType, number>>; // incoming damage divisor vs specific unit types (higher = harder to damage)
 }
 
 export const UNIT_COSTS: Record<UnitType, number> = {
@@ -33,14 +159,18 @@ export const UNIT_COSTS: Record<UnitType, number> = {
   archer:       2,
   catapult:     4,
   horserider:   3,
-  heavyknight:  7,
+  heavyknight:  6,
   spearsman:    2,
   healer:       3,
   damageBooster: 3,
   rangeBooster:  3,
+  founder:       2,
 };
 
-export const HILL_DEFENSE_BONUS = 2;
+// Balance v3 (asymmetric redesign, 2026-08-21): +2 disproportionately
+// strengthened already-defensive units since defense is subtractive; +1 keeps
+// hills a real edge without letting a single tile decide fights on its own.
+export const HILL_DEFENSE_BONUS = 1;
 export const HILL_VISION_BONUS = 1;
 export const HILL_RANGE_BONUS = 1;
 
@@ -53,55 +183,155 @@ export interface Unit {
   pos: HexCoord;
   hasMoved: boolean;
   hasAttacked: boolean;
-  /**
-   * True if this unit has already captured a temple this turn. Capture is a
-   * separate action from move/attack — a unit can capture even after moving,
-   * but only once per turn. Reset to false on the owner's `endTurn`.
-   */
-  hasCaptured: boolean;
 }
 
-// A unit "still needs to move" this turn while it has neither moved nor attacked.
-// This mirrors the engine's own move gate (selectUnit computes move targets only
-// when !hasMoved && !hasAttacked, and attack() spends both flags), so the to-move
-// dot shows for fresh units and clears the instant the unit acts — moves OR
-// attacks. Reset each turn by endTurn (hasMoved/hasAttacked → false).
+// A unit "still needs to move" this turn while it still has its move
+// available. Move/attack order is agnostic (attacking alone no longer spends
+// the move — see game.ts's attackUnit/attackStructure/moveUnit), so a unit
+// that attacked first but hasn't moved yet still shows the dot; it clears
+// only once the unit has actually moved. Reset each turn by endTurn
+// (hasMoved/hasAttacked → false).
 export function unitYetToMove(unit: Unit): boolean {
-  return unit.hp > 0 && !unit.hasMoved && !unit.hasAttacked;
+  return unit.hp > 0 && !unit.hasMoved;
 }
 
-// ── Temple level system ──
-export const TEMPLE_AURA_PER_LEVEL = 2;    // aura income = effective-level × this, per turn
-export const TEMPLE_MAX_LEVEL = 10;
-export const TEMPLE_POP_CAP_PER_LEVEL = 2; // population cap += effective-level × this per owned temple
+// ── Strategic sites (phase 3 of the "Asymmetric Tribes v0.2" redesign) ──
+//
+// Replaces the old "Temple" domain type, which was overloaded to mean
+// starting objective + neutral objective + capturable structure + the win
+// condition all at once. That's gone: a StrategicSite is a neutral map
+// objective that ONLY a Temple Acolyte can found into an actual Temple —
+// Agrar never converts one into a City (phase 10 correction: "Agrar
+// controls area, Temple controls points" — see factions.ts §STATUS). It is
+// never instantly captured by standing on it. The player's permanent home
+// base is a separate `Capital` entity (see below), not a StrategicSite state.
+export type StrategicSiteState =
+  | 'neutral'         // unclaimed — foundable only by Temple
+  | 'foundingTemple'  // Temple Acolyte founding/reconstructing a neutral/ruined site; 0 income/production until complete
+  | 'temple'          // completed Temple-faction structure (see templeLevel for I vs II)
+  | 'upgradingTemple' // Temple I -> II upgrade in progress; still grants Temple I-level economy
+  | 'ruins';          // a destroyed temple (attackable by EITHER faction) — refoundable by Temple only; see previousTempleLevel/previousOwnerId for reconstruction memory
 
-// Economy (aura income + pop cap) plateaus at this level: levels 6-10 are
-// purely visual/prestige upgrades and grant no further income or pop cap.
-export const TEMPLE_ECONOMY_CAP_LEVEL = 5;
-
-// The level used for economy calcs — clamped to the plateau so a level-10 temple
-// yields the same aura/pop as a level-5 one (10 aura/turn, +10 pop).
-export function templeEconomyLevel(level: number): number {
-  return Math.min(level, TEMPLE_ECONOMY_CAP_LEVEL);
+// In-progress founding/reconstruction, tracked with explicit round numbers
+// rather than a loose "turn count" (§6 of the brief): resolves at the START
+// of the founding player's NEXT round, giving the opponent the rest of the
+// current round to respond. v13 — only a Temple Acolyte can start this
+// (the Acolyte is back), and only on a neutral/ruined site — never on an
+// active enemy Temple (that must be destroyed first — see attackStructure).
+export interface FoundingProgress {
+  playerId: number;
+  unitId: string;               // the Acolyte performing the founding/reconstruction
+  targetState: 'temple';
+  fromState: 'neutral' | 'ruins'; // what to revert to if founding fails (§9 — no half-built garbage states)
+  startedRound: number;
+  completesRound: number;       // startedRound + 1 — see resolveFoundingForPlayer in game.ts
 }
 
-// Aura cost to upgrade FROM currentLevel to currentLevel+1 (index = currentLevel;
-// index 0 unused since temples start at level 1). Gentle ~quadratic curve so the
-// top levels are expensive but reachable (old curve was 2^level → 512 at 9→10).
-const TEMPLE_UPGRADE_COSTS: readonly number[] = [
-  0, 2, 3, 5, 7, 10, 14, 19, 25, 32, // 1→2, 2→3, … 9→10
-];
-
-export function templeUpgradeCost(currentLevel: number): number | null {
-  if (currentLevel >= TEMPLE_MAX_LEVEL) return null;
-  return TEMPLE_UPGRADE_COSTS[currentLevel] ?? null;
+// Temple I -> Temple II upgrade (v11 Temple conquest/upgrade system) — same
+// "commit the round" shape as FoundingProgress, but there's no fromState:
+// an interrupted upgrade never reverts, it just never completes (the Temple
+// simply stays at Temple I unless destroyed first, which goes to Ruins
+// regardless — see resolveTempleUpgradeForPlayer in game.ts).
+export interface TempleUpgradeProgress {
+  playerId: number;
+  startedRound: number;
+  completesRound: number;       // startedRound + 1
 }
 
-export interface Temple {
+export interface StrategicSite {
   id: string;
   pos: HexCoord;
-  ownerId: number | null; // null = neutral
-  level: number;          // 1..TEMPLE_MAX_LEVEL
+  state: StrategicSiteState;
+  // Only meaningful (non-null) once state is 'temple' or 'upgradingTemple'.
+  // A ruined or founding site has no owner — do not read this as "who's
+  // founding it", use `founding.playerId` for that.
+  ownerId: number | null;
+  founding: FoundingProgress | null;
+  upgrade: TempleUpgradeProgress | null;
+  // Combat stats — 0 while neutral/founding/ruins (not a valid attack
+  // target in those states; see getStructureAt/isAttackableStructure).
+  hp: number;
+  maxHp: number;
+  defense: number;
+  /**
+   * v11 — Temple's economic level once founded: 1 (Temple I, +1 income) or
+   * 2 (Temple II, +2 income/+1 production). Null while neutral/ruins/
+   * founding. Set to 1 the instant founding completes (unless restored —
+   * see previousTempleLevel below), and to 1 again (while `state` is
+   * 'upgradingTemple') during an in-progress upgrade — the Temple II bonus
+   * only applies once the upgrade actually resolves. Cleared to null
+   * whenever the site becomes Ruins.
+   */
+  templeLevel: 1 | 2 | null;
+  /**
+   * v13 reconstruction memory — set from `templeLevel`/`ownerId` the instant
+   * a Temple is destroyed into Ruins (see attackStructure), and consumed
+   * (cleared back to null) the instant a founding attempt on this site
+   * completes (see completeFounding). If the player completing founding
+   * equals `previousOwnerId`, the Temple is RESTORED directly to
+   * `previousTempleLevel` instead of resetting to Temple I — "the original
+   * owner is repairing sacred infrastructure, not rebuilding a whole
+   * civilization investment from scratch." Null on a virgin site that has
+   * never been destroyed, or once consumed.
+   */
+  previousTempleLevel: 1 | 2 | null;
+  previousOwnerId: number | null;
+}
+
+// v14 (Agrar-mirror central objective) — 1v1 ONLY: when both players reveal
+// as Agrar, the 2 neutral objective positions that would otherwise be
+// Temple sacred sites become Fertile Sites instead (see resolveMatchup
+// Objectives in game.ts, called the instant both factions are revealed —
+// they're empty/inert in every other matchup so nothing here ever runs).
+// Deliberately NOT a StrategicSite: no HP, no founding delay, no level, no
+// production/Command/territory/cultivation effect — a pure "stand on it and
+// spend your activation" occupation objective, contested by presence alone
+// (a rival can only reclaim it once your unit isn't physically standing on
+// it any more — see canClaimFertileSite/claimFertileSite in game.ts).
+export interface FertileSite {
+  id: string;
+  pos: HexCoord;
+  ownerId: number | null; // null = neutral/unclaimed
+}
+
+// Phase 10 correction — a Farm is Agrar's economy engine, built directly by
+// the Builder on open land (NOT tied to a City/StrategicSite — Agrar never
+// owns one of those). Global cap MAX_ACTIVE_FARMS per player. Phase 11:
+// placement is adjacency-only — a new Farm must be a hex NEIGHBOUR of the
+// Builder's current position, and not adjacent to another Farm or to the
+// Capital (§10-12) — the Builder's own movement is what limits expansion,
+// not a separate distance-chain rule. A real attackable structure (see
+// getStructureAt). Founds over one round like a strategic site, not
+// instantly — the Builder must stay ADJACENT to the site until it
+// completes (§14) — see startFarm/resolveFarmFoundingForPlayer in game.ts.
+export interface Farm {
+  id: string;
+  pos: HexCoord;
+  ownerId: number;
+  state: 'foundingFarm' | 'farm';
+  founding: FarmFoundingProgress | null;
+  hp: number;
+  maxHp: number;
+  defense: number;
+}
+
+export interface FarmFoundingProgress {
+  playerId: number;
+  unitId: string; // the Builder performing the construction
+  startedRound: number;
+  completesRound: number;
+}
+
+// The player's permanent home base. Cannot be captured, cannot become
+// Ruins, cannot change owner — destroyed only by reducing HP to 0, which
+// ends the match immediately (§11).
+export interface Capital {
+  id: string;
+  playerId: number;
+  pos: HexCoord;
+  hp: number;
+  maxHp: number;
+  defense: number;
 }
 
 export interface Player {
@@ -110,12 +340,15 @@ export interface Player {
   color: string;
   aura: number;
   /**
-   * Id of the temple this player started on. Set once by createGameState and
-   * carried through serialization. Gives the AI (and anything else) a durable
-   * "home temple" signal that survives randomized temple placement, instead of
-   * hard-coding a fixed board coordinate.
+   * Civilization chosen right at the start of the match, before any
+   * gameplay happens (phase 11 — there is no more neutral Founding Round) —
+   * null while awaiting the opponent's pick. Set once by chooseFaction() and
+   * never changed after (§6). The server never broadcasts this to the
+   * opponent's client until BOTH players have chosen — see
+   * stripHiddenFaction in server/gameManager.ts. This field is the sole
+   * source of truth for "which faction"; there is no separate reveal flag.
    */
-  startTempleId?: string;
+  faction: FactionId | null;
 }
 
 // ── Multiplayer / N-player support ──
@@ -124,106 +357,194 @@ export interface Player {
 // must have at least this many visually-distinct entries.
 export const MAX_PLAYERS = 6;
 
-// Per-player colour palette. Index === player slot. Slots 0 and 1 keep the
-// original red / blue so existing 1-player and 2-player games look unchanged.
+// Per-player colour palette. Index === player slot. Slots 0 and 1 are red /
+// green so 1-player and 2-player games show that pairing.
 export const PLAYER_COLORS: readonly string[] = [
   '#ff4444', // 0 red
-  '#4488ff', // 1 blue
-  '#44cc55', // 2 green
+  '#44cc55', // 1 green
+  '#4488ff', // 2 blue
   '#ffcc33', // 3 gold
   '#cc55dd', // 4 purple
   '#ff8833', // 5 orange
 ];
 
 // Map radius as a function of player count: 2-player games (incl. vs-AI) use a
-// tighter radius-5 board for faster, more contested matches; 3+ players keep the
-// classic radius 6 at 2p baseline, growing by 1 per extra player so every player
-// still gets a fair start.
+// radius-7 board (169 hexes); 3+ players keep the classic radius 6 at 2p
+// baseline, growing by 1 per extra player so every player still gets a fair start.
 export function mapRadiusForPlayers(numPlayers: number): number {
-  return numPlayers <= 2 ? 5 : 6 + Math.max(0, numPlayers - 2);
+  // 1v1 radius 7 (169 hexes) is the closest a hex ring can get to doubling
+  // the old radius-5 board (91 hexes) — hex-count only ever lands on
+  // 3R²+3R+1, so an exact 2x (182) isn't reachable at any integer radius.
+  return numPlayers <= 2 ? 7 : 6 + Math.max(0, numPlayers - 2);
 }
 
-// Total temple count: one starting temple per player plus one neutral temple
-// per player (2p → 4 temples, matching the classic layout).
-export function templeCountForPlayers(numPlayers: number): number {
-  return numPlayers * 2;
+// One neutral strategic site per player (2p → 1 Capital each + 2 neutral
+// sites, matching §7 of the redesign brief: "2 Capitals, 2 neutral
+// strategic sites"). Capitals themselves are just `players.length`, one each
+// — this function is only about the neutral sites.
+export function neutralSiteCountForPlayers(numPlayers: number): number {
+  return numPlayers;
 }
+
+// ── Fixed 1v1 strategic geometry ─────────────────────────────────────────────
+// The competitive skeleton (Capitals + the 2 neutral-objective slots) is now
+// a hardcoded, canonical layout for every 2-player game, not randomized per
+// match — with two already-asymmetric factions, randomizing the most
+// important economic geography on top makes balance far harder to reason
+// about for no real replayability gain (every layout is still "two Capitals,
+// two objectives, 14 apart" — only which side of the map happened to get
+// which player changed). Terrain (hills/forests/mountains) stays procedural
+// around this fixed skeleton, so no two matches look identical, but the
+// competitive foundation itself is now stable and analyzable. Only used for
+// numPlayers === 2 (see placeSites in game.ts) — 3+ player games keep the
+// original spread-maximizing procedural placement, since "the" canonical
+// layout only means something for a clean 1v1.
+export const FIXED_1V1_CAPITAL_A: HexCoord = { q: -7, r: 0 };
+export const FIXED_1V1_CAPITAL_B: HexCoord = { q: 7, r: 0 };
+// Distance 8 from BOTH Capitals (not "your side" vs "their side"), and 4
+// apart from each other — a genuine first-turn choice of which to contest,
+// not "take your own". Used for every matchup except Agrar-vs-Agrar.
+export const FIXED_1V1_TEMPLE_SITES: [HexCoord, HexCoord] = [{ q: -1, r: 2 }, { q: 1, r: -2 }];
+// Agrar-vs-Agrar only (see resolveMatchupObjectives in game.ts) — much more
+// central than the Temple pair: 2 apart from each other with exactly one
+// hex between them (never adjacent — two antipodal integer hex coordinates
+// never can be — so controlling one doesn't trivially hand you the other),
+// and neither sitting on the map's true centre (0,0) itself, which stays a
+// neutral maneuvering/fighting tile rather than being occupied by an
+// objective.
+export const FIXED_1V1_FERTILE_SITES: [HexCoord, HexCoord] = [{ q: -1, r: 0 }, { q: 1, r: 0 }];
 
 export type GamePhase = 'playing' | 'gameOver';
 
-export type SelectionMode = 'unit' | 'temple' | null;
+export type SelectionMode = 'unit' | 'site' | null;
 
 // ── Tech tree ──
 
+// Phase 11: Pikeman/Spearsman no longer need research at all (both factions'
+// early rosters already include them, §39/EARLY_UNLOCKED_SLOTS) — the old
+// 'unlock_spearsman' tech was dead weight (it added a slot the player
+// already had). Catapult/Heavy Knight unlocks are now faction-specific,
+// prerequisite-gated techs (different names/flavor per faction, same
+// underlying unitUnlock slot) rather than one flat unlock. The old
+// Roads/Teleports "movement" branch is gone — Agrar's physical Roads (see
+// factions.ts) are the only speed mechanic now, and Teleports directly
+// conflicted with the Temple-mobility/Agrar-infrastructure asymmetry.
+// Economy/pacing balance pass: 'infantry_move' (Infantry March, +1 SPD
+// warrior/pike) removed entirely — it undermined the Roads/native-speed
+// faction identity too directly; may return after further balance testing.
 export type TechId =
-  | 'unlock_catapult'
-  | 'unlock_heavyknight'
-  | 'unlock_spearsman'
-  | 'catapult_splash'
-  | 'roads'
-  | 'teleports'
-  | 'infantry_move'
+  | 'agrar_siegecraft'
+  | 'agrar_siegecraft_splash'
+  | 'agrar_heavy_armor'
+  | 'agrar_heavy_knight_tech'
+  | 'temple_mobile_siege_tech'
+  | 'temple_mobile_siege_splash'
+  | 'temple_warrior_rite'
+  | 'temple_champion_rite'
   | 'longrange_hp'
   | 'horse_sight'
   | 'unlock_healer'
   | 'unlock_damagebooster'
   | 'unlock_rangebooster'
+  | 'command_1'
+  | 'command_2'
   ;
 
-export const TECH_COST = 5;
-
+// Tech-tree pacing pass — research is a real, single-slot, multi-round
+// civilization investment now, not a cheap instant menu purchase. See
+// ResearchProgress/PlayerTech.researching, canResearch, researchTech and
+// resolveResearchForPlayer in game.ts. TECH_COST as a single flat constant
+// is gone — every node sets its own cost per the pacing table below (§10 of
+// the design brief); `researchTime` (in rounds, same semantics as Farm/
+// Temple-founding — resolves at the start of the researching player's Nth
+// round from now) is new on every node.
 export interface TechNode {
   id: TechId;
   name: string;
   description: string;
   cost: number;
+  researchTime: number;    // rounds until the effect applies — see resolveResearchForPlayer
   prereqs: TechId[];
-  branch?: string;       // branch id — only one per branch can be researched
-  unitUnlock?: UnitType; // if set, this tech unlocks a unit type
+  branch?: string;         // branch id — only one per branch can be researched
+  unitUnlock?: UnitType;   // if set, this tech unlocks a unit type
+  faction?: FactionId;     // if set, only that faction can research/see this node
 }
 
 export const TECH_NODES: TechNode[] = [
-  // Unit unlocks
-  { id: 'unlock_spearsman',    name: 'Spearsman',         description: 'Unlock Spearsman — counter-cavalry infantry with bonus damage vs horseriders and knights.', cost: TECH_COST, prereqs: [], unitUnlock: 'spearsman' },
-  { id: 'unlock_heavyknight',  name: 'Heavy Knight',      description: 'Unlock Heavy Knight — heavily armoured mounted unit with high HP and attack.',              cost: TECH_COST, prereqs: [], unitUnlock: 'heavyknight' },
-  { id: 'unlock_catapult',     name: 'Catapult',          description: 'Unlock Catapult — long-range siege weapon with area splash damage.',                        cost: TECH_COST, prereqs: [], unitUnlock: 'catapult' },
-  // Catapult sub-upgrade
-  { id: 'catapult_splash',     name: 'Splash Range +1',   description: 'Catapults gain splash radius 1.',                                                           cost: TECH_COST, prereqs: ['unlock_catapult'] },
-  // Branch: Movement (pick ONE)
-  { id: 'roads',               name: 'Roads',             description: 'All your units gain +1 movement speed.',                                                    cost: TECH_COST, prereqs: [], branch: 'movement' },
-  { id: 'teleports',           name: 'Teleports',         description: 'Unlock teleport portals. Build a portal pair (5⚡) — one near each of two different temples. Any unit stepping on a portal is instantly transported to its partner.',               cost: TECH_COST, prereqs: [], branch: 'movement' },
-  // Branch: Stat Bonus (pick ONE)
-  { id: 'infantry_move',       name: 'Infantry March',    description: 'Warriors and Spearsmen gain +1 movement speed.',                                            cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
-  { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +5 max HP.',                                                    cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
-  { id: 'horse_sight',         name: 'Scout Cavalry',     description: 'Horseriders and Heavy Knights gain +1 vision range.',                                       cost: TECH_COST, prereqs: [], branch: 'stat_bonus' },
-  // Branch: Support Unit (pick ONE)
-  { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'healer' },
-  { id: 'unlock_damagebooster',name: 'Damage Booster',    description: 'Unlock Damage Booster — support unit that increases attack of nearby allies.',             cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'damageBooster' },
-  { id: 'unlock_rangebooster', name: 'Range Booster',     description: 'Unlock Range Booster — support unit that increases attack range of nearby allies.',        cost: TECH_COST, prereqs: [], branch: 'support', unitUnlock: 'rangeBooster' },
+  // Siege line — faction-specific, no prereq for the base unlock.
+  { id: 'agrar_siegecraft',        name: 'Siegecraft',      description: 'Unlock the Catapult — long-range siege weapon with area splash damage.', cost: 16, researchTime: 2, prereqs: [], unitUnlock: 'catapult', faction: 'agrar' },
+  { id: 'agrar_siegecraft_splash', name: 'Explosive Shot',  description: 'Catapults gain splash radius 1. Requires Siegecraft.',                    cost: 18, researchTime: 2, prereqs: ['agrar_siegecraft'], faction: 'agrar' },
+  { id: 'temple_mobile_siege_tech',   name: 'Mobile Siege',    description: 'Unlock Mobile Siege — long-range siege weapon with area splash damage.', cost: 16, researchTime: 2, prereqs: [], unitUnlock: 'catapult', faction: 'temple' },
+  { id: 'temple_mobile_siege_splash', name: 'Blast Rite',      description: 'Mobile Siege gains splash radius 1. Requires Mobile Siege.',             cost: 18, researchTime: 2, prereqs: ['temple_mobile_siege_tech'], faction: 'temple' },
+  // Heavy-unit line — faction-specific, genuinely gated (needs the tier-1
+  // tech AND Command I, not a single flat unlock — §30). The final unlock
+  // is a deliberate 3-round, 22⚡ late-game commitment — do not shorten it.
+  { id: 'agrar_heavy_armor',      name: 'Heavy Armor',      description: 'Prerequisite for the Warden.',                                                  cost: 16, researchTime: 2, prereqs: [], faction: 'agrar' },
+  { id: 'agrar_heavy_knight_tech', name: 'Warden',          description: 'Unlock the Warden — heavily armoured infantry with high HP and attack. Requires Heavy Armor and Command I.', cost: 22, researchTime: 3, prereqs: ['agrar_heavy_armor', 'command_1'], unitUnlock: 'heavyknight', faction: 'agrar' },
+  { id: 'temple_warrior_rite',    name: 'Warrior Rite',     description: 'Prerequisite for Champion Rite.',                                               cost: 16, researchTime: 2, prereqs: [], faction: 'temple' },
+  { id: 'temple_champion_rite',   name: 'Champion Rite',    description: 'Unlock the Champion — heavily armoured mounted unit with high HP and attack. Requires Warrior Rite and Command I.', cost: 22, researchTime: 3, prereqs: ['temple_warrior_rite', 'command_1'], unitUnlock: 'heavyknight', faction: 'temple' },
+  // Branch: Stat Bonus (pick ONE) — shared by both factions. Infantry March
+  // (Warrior/Pike +1 SPD) removed (economy/pacing balance pass §17) —
+  // undermined the Roads/native-speed faction identity too directly.
+  { id: 'longrange_hp',        name: 'Fortified Ranged',  description: 'Archers and Catapults gain +3 max HP.',                                                    cost: 14, researchTime: 2, prereqs: [], branch: 'stat_bonus' },
+  { id: 'horse_sight',         name: 'Scout Cavalry',     description: 'Horseriders and Heavy Knights gain +1 vision range.',                                       cost: 14, researchTime: 2, prereqs: [], branch: 'stat_bonus' },
+  // Branch: Support Unit (pick ONE) — shared by both factions.
+  { id: 'unlock_healer',       name: 'Healer',            description: 'Unlock Healer — support unit that restores HP to nearby allies each turn.',                 cost: 14, researchTime: 2, prereqs: [], branch: 'support', unitUnlock: 'healer' },
+  { id: 'unlock_damagebooster',name: 'Damage Booster',    description: 'Unlock Damage Booster — support unit that increases attack of nearby allies.',             cost: 14, researchTime: 2, prereqs: [], branch: 'support', unitUnlock: 'damageBooster' },
+  { id: 'unlock_rangebooster', name: 'Range Booster',     description: 'Unlock Range Booster — support unit that increases attack range of nearby allies.',        cost: 14, researchTime: 2, prereqs: [], branch: 'support', unitUnlock: 'rangeBooster' },
+  // §21 — Command tiers, linear (not a branch): only Command I/II raise the
+  // population cap — territory never does (see COMMAND_TIERS in factions.ts).
+  // Command II ALSO requires at least 2 completed non-Command technologies
+  // (checked separately in canResearch — not expressible via `prereqs`,
+  // which means "all of these", not "at least N of anything else") so a
+  // player can't rush straight from Command I into Command II with no other
+  // development.
+  { id: 'command_1',           name: 'Command I',         description: 'Raise your population cap (6 -> 9).',                                                      cost: 12, researchTime: 1, prereqs: [] },
+  { id: 'command_2',           name: 'Command II',        description: 'Raise your population cap further (9 -> 12). Requires Command I and at least 2 other completed technologies.', cost: 18, researchTime: 2, prereqs: ['command_1'] },
 ];
+
+// One in-progress research per player — see canResearch/researchTech/
+// resolveResearchForPlayer. Mirrors FoundingProgress/Farm.founding: the
+// Energy is committed the instant research STARTS, the effect only applies
+// once `completesRound` is reached.
+export interface ResearchProgress {
+  techId: TechId;
+  startedRound: number;
+  completesRound: number;
+}
 
 export interface PlayerTech {
   researched: Set<TechId>;
+  researching: ResearchProgress | null;
 }
 
 // ── Teleport buildings ──
-
+//
+// Fully dormant (phase 11): the 'teleports' tech no longer exists in
+// TECH_NODES at all, so this can never be researched or built again —
+// kept, not deleted, per the redesign brief's asset/code-reuse policy.
+// `templeId` is a legacy field name — it anchors to any OWNED structure id
+// (Capital or a completed Temple StrategicSite), not the old Temple type.
 export const TELEPORT_BUILD_COST = 5;
-export const TELEPORT_RADIUS = 2;      // max dist from owning temple
-export const TELEPORT_MAX_PER_TEMPLE = 1; // one portal per temple (pairs connect two different temples)
+export const TELEPORT_RADIUS = 2;      // max dist from owning structure
+export const TELEPORT_MAX_PER_TEMPLE = 1; // one portal per structure (pairs connect two different structures)
 
 export interface TeleportBuilding {
   id: string;
   pos: HexCoord;
   builtByPlayerId: number;
-  templeId: string;        // which temple this was built under (for quota)
+  /** @legacyName anchoring structure id — Capital or StrategicSite, not a Temple */
+  templeId: string;
   pairedId: string | null; // id of the partner portal (null until pair is complete)
 }
 
 export interface GameState {
   players: Player[];
   units: Unit[];
-  temples: Temple[];
+  strategicSites: StrategicSite[];
+  fertileSites: FertileSite[]; // v14 — only non-empty in a 1v1 Agrar-vs-Agrar match, see resolveMatchupObjectives
+  capitals: Capital[];
+  farms: Farm[];
   hills: Set<string>;       // hex keys of hill tiles
   walls: Set<string>;       // hex keys of impassable tiles
   forests: Set<string>;     // hex keys of forest tiles
@@ -258,19 +579,54 @@ export interface GameState {
    */
   selectedUnitId: string | null;
   /** @uiOnly see above */
-  selectedTempleId: string | null;
+  selectedSiteId: string | null;
   /** @uiOnly see above */
   selectionMode: SelectionMode;
   /** @uiOnly see above */
   moveHexes: HexCoord[];
   /** @uiOnly see above */
   attackHexes: HexCoord[];
+  /** @uiOnly enemy STRUCTURES (Capital/City/Temple) the selected unit can attack this turn — separate from attackHexes (enemy units) since structure combat is a distinct action (attackStructure). */
+  structureAttackHexes: HexCoord[];
   /** @uiOnly see above */
   supportHexes: HexCoord[];
   // ── End UI-only fields ────────────────────────────────────────────────────
-  spawnedTempleIds: Set<string>;   // temples that have already spawned a unit this turn
+  spawnedSiteIds: Set<string>;     // structures that have already spawned a unit this turn
   playerTech: PlayerTech[];        // per-player tech research state
   teleportBuildings: TeleportBuilding[];
   /** @uiOnly hexes highlighted during build-placement mode */
   buildHexes: HexCoord[];
+  /** @uiOnly which build-placement mode buildHexes belongs to right now — v14 Farm-UX pass, so the renderer can give each mode its own distinct look (Farm = pulsating, Road = static) instead of one shared highlight color. Null outside any build mode. */
+  buildKind: 'farm' | 'road' | 'teleport' | null;
+  // §5, §19-22 (phase 6 Command system, reworked phase 11) — recruiting
+  // queues a TrainingOrder instead of creating the unit instantly: it
+  // occupies one of the recruiting player's limited production slots AND
+  // represents the pending unit itself. It deploys (the real Unit is
+  // created) at the start of that player's next round if the structure's
+  // tile is free — see getProductionSlots / getBusyProductionSlotCount /
+  // resolveTrainingForPlayer in game.ts. If the tile stays blocked, the
+  // order just keeps waiting (still occupying its slot) rather than being
+  // lost — no unit is ever destroyed by a blocked deployment.
+  trainingQueue: TrainingOrder[];
+  // §23-25 (phase 7) — Agrar-only physical road tiles. A road grants
+  // ROAD_MOVEMENT_BONUS speed to WHOEVER stands on it (not just its owner's
+  // units — it's a real road, not a magic one), but any unit that ends its
+  // move on a road it does NOT own pillages (destroys) it on arrival — see
+  // moveUnit. Temple has no equivalent way to build one (§25).
+  roads: Road[];
+  // Hexes that once had a road, got pillaged, and are cheaper to rebuild
+  // (ROAD_PILLAGE_REBUILD_COST) than to build fresh (ROAD_COST_PER_HEX).
+  pillagedRoadHexes: Set<string>;
+}
+
+export interface TrainingOrder {
+  playerId: number;
+  unitType: UnitType;
+  structureId: string;   // Capital or owned Temple site — where the unit deploys
+  readyAtRound: number;  // turnNumber at/after which deployment is attempted
+}
+
+export interface Road {
+  pos: HexCoord;
+  ownerId: number; // the player who built it (only ever an Agrar player)
 }

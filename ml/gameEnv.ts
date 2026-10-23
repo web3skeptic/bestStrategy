@@ -18,9 +18,11 @@ import { GameState, UnitType, HexCoord } from '../src/types';
 import { TECH_NODES, UNIT_COSTS } from '../src/types';
 import {
   createGameState, PlayerConfig,
-  getUnitAt, canAfford, canUpgradeTemple, canResearch,
+  canAfford, canResearch,
   getUnlockedUnits, getPopulationCap, getPopulationCount,
+  getOwnedStructures,
   canBuildTeleportPair, getValidTeleportHexes, getValidTeleportHexesForOtherTemples,
+  canStartTempleUpgrade,
 } from '../src/game';
 import { executeAction, computeUnitActions, UnifiedActionName } from '../server/actionDispatcher';
 import { hexDistance } from '../src/hex';
@@ -68,31 +70,32 @@ export function legalMicros(state: GameState): Micro[] {
   if (state.phase !== 'playing') return out;
   const pid = state.currentPlayerIndex;
 
-  // Unit actions (move / attack / capture) — from the shared dispatcher helper.
+  // Unit actions (move / attack / attack-structure / found) — from the shared
+  // dispatcher helper.
   for (const unit of state.units.filter(u => u.hp > 0 && u.playerId === pid)) {
     for (const a of computeUnitActions(state, unit)) {
       if (a.type === 'move') out.push({ action: 'move', params: { unitId: unit.id, to: a.to } });
       else if (a.type === 'attack') out.push({ action: 'attack', params: { unitId: unit.id, targetId: a.targetId } });
-      else if (a.type === 'capture') out.push({ action: 'capture', params: { unitId: unit.id } });
+      else if (a.type === 'attack-structure') out.push({ action: 'attack-structure', params: { unitId: unit.id, targetPos: a.targetPos } });
+      else if (a.type === 'found') out.push({ action: 'found', params: { unitId: unit.id } });
+      else if (a.type === 'build-road') out.push({ action: 'build-road', params: { unitId: unit.id } });
+      else if (a.type === 'build-farm') out.push({ action: 'build-farm', params: { unitId: unit.id, pos: a.targetPos } });
     }
   }
 
-  // Recruit: for each owned, unoccupied temple, each unlocked+affordable unit type
-  // (population cap permitting).
-  const unlocked = getUnlockedUnits(state.playerTech[pid]!);
+  // Recruit: for each owned structure (Capital or completed Temple), each
+  // unlocked+affordable unit type (population cap permitting). §5 (phase 11)
+  // — recruiting only QUEUES a TrainingOrder; tile occupancy is checked at
+  // deployment time (resolveTrainingForPlayer), not here, so a structure
+  // with a unit standing on it is still a legal recruit target.
+  const unlocked = getUnlockedUnits(state.playerTech[pid]!, state.players[pid]?.faction);
   const underCap = getPopulationCount(state, pid) < getPopulationCap(state, pid);
   if (underCap) {
-    for (const temple of state.temples.filter(t => t.ownerId === pid)) {
-      if (getUnitAt(state, temple.pos)) continue;
+    for (const structure of getOwnedStructures(state, pid)) {
       for (const type of unlocked) {
-        if (canAfford(state, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: temple.id } });
+        if (canAfford(state, type)) out.push({ action: 'recruit', params: { unitType: type as UnitType, templeId: structure.id } });
       }
     }
-  }
-
-  // Upgrade temple.
-  for (const temple of state.temples.filter(t => t.ownerId === pid)) {
-    if (canUpgradeTemple(state, temple.id) !== null) out.push({ action: 'upgrade-temple', params: { templeId: temple.id } });
   }
 
   // Research.
@@ -100,16 +103,25 @@ export function legalMicros(state: GameState): Micro[] {
     if (canResearch(state, tech.id)) out.push({ action: 'research', params: { techId: tech.id } });
   }
 
-  // Build teleport — one representative pair per eligible temple (connect the two
-  // most distant temples), to keep the branching factor sane.
-  for (const temple of state.temples.filter(t => t.ownerId === pid)) {
-    if (!canBuildTeleportPair(state, temple.id)) continue;
-    const a = getValidTeleportHexes(state, temple.id);
-    const bs = getValidTeleportHexesForOtherTemples(state, temple.id);
+  // Build teleport — one representative pair per eligible structure (connect the
+  // two most distant structures), to keep the branching factor sane.
+  for (const structure of getOwnedStructures(state, pid)) {
+    if (!canBuildTeleportPair(state, structure.id)) continue;
+    const a = getValidTeleportHexes(state, structure.id);
+    const bs = getValidTeleportHexesForOtherTemples(state, structure.id);
     if (a.length === 0 || bs.length === 0) continue;
     let posB = bs[0]!; let bd = -1;
-    for (const h of bs) { const d = hexDistance(temple.pos, h); if (d > bd) { bd = d; posB = h; } }
-    out.push({ action: 'build-teleport', params: { templeId: temple.id, pos: a[0]!, targetPos: posB } });
+    for (const h of bs) { const d = hexDistance(structure.pos, h); if (d > bd) { bd = d; posB = h; } }
+    out.push({ action: 'build-teleport', params: { templeId: structure.id, pos: a[0]!, targetPos: posB } });
+  }
+
+  // Temple upgrade (v11) — a start for each owned Temple I. Farms are
+  // handled above (Builder-driven, via computeUnitActions' 'build-farm').
+  for (const site of state.strategicSites) {
+    if (site.ownerId !== pid) continue;
+    if (site.state === 'temple' && canStartTempleUpgrade(state, site.id)) {
+      out.push({ action: 'upgrade-temple', params: { templeId: site.id } });
+    }
   }
 
   // End turn is always legal.
@@ -134,7 +146,12 @@ export function cloneState(s: GameState): GameState {
   return {
     players: s.players.map(p => ({ ...p })),
     units: s.units.map(u => ({ ...u })),
-    temples: s.temples.map(t => ({ ...t })),
+    strategicSites: s.strategicSites.map(site => ({ ...site, founding: site.founding ? { ...site.founding } : null })),
+    capitals: s.capitals.map(c => ({ ...c })),
+    farms: s.farms.map(f => ({ ...f })),
+    trainingQueue: s.trainingQueue.map(o => ({ ...o })),
+    roads: s.roads.map(r => ({ ...r })),
+    pillagedRoadHexes: new Set(s.pillagedRoadHexes),
     hills: s.hills, walls: s.walls, forests: s.forests,
     explored: s.explored.map((e, i) => (i === cur ? new Set(e) : e)),
     currentPlayerIndex: s.currentPlayerIndex,
@@ -143,17 +160,19 @@ export function cloneState(s: GameState): GameState {
     mapRadius: s.mapRadius,
     winner: s.winner,
     turnNumber: s.turnNumber,
-    selectedUnitId: null, selectedTempleId: null, selectionMode: null,
-    moveHexes: [], attackHexes: [], supportHexes: [], buildHexes: [],
-    spawnedTempleIds: new Set(s.spawnedTempleIds),
-    playerTech: s.playerTech.map(pt => ({ researched: new Set(pt.researched) })),
+    selectedUnitId: null, selectedSiteId: null, selectionMode: null,
+    moveHexes: [], attackHexes: [], structureAttackHexes: [], supportHexes: [], buildHexes: [],
+    spawnedSiteIds: new Set(s.spawnedSiteIds),
+    playerTech: s.playerTech.map(pt => ({ researched: new Set(pt.researched), researching: pt.researching ? { ...pt.researching } : null })),
     teleportBuildings: s.teleportBuildings.map(tp => ({ ...tp })),
   };
 }
 
+// §11 — a Capital is permanent until destroyed, and destruction already ends
+// the match, so this is always true pre-gameOver in practice.
 export function isAlive(state: GameState, pid: number): boolean {
-  return state.units.some(u => u.hp > 0 && u.playerId === pid)
-    || state.temples.some(t => t.ownerId === pid);
+  const capital = state.capitals.find(c => c.playerId === pid);
+  return !!capital && capital.hp > 0;
 }
 
 export { setSeed };

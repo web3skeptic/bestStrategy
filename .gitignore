@@ -27,3 +27,10 @@ ml/data/
 ml/runs/
 runs/
 ml/weights/policy-*.json
+
+# runtime sqlite + chat transcripts for this instance
+data/
+dist-app/
+ios-build/
+ios-build.log
+android-build.log

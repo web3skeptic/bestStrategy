@@ -1,10 +1,18 @@
-import { GameState, TechId } from './types';
+import { GameState, TechId, ResearchProgress, RULES_VERSION } from './types';
 
 // Serialized form: Sets become arrays for JSON transport
 export interface SerializedGameState {
+  /** Stamped by serialize() from RULES_VERSION. See assertCompatibleRulesVersion. */
+  rulesVersion: number;
   players: GameState['players'];
   units: GameState['units'];
-  temples: GameState['temples'];
+  strategicSites: GameState['strategicSites'];
+  fertileSites: GameState['fertileSites'];
+  capitals: GameState['capitals'];
+  farms: GameState['farms'];
+  trainingQueue: GameState['trainingQueue'];
+  roads: GameState['roads'];
+  pillagedRoadHexes: string[];
   hills: string[];
   walls: string[];
   forests: string[];
@@ -17,13 +25,14 @@ export interface SerializedGameState {
   winner: GameState['winner'];
   turnNumber: number;
   selectedUnitId: string | null;
-  selectedTempleId: string | null;
+  selectedSiteId: string | null;
   selectionMode: GameState['selectionMode'];
   moveHexes: GameState['moveHexes'];
   attackHexes: GameState['attackHexes'];
+  structureAttackHexes: GameState['structureAttackHexes'];
   supportHexes: GameState['supportHexes'];
-  spawnedTempleIds: string[];
-  playerTech: { researched: string[] }[];
+  spawnedSiteIds: string[];
+  playerTech: { researched: string[]; researching: ResearchProgress | null }[];
   teleportBuildings: GameState['teleportBuildings'];
   buildHexes: GameState['buildHexes'];
 }
@@ -31,30 +40,54 @@ export interface SerializedGameState {
 export function serialize(state: GameState): SerializedGameState {
   return {
     ...state,
-    hills:            Array.from(state.hills),
-    walls:            Array.from(state.walls),
-    forests:          Array.from(state.forests),
-    explored:         state.explored.map(s => Array.from(s)),
-    spawnedTempleIds: Array.from(state.spawnedTempleIds),
-    playerTech:       state.playerTech.map(pt => ({ researched: Array.from(pt.researched) })),
+    rulesVersion:   RULES_VERSION,
+    pillagedRoadHexes: Array.from(state.pillagedRoadHexes),
+    hills:          Array.from(state.hills),
+    walls:          Array.from(state.walls),
+    forests:        Array.from(state.forests),
+    explored:       state.explored.map(s => Array.from(s)),
+    spawnedSiteIds: Array.from(state.spawnedSiteIds),
+    playerTech:     state.playerTech.map(pt => ({ researched: Array.from(pt.researched), researching: pt.researching })),
   };
 }
 
+// Thrown by deserialize() when a saved/replayed blob predates the current
+// rules. Every load site (server/db.ts rejoin, server/gameLogger.ts replay
+// read, server/headlessApi.ts replay load) must catch this specifically and
+// fail cleanly — never silently reinterpret older state under the new rules.
+export class IncompatibleRulesVersionError extends Error {
+  constructor(public readonly foundVersion: number | undefined) {
+    super(
+      `This match was created with an older, incompatible ruleset ` +
+      `(rulesVersion=${foundVersion ?? 'none'}, current=${RULES_VERSION}). ` +
+      `It can no longer be loaded.`,
+    );
+    this.name = 'IncompatibleRulesVersionError';
+  }
+}
+
+export function assertCompatibleRulesVersion(data: { rulesVersion?: number }): void {
+  if (data.rulesVersion !== RULES_VERSION) {
+    throw new IncompatibleRulesVersionError(data.rulesVersion);
+  }
+}
+
 export function deserialize(data: SerializedGameState): GameState {
+  assertCompatibleRulesVersion(data);
   return {
     ...(data as unknown as GameState),
     // Backwards-compatibility: older saved states may pre-date `turnNumber`.
     turnNumber:       data.turnNumber ?? 1,
     // Backwards-compatibility: replays pre-v2.2 always started P0 first.
     firstPlayerIndex: data.firstPlayerIndex ?? 0,
+    pillagedRoadHexes: new Set<string>(data.pillagedRoadHexes),
     hills:            new Set<string>(data.hills),
     walls:            new Set<string>(data.walls),
     forests:          new Set<string>(data.forests),
     explored:         data.explored.map(arr => new Set<string>(arr)),
-    spawnedTempleIds: new Set<string>(data.spawnedTempleIds),
-    playerTech:       data.playerTech.map(pt => ({ researched: new Set<TechId>(pt.researched as TechId[]) })),
-    // Backwards-compatibility: units saved before `hasCaptured` existed default to false.
-    units:            data.units.map(u => ({ ...u, hasCaptured: u.hasCaptured ?? false })),
+    spawnedSiteIds:   new Set<string>(data.spawnedSiteIds),
+    playerTech:       data.playerTech.map(pt => ({ researched: new Set<TechId>(pt.researched as TechId[]), researching: pt.researching ?? null })),
+    units:            data.units,
     // Live multiplayer is authoritative for selection: the server sends the
     // acting player their current selection + highlight hexes in every
     // state_update (and strips them for the opponent/spectators). Honour
@@ -62,10 +95,11 @@ export function deserialize(data: SerializedGameState): GameState {
     // actually usable — defaulting to safe empties for older payloads that
     // pre-date these fields.
     selectedUnitId:   data.selectedUnitId ?? null,
-    selectedTempleId: data.selectedTempleId ?? null,
+    selectedSiteId:   data.selectedSiteId ?? null,
     selectionMode:    data.selectionMode ?? null,
     moveHexes:        data.moveHexes ?? [],
     attackHexes:      data.attackHexes ?? [],
+    structureAttackHexes: data.structureAttackHexes ?? [],
     supportHexes:     data.supportHexes ?? [],
     buildHexes:       data.buildHexes ?? [],
   };

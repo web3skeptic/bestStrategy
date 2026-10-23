@@ -1,21 +1,56 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { GameState, HexCoord, Unit, Temple, TeleportBuilding, SUPPORT_RANGE, unitYetToMove } from './types';
+import { GameState, HexCoord, Unit, StrategicSite, Capital, Farm, FertileSite, TeleportBuilding, SUPPORT_RANGE, unitYetToMove, FactionId, Road } from './types';
 import { generateHexMap, hexKey, hexDistance, hexRound } from './hex';
-import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canCaptureTemple } from './game';
+import { getCurrentPlayer, getCurrentPlayerVisible, getPlayerVisible, isForestUnitRevealed, getUnitAt, canStartFounding, getZocHexes, getAgrarTerritory, getAgrarCultivation } from './game';
 import { makePalette, Palette, hexToWorld, worldToHexFractional, HEX_R, TILE_H } from './three/palette';
 import * as B from './three/builders.gen';
 import { buildPortal } from './voxelPortal';
 import { buildTemple } from './voxelTemple';
+import { buildCapital } from './voxelCapital';
+import { buildFarm, buildFertileSite } from './voxelFarm';
+import { buildRoad as buildRoadModel } from './voxelRoad';
 import { buildUnitModel } from './voxelUnits';
 import { getSharedFaceTexture } from './voxelWarrior';
+import { IS_TOUCH, renderPixelRatio } from './perfProfile';
+
+interface StructureVisual { id: string; pos: HexCoord; kind: 'capital' | 'site' | 'farm' | 'fertile'; tier: number; colorNum: number; canPendingFound: boolean; hp: number; maxHp: number; faction: FactionId | null; }
+
+// A structure as the viewer last saw it. `remembered` marks an entry drawn from
+// memory (its hex is explored but out of vision), not from the live state.
+interface RememberedStructure extends StructureVisual { remembered?: boolean; own?: boolean; }
+
+// A farm drawn in the previous frame, kept so a farm that disappears can be
+// told apart: destroyed in plain sight (animate) vs. discovered gone (quiet).
+interface FarmSighting { pos: HexCoord; hp: number; maxHp: number; colorNum: number; live: boolean; }
+
+// One running farm-destruction effect (see startFarmCollapse).
+interface FarmCollapse {
+  start: number; last: number;
+  group: THREE.Group; building: THREE.Object3D; buildingMats: THREE.Material[];
+  debris: { mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial; vel: THREE.Vector3; spin: THREE.Vector3; bounced: boolean }[];
+  smoke: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; delay: number; drift: THREE.Vector3 }[];
+  embers: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vel: THREE.Vector3; life: number }[];
+  scorchMat: THREE.MeshBasicMaterial;
+}
+const FARM_COLLAPSE_MS = 4600;
+// How long after the last interaction / state change the board keeps full frame rate.
+const ACTIVE_HOLD_MS = 1500;
 
 const MOVE_ANIM_MS = 260;
 const EXPLOSION_MS = 440;
 const UNIT_LAYER = 1; // extra layer lit by unit-only lights so units stay bright
 const HILL_ELEV = 0.18;     // units on a hill sit slightly higher
-const TEMPLE_ELEV = 0.5;    // units on a temple tile perch on its steps, not inside it
+const STRUCTURE_ELEV = 0.5;    // units on a temple tile perch on its steps, not inside it
 const TURN_SPEED = 12;      // unit facing rotation speed (rad/s)
+// Polytopia-style Capital-occupant presentation — a unit standing on the
+// Capital's hex renders toward the camera-facing side of that SAME tile
+// instead of perched on the Capital's steps (STRUCTURE_ELEV) or buried
+// behind it. Fraction of HEX_R the display position is nudged toward the
+// camera; stays well inside the tile's own footprint (see getDisplayHexPos).
+const CAPITAL_OCCUPANT_OFFSET = 0.95;
+const CAPITAL_OCCUPANT_Y_EPSILON = 0.02; // just enough to avoid z-fighting with the ground
+const CAPITAL_OCCUPANT_TURN_SPEED = 4.5; // rad/s — how fast the foreground offset re-aims as the camera orbits
 const FOREST_FADE = 0.45;   // opacity of own units hidden in a forest
 // Explored-but-not-currently-visible tiles keep their real terrain, but every
 // material on the tile (prism + grass + trees + flowers) is dimmed to this
@@ -46,8 +81,14 @@ type StructFade = { parts: StructPart[]; fromFactor: number; toFactor: number; s
 
 // A unit model's facing rotation (about Y) to point toward world direction
 // (dx, dz): atan2(dx, dz) for a +Z-forward model, plus a per-model offset. The
-// mounted models (horse/knight) face -X by default, so they need +90°.
-function forwardOffset(type: string): number {
+// mounted models (horse/knight) face -X by default, so they need +90°. The
+// Warden (Farmer's own unmounted flavor of the 'heavyknight' slot — see
+// buildUnitModel) is built on the same +Z-forward guy rig as every other foot
+// unit, so it needs no offset at all.
+function forwardOffset(type: string, faction?: FactionId | null): number {
+  if (type === 'heavyknight' && faction === 'agrar') return 0;
+  // Nomads: every unit is mounted (see buildUnitModel), all -X-forward.
+  if (faction === 'temple' && type !== 'founder') return Math.PI / 2;
   return (type === 'horserider' || type === 'heavyknight') ? Math.PI / 2 : 0;
 }
 
@@ -254,11 +295,66 @@ export class Renderer3D {
   // sit on a reachable move hex for the selected unit, or a local unit stands on
   // them with a pending capture. Driven in the same pulse block as toMoveTintIds
   // (same phase); the temple model itself is tinted (no floating markers).
-  private templeTintIds = new Set<string>();
+  private structureTintIds = new Set<string>();
+  // Ids of structures currently showing the pulsating RED "attackable" tint —
+  // a currently-selected unit could attack this structure right now (same
+  // set as the flat red attack highlight in syncHighlights, but that flat
+  // ground tint gets hidden under/behind a tall Capital/Temple model from
+  // most camera angles, same reasoning as structureTintIds above, so the
+  // model itself needs its own marker too). Takes priority over
+  // structureTintIds if a structure were ever eligible for both (shouldn't
+  // happen in practice — an attackable structure is always enemy-owned, so
+  // it's never also a legal move/found destination for the same unit).
+  private structureAttackTintIds = new Set<string>();
+  // Frame pacing (see startLoop): paused behind the menu, throttled when idle.
+  private paused = false;
+  private framesDrawn = 0;
+  private lastActivity = 0;
+  private shadowDirty = true;
+  private facingBusy = false;
   private lastUnitHp = new Map<string, number>(); // for detecting damage → hit explosions
-  private templeMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number }>();
+  // ── Fog-of-war memory (per viewer id) ──
+  // Explored hexes outside current vision show structures and roads as the viewer
+  // last saw them, not their live state — otherwise a new enemy farm, a destroyed
+  // one, or a new road would appear/vanish under the fog and give the enemy away.
+  private seenStructs = new Map<number, Map<string, RememberedStructure>>();
+  private seenRoads = new Map<number, Map<string, Road>>();
+  private prevFarms = new Map<string, FarmSighting>();
+  private curFarms = new Map<string, FarmSighting>();
+  private frameExplored: Set<string> | null = null;
+  private frameVisible: Set<string> | null = null;
+  private frameViewer = -1;
+  private farmCollapses: FarmCollapse[] = [];
+  private lastStructHp = new Map<string, number>(); // Capital/Temple/Farm — same purpose, structure combat pass
+  private structureMeshes = new Map<string, { mesh: THREE.Object3D; color: number; level: number; stage: number; faction: FactionId | null }>();
+  private structHpBars = new Map<string, { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number }>();
+  private structFlashUntil = new Map<string, number>(); // brief red hit-flash, cleared in advanceAnimations
   private teleportMeshes = new Map<string, THREE.Object3D>();
+  private roadMeshes = new Map<string, THREE.Object3D>(); // keyed by hexKey(pos) — a Road tile is uniquely identified by its position
   private highlightPool: THREE.Mesh[] = [];
+  // Balance pass — Road multi-select UI: tiles the player has already picked
+  // in the current Build-Road activation (as opposed to state.buildHexes,
+  // which is only ever the NEXT-tile candidate set) — purely a rendering
+  // concern, main.ts owns the actual selection list. Rendered with its own
+  // strong pulsing "ghost" highlight, top priority over every other tint.
+  private roadSelectionHexes: HexCoord[] = [];
+  // Farm-placement UX pass — the single hex the player has tentatively
+  // selected for a Farm (pending Confirm), analogous to roadSelectionHexes
+  // above but Farms are a one-tile placement, not a multi-segment path.
+  private farmSelectionHex: HexCoord | null = null;
+  // Ghost previews — semi-transparent "this is what would be built here"
+  // models, cleared whenever selection/placement mode changes (never left
+  // stale). The Farm ghost reuses the real buildFarm() model; Roads have no
+  // dedicated 3D model yet (see the roads note in actionDispatcher.ts's
+  // rules payload), so the Road ghost is a lightweight two-plank cross
+  // built from cached geometry/materials, one per selected Road tile.
+  private ghostFarmMesh: THREE.Group | null = null;
+  private ghostFarmKey: string | null = null;
+  private ghostFarmColor: number | null = null;
+  private ghostRoadMeshes: THREE.Group[] = [];
+  private ghostRoadMat: THREE.MeshStandardMaterial | null = null;
+  private ghostRoadGeoA: THREE.BoxGeometry | null = null;
+  private ghostRoadGeoB: THREE.BoxGeometry | null = null;
 
   private capGeo: THREE.CylinderGeometry;
   private highlightGeo: THREE.CylinderGeometry;
@@ -282,12 +378,25 @@ export class Renderer3D {
   private unitFacing = new Map<string, { cur: number; tgt: number }>(); // animated facing (rot.y)
   private unitFaded = new Map<string, boolean>(); // current forest-stealth fade state
   private lastFacingNow = 0;
+  // Polytopia-style Capital-occupant presentation (see CAPITAL_OCCUPANT_OFFSET
+  // above and getDisplayHexPos below). capitalOccupants tracks which unit ids
+  // currently sit on a Capital hex (repopulated in syncUnits every sync) so
+  // advanceAnimations can keep re-aiming their foreground offset toward the
+  // camera every frame, even with no other state change in flight (e.g. the
+  // player just orbiting the camera). capitalOccupantAngle is the smoothed
+  // current angle (radians) per unit id — animated toward the camera's true
+  // angle each frame instead of snapping, except on a unit's first-ever frame
+  // (no previous angle to smooth from), which resolves directly to the true
+  // angle so it's never briefly buried on the spawn/deploy frame.
+  private capitalOccupants = new Map<string, HexCoord>();
+  private capitalOccupantAngle = new Map<string, number>();
+  private lastCapitalAngleNow = 0;
   // Expanding ground rings shown when an attack splashes multiple units (AoE).
   private shockwaves: { start: number; mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; geo: THREE.RingGeometry }[] = [];
 
   // Rotating yellow pointer hovering over the currently-selected temple.
-  private templePointer: THREE.Group | null = null;
-  private templePointerBaseY = 0;
+  private structurePointer: THREE.Group | null = null;
+  private structurePointerBaseY = 0;
 
   // Desktop camera-key state (Q/E rotate, WASD pan). main.ts feeds key up/down
   // here; applyCameraKeys() drives smooth continuous motion in the render loop.
@@ -324,116 +433,64 @@ export class Renderer3D {
     this.P = makePalette();
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // Mobile budget (see perfProfile.ts): capped render resolution and plain
+    // PCF shadows on touch devices; desktop keeps full quality.
+    this.renderer.setPixelRatio(renderPixelRatio(1.5));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = IS_TOUCH ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    // The sun never moves, so the shadow map only needs re-rendering when
+    // something on the board changes (see startLoop / markActive).
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputEncoding = THREE.sRGBEncoding;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x12131a);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 500);
-    // Steeper, more top-down default pitch (~33° from vertical vs the old ~48°):
-    // a flatter, more bird's-eye view makes individual hexes easier to pick and
-    // keeps raised hills from hiding tiles behind them. Distance is kept ~equal
-    // to the old framing so the opening view of the home temple still reads well.
-    this.camera.position.set(0, 20, 13);
+    // Fixed perspective (Polytopia-style camera pass): ONE pitch, ONE yaw, no
+    // orbiting — ~50° from vertical, low enough that every unit's face reads
+    // (units idle facing the camera, see advanceAnimations) while the board
+    // still lays out clearly and hexes stay easy to tap. Pan and zoom remain.
+    // Same ~18.4 distance as the old default so focusOnHex's dolly feels alike.
+    const FIXED_POLAR = THREE.MathUtils.degToRad(50), START_DIST = 18.4;
+    this.camera.position.set(0, Math.cos(FIXED_POLAR) * START_DIST, Math.sin(FIXED_POLAR) * START_DIST);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 6;
     this.controls.maxDistance = 70;
-    // Clamp the tilt well above the horizon (~72° from vertical). Letting the
-    // player flatten the view to near-horizontal made hex raycast picking flaky
-    // and let hills occlude the tiles behind them, so the low-angle range is cut.
-    this.controls.maxPolarAngle = Math.PI * 0.40; // stay comfortably above the board
+    this.controls.minPolarAngle = FIXED_POLAR;
+    this.controls.maxPolarAngle = FIXED_POLAR;
+    this.controls.minAzimuthAngle = 0;
+    this.controls.maxAzimuthAngle = 0;
     this.controls.enablePan = true;
-    this.controls.enableRotate = true;
+    this.controls.enableRotate = false; // fixed perspective — no orbit on any input
     this.controls.enableZoom = true;
     // Pan parallel to the ground plane (map-style) rather than in screen space,
     // so a one-finger drag slides the camera across the board.
     this.controls.screenSpacePanning = false;
-    // Mobile (touch) gesture map: one finger pans the camera position across the
-    // board; two fingers pinch-to-zoom AND orbit the view angle (azimuth + pitch).
-    this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
-    // Desktop mouse map: PRIMARY (left) drag pans the camera across the map — parity
-    // with mobile's one-finger pan, so the natural drag moves the view instead of
-    // being stuck orbiting the home temple. Rotate/orbit moves to the RIGHT button
-    // (like mobile's secondary two-finger orbit); middle-drag dollies; wheel zooms.
+    // Mobile (touch) gesture map: one finger pans the camera across the board;
+    // two fingers pinch-to-zoom (and pan). No rotate gesture at all.
+    this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
+    // Desktop mouse map: any drag pans, middle-drag dollies, wheel zooms.
     this.controls.mouseButtons = {
       LEFT: THREE.MOUSE.PAN,
       MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: THREE.MOUSE.ROTATE,
+      RIGHT: THREE.MOUSE.PAN,
     };
     // Snappier pan (default is 1.0). panSpeed affects mouse + touch; kept high so
-    // one-finger pan feels fast. rotateSpeed only affects desktop mouse-drag orbit
-    // now (two-finger touch rotate is handled manually below via twist).
-    this.controls.rotateSpeed = 1.1;
+    // one-finger pan feels fast.
     this.controls.panSpeed = 2.0;
 
-    // ── Touch two-finger camera: map-style TWIST-to-rotate + pinch-zoom ──
-    // OrbitControls' built-in DOLLY_ROTATE rotates from the two-finger MIDPOINT
-    // ("hold one, drag the other"), which felt confusing and coupled zoom↔rotate.
-    // Instead, while ≥2 fingers are down we turn OrbitControls' rotate OFF (so its
-    // two-finger path is pure pinch-zoom) and rotate the azimuth ourselves from the
-    // TWIST — the change in angle of the finger-to-finger vector, like Google/Apple
-    // Maps. Pitch is kept locked during the gesture (no accidental tilt). Desktop
-    // fires no touch events, so its mouse map (left-pan / right-orbit / wheel-zoom)
-    // is untouched.
-    const TWIST_DEADZONE = 0.006; // rad per move: ignore micro-jitter
-    const TWIST_MULT = 1.0;       // 1:1 twist, like a paper map under your fingers
-    const _twOff = new THREE.Vector3();
-    const _twSph = new THREE.Spherical();
-    let twistPrev: number | null = null;
-    const twoFingerAngle = (t: TouchList) =>
-      Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX);
-
-    canvas.addEventListener('touchstart', (e) => {
-      if (e.touches.length >= 2) {
-        this.controls.enableRotate = false;              // pinch-zoom only from OrbitControls
-        const pol = this.controls.getPolarAngle();
-        this.controls.minPolarAngle = this.controls.maxPolarAngle = pol; // freeze tilt
-        twistPrev = twoFingerAngle(e.touches);
-      }
-    }, { passive: true });
-
-    canvas.addEventListener('touchmove', (e) => {
-      if (e.touches.length < 2 || twistPrev === null) return;
-      const cur = twoFingerAngle(e.touches);
-      let d = cur - twistPrev;
-      if (d > Math.PI) d -= 2 * Math.PI;               // unwrap the ±π seam
-      else if (d < -Math.PI) d += 2 * Math.PI;
-      twistPrev = cur;
-      if (Math.abs(d) < TWIST_DEADZONE) return;
-      // Twisting the fingers turns the map with them (verified empirically:
-      // clockwise twist → world rotates clockwise under the fingers). Orbit
-      // azimuth about controls.target; the render-loop controls.update() reads
-      // camera.position back each frame, so damping isn't fought.
-      _twOff.copy(this.camera.position).sub(this.controls.target);
-      _twSph.setFromVector3(_twOff);
-      _twSph.theta += d * TWIST_MULT;
-      _twOff.setFromSpherical(_twSph);
-      this.camera.position.copy(this.controls.target).add(_twOff);
-    }, { passive: true });
-
-    const endTwoFinger = (e: TouchEvent) => {
-      if (e.touches.length < 2) {                        // dropped below two fingers
-        this.controls.enableRotate = true;               // restore desktop/other orbit
-        this.controls.minPolarAngle = 0;
-        this.controls.maxPolarAngle = Math.PI * 0.40;    // restore tilt range (matches init clamp)
-        twistPrev = null;                                // no jump when a finger lingers
-      }
-    };
-    canvas.addEventListener('touchend', endTwoFinger);
-    canvas.addEventListener('touchcancel', endTwoFinger);
+    // (The old two-finger twist-to-rotate gesture is gone with the fixed perspective.)
 
     // Main lighting — dimmed so the map / terrain / structures read less bright.
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4456, 0.48));
     const sun = new THREE.DirectionalLight(0xffffff, 0.8);
     sun.position.set(-14, 24, 12);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(IS_TOUCH ? 1024 : 2048, IS_TOUCH ? 1024 : 2048);
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 90;
     const d = 24;
@@ -467,7 +524,7 @@ export class Renderer3D {
 
     // Rotating yellow "active temple" pointer (a downward pyramid + cube), hidden
     // until a temple is selected. Spins + bobs in advanceAnimations.
-    this.templePointer = new THREE.Group();
+    this.structurePointer = new THREE.Group();
     const ptrMat = new THREE.MeshStandardMaterial({ color: 0xffd23a, emissive: 0xffb000, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0 });
     const ptrCone = new THREE.Mesh(new THREE.CylinderGeometry(0, 0.24, 0.42, 4), ptrMat);
     ptrCone.rotation.x = Math.PI; // point down at the temple
@@ -475,10 +532,10 @@ export class Renderer3D {
     const ptrCube = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), ptrMat);
     ptrCube.position.y = 0.56;
     ptrCube.rotation.set(Math.PI / 4, Math.PI / 4, 0);
-    this.templePointer.add(ptrCone, ptrCube);
-    this.templePointer.visible = false;
-    this.templePointer.traverse(o => o.layers.enable(UNIT_LAYER)); // keep it bright
-    this.scene.add(this.templePointer);
+    this.structurePointer.add(ptrCone, ptrCube);
+    this.structurePointer.visible = false;
+    this.structurePointer.traverse(o => o.layers.enable(UNIT_LAYER)); // keep it bright
+    this.scene.add(this.structurePointer);
 
     // Shared overlay geometries/materials.
     // Solid dark hex prism (same shape/size as a tile) used to replace a tile
@@ -505,6 +562,11 @@ export class Renderer3D {
     hudRim.position.set(0.6, -0.4, 0.5);
     this.hudScene.add(hudRim);
     this.canvas.addEventListener('pointermove', e => this.onHudHover(e));
+    // Any touch / drag / zoom keeps the board at full frame rate for a moment.
+    for (const ev of ['pointerdown', 'pointermove', 'wheel'] as const) {
+      this.canvas.addEventListener(ev, () => this.markActive(), { passive: true });
+    }
+    this.controls.addEventListener('change', () => this.markActive());
 
     this.startLoop();
   }
@@ -532,14 +594,31 @@ export class Renderer3D {
     this.boosterAuras.clear();
     this.unitHpBars.clear();
     this.toMoveTintIds.clear();
-    this.templeTintIds.clear();
+    this.structureTintIds.clear();
+    this.structureAttackTintIds.clear();
     this.lastUnitHp.clear();
-    this.templeMeshes.clear();
+    this.lastStructHp.clear();
+    this.seenStructs.clear();
+    this.seenRoads.clear();
+    this.prevFarms.clear();
+    this.curFarms.clear();
+    this.farmCollapses = []; // their groups lived in overlayGroup, disposed above
+    this.roadSelectionHexes = [];
+    this.ghostRoadMeshes = []; // disposed already via disposeGroup(overlayGroup) above
+    this.farmSelectionHex = null;
+    this.ghostFarmMesh = null;
+    this.ghostFarmKey = null;
+    this.structHpBars.clear();
+    this.structFlashUntil.clear();
+    this.structureMeshes.clear();
     this.teleportMeshes.clear();
+    this.roadMeshes.clear(); // disposed already via disposeGroup(overlayGroup) above
     this.highlightPool = [];
     this.moveAnims.clear();
     this.unitFacing.clear();
     this.unitFaded.clear();
+    this.capitalOccupants.clear();
+    this.capitalOccupantAngle.clear();
     for (const s of this.shockwaves) { this.overlayGroup.remove(s.mesh); s.geo.dispose(); s.mat.dispose(); }
     this.shockwaves = [];
     this.explosions = [];
@@ -564,6 +643,89 @@ export class Renderer3D {
   pan(_dx: number, _dy: number): void { /* orbit controls handle panning (right-drag) */ }
   getHexSize(): number { return HEX_R; }
   getCenter(): { x: number; y: number } { return { x: 0, y: 0 }; }
+
+  // Balance pass — Road multi-select UI: which tiles the player has already
+  // picked this activation, purely for the strong pulsing "ghost" highlight
+  // (see syncHighlights) — replaces the whole list every call, empty array
+  // clears it. main.ts calls this alongside its own local selection state,
+  // never persisted in GameState itself (this is presentation only).
+  setRoadSelectionPreview(hexes: HexCoord[], state?: GameState): void {
+    this.roadSelectionHexes = hexes.map(h => ({ ...h }));
+    if (!state) { for (const m of this.ghostRoadMeshes) m.visible = false; return; }
+    // Ghost Road pieces — a lightweight two-plank cross per selected tile,
+    // built once from cached geometry/material and reused/repositioned on
+    // every call rather than allocating fresh THREE objects each time.
+    if (!this.ghostRoadGeoA) this.ghostRoadGeoA = new THREE.BoxGeometry(0.95, 0.09, 0.34);
+    if (!this.ghostRoadGeoB) this.ghostRoadGeoB = new THREE.BoxGeometry(0.34, 0.09, 0.95);
+    if (!this.ghostRoadMat) {
+      this.ghostRoadMat = new THREE.MeshStandardMaterial({ color: 0xffd23f, transparent: true, opacity: 0.55, roughness: 0.55, metalness: 0, depthWrite: false });
+    }
+    for (let idx = 0; idx < this.roadSelectionHexes.length; idx++) {
+      const hex = this.roadSelectionHexes[idx]!;
+      let group = this.ghostRoadMeshes[idx];
+      if (!group) {
+        group = new THREE.Group();
+        group.add(new THREE.Mesh(this.ghostRoadGeoA, this.ghostRoadMat));
+        group.add(new THREE.Mesh(this.ghostRoadGeoB, this.ghostRoadMat));
+        this.overlayGroup.add(group);
+        this.ghostRoadMeshes[idx] = group;
+      }
+      const { x, z } = hexToWorld(hex);
+      group.position.set(x, this.elevationAt(state, hex) + 0.12, z);
+      group.visible = true;
+    }
+    for (let idx = this.roadSelectionHexes.length; idx < this.ghostRoadMeshes.length; idx++) {
+      this.ghostRoadMeshes[idx]!.visible = false;
+    }
+  }
+
+  // Farm-placement UX pass — the tentatively-selected Farm hex (or null to
+  // clear), rendered as a strong highlight (see syncHighlights) plus a
+  // semi-transparent ghost of the real Farm model on that tile. Rebuilds the
+  // ghost mesh only when the hex or team colour actually changes.
+  setFarmSelectionPreview(hex: HexCoord | null, color?: string, state?: GameState): void {
+    this.farmSelectionHex = hex ? { ...hex } : null;
+    if (!hex || color === undefined || !state) {
+      if (this.ghostFarmMesh) this.ghostFarmMesh.visible = false;
+      this.ghostFarmKey = null;
+      return;
+    }
+    const colorNum = new THREE.Color(color).getHex();
+    const key = hexKey(hex);
+    if (!this.ghostFarmMesh || this.ghostFarmKey !== key || this.ghostFarmColor !== colorNum) {
+      if (this.ghostFarmMesh) { this.overlayGroup.remove(this.ghostFarmMesh); this.disposeObject(this.ghostFarmMesh); }
+      const mesh = buildFarm(colorNum);
+      mesh.traverse(o => {
+        const mm = o as THREE.Mesh;
+        if (!mm.material) return;
+        const mats = Array.isArray(mm.material) ? mm.material : [mm.material];
+        for (const m of mats) {
+          const sm = m as THREE.MeshStandardMaterial;
+          sm.transparent = true;
+          sm.opacity = 0.45;
+          sm.depthWrite = false;
+        }
+      });
+      const { x, z } = hexToWorld(hex);
+      mesh.position.set(x, this.elevationAt(state, hex) + 0.03, z);
+      this.overlayGroup.add(mesh);
+      this.ghostFarmMesh = mesh;
+      this.ghostFarmKey = key;
+      this.ghostFarmColor = colorNum;
+    }
+    this.ghostFarmMesh.visible = true;
+  }
+
+  // Clears both ghost previews at once — called whenever Farm/Road placement
+  // mode ends for any reason (confirm, cancel, deselect, turn change,
+  // another action mode opening) so a stale ghost never lingers in the scene.
+  clearPlacementGhosts(): void {
+    this.farmSelectionHex = null;
+    if (this.ghostFarmMesh) this.ghostFarmMesh.visible = false;
+    this.ghostFarmKey = null;
+    this.roadSelectionHexes = [];
+    for (const m of this.ghostRoadMeshes) m.visible = false;
+  }
 
   // Re-center the camera on a specific hex (e.g. the local player's home temple
   // at game start), preserving the current view angle/distance, then apply a
@@ -602,19 +764,7 @@ export class Renderer3D {
 
     const target = this.controls.target;
 
-    // Rotate the view around the target (azimuth only), mirroring the two-finger
-    // twist path so OrbitControls damping isn't fought.
-    const ROT_SPEED = 1.6; // rad/s
-    let dTheta = 0;
-    if (this.camKeys.has('rotL')) dTheta += ROT_SPEED * dt;
-    if (this.camKeys.has('rotR')) dTheta -= ROT_SPEED * dt;
-    if (dTheta !== 0) {
-      const off = this.camera.position.clone().sub(target);
-      const sph = new THREE.Spherical().setFromVector3(off);
-      sph.theta += dTheta;
-      off.setFromSpherical(sph);
-      this.camera.position.copy(target).add(off);
-    }
+    // Fixed perspective: the rotate keys (Q/E) are accepted but do nothing.
 
     // Pan the target (and camera) across the ground plane, relative to the current
     // facing. Speed scales with zoom distance so it feels consistent at any zoom.
@@ -673,7 +823,8 @@ export class Renderer3D {
     const from = hexToWorld(unit.pos);
     const to = hexToWorld(target);
     const dx = to.x - from.x, dz = to.z - from.z;
-    if (dx || dz) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type);
+    const player = this.lastState?.players.find(p => p.id === unit.playerId);
+    if (dx || dz) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type, player?.faction);
   }
 
   // Expanding ground ring marking a splash/AoE impact, centred on a tile.
@@ -731,7 +882,30 @@ export class Renderer3D {
     this.explosions.push({ start: performance.now() + delayMs, group, cx: x, cy, cz: z, flash, flashMat, flashGeo, sparks, sparkMat, sparkGeo, light, sizeMul: mag });
   }
 
-  /** Raycast a screen point onto the board plane → hex coord (or null). */
+  /**
+   * Raycast a screen point onto the board → hex coord (or null).
+   *
+   * Selection-reliability pass: prefer a REAL raycast against the actual
+   * tile meshes over a flat y=0 math plane. Hills/structures raise the
+   * visible surface (elevationAt) but the old flat-plane projection always
+   * assumed y=0 — with any camera tilt, that silently resolves a click on
+   * an elevated tile (or a unit standing on one) to the WRONG hex (the one
+   * behind/beyond it from the camera's angle), which is exactly the
+   * "clicks don't reliably select the intended unit" symptom.
+   *
+   * Follow-up — a Farm/Temple/Capital (or a unit) is a TALL model rooted on
+   * a flat ground tile; from any tilted camera angle its visible silhouette
+   * leans toward the viewer, spilling over the screen-space area of the tile
+   * in FRONT of it. Raycasting only the flat tile mesh made a click on that
+   * visible silhouette pass straight through (structures/units aren't in the
+   * tested object list) and land on whatever tile was actually behind the
+   * cursor at y=0 — often a neighbour, not the one the structure/unit
+   * actually stands on. Now structures and units are raycast in the SAME
+   * pass as tiles, so THREE's nearest-hit-first ordering picks whichever the
+   * player is actually looking at, not just what's flat on the ground there.
+   * Falls back to the old flat-plane projection only if the ray somehow
+   * misses everything (shouldn't happen once tiles are built).
+   */
   pickHex(clientX: number, clientY: number): HexCoord | null {
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -739,6 +913,18 @@ export class Renderer3D {
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
+
+    const targets: THREE.Object3D[] = [this.unitGroup, this.structureGroup, ...this.tileMeshes.values()];
+    const hits = this.raycaster.intersectObjects(targets, true);
+    for (const hit of hits) {
+      let o: THREE.Object3D | null = hit.object;
+      while (o && o.userData.hexKey === undefined) o = o.parent;
+      if (o) {
+        const [qs, rs] = (o.userData.hexKey as string).split(',');
+        return { q: Number(qs), r: Number(rs) };
+      }
+    }
+
     const pt = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.groundPlane, pt)) return null;
     const { q, r } = worldToHexFractional(pt.x, pt.z);
@@ -776,6 +962,7 @@ export class Renderer3D {
   // ── state → scene sync ──
 
   render(state: GameState, viewerPlayerId?: number, omniscient?: boolean): void {
+    this.markActive();
     this.lastState = state;
     this.lastViewer = viewerPlayerId;
     this.lastOmniscient = omniscient;
@@ -795,6 +982,10 @@ export class Renderer3D {
     // only while it is that viewer's turn to act (never during an AI/opponent
     // turn or an omniscient/spectator view). Also gates the pending-capture
     // temple tint (case b) below.
+    this.frameExplored = explored;
+    this.frameVisible = visible;
+    this.frameViewer = playerId;
+
     const showToMove = viewerPlayerId !== undefined && !omniscient
       && state.phase === 'playing' && state.currentPlayerIndex === viewerPlayerId;
     this.lastShowToMove = showToMove;
@@ -802,7 +993,8 @@ export class Renderer3D {
     if (this.tileMeshes.size === 0) this.buildTiles(state);
     this.detectHits(state, playerId, visible, !!omniscient);
     this.syncFog(explored, visible);
-    this.syncHighlights(state, explored);
+    this.syncHighlights(state, explored, playerId);
+    this.syncRoads(state, explored, visible);
     this.syncStructures(state, explored, visible, showToMove, playerId);
     this.syncUnits(state, playerId, visible, !!omniscient, showToMove);
   }
@@ -825,6 +1017,7 @@ export class Renderer3D {
         : B.build_tilePlain(THREE, this.P);
       const { x, z } = hexToWorld(hex);
       tile.position.set(x, 0, z);
+      tile.userData.hexKey = key; // selection-reliability pass — see pickHex
       this.tileGroup.add(tile);
       this.tileMeshes.set(key, tile);
 
@@ -1055,14 +1248,65 @@ export class Renderer3D {
     }
   }
 
-  private syncHighlights(state: GameState, explored: Set<string>): void {
+  private syncHighlights(state: GameState, explored: Set<string>, playerId: number): void {
     const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
-    const attackSet = new Set(state.attackHexes.map(h => hexKey(h)));
+    // Unit targets and structure targets (Capital/City/Temple) share the same
+    // "you can attack this" red highlight — attackUnit vs attackStructure is
+    // resolved by what's actually standing on the tile when clicked.
+    const attackSet = new Set([...state.attackHexes, ...state.structureAttackHexes].map(h => hexKey(h)));
     const buildSet = new Set(state.buildHexes.map(h => hexKey(h)));
+    // Balance pass — Road multi-select: tiles already picked this activation
+    // (as opposed to buildSet above, the NEXT-tile candidates) — highest
+    // priority of all, strong pulsing gold "ghost" tint so a committed
+    // selection reads unmistakably differently from a mere candidate.
+    const roadSelectionSet = new Set(this.roadSelectionHexes.map(h => hexKey(h)));
+    // Farm-placement UX pass — the tentatively-selected Farm hex (pending
+    // Confirm), same priority tier as roadSelectionSet above (both sit just
+    // under nothing — the strongest tint on the board while active).
+    const farmSelectionKey = this.farmSelectionHex ? hexKey(this.farmSelectionHex) : null;
     const supportSet = new Set(state.supportHexes.map(h => hexKey(h)));
+    // §23-25 — a subtle low-priority tan wash under/around every Road tile,
+    // on top of its own real "worn path" model now (see syncRoads) — the
+    // model is what actually makes a Road unmistakable; this flat tint is
+    // just a faint reinforcement, same relationship Farms have with their
+    // own territory/cultivation washes.
+    const roadSet = new Set(this.fogRoads(state.roads, this.frameVisible).map(r => hexKey(r.pos)));
+    // §26 — a lowest-priority amber warning tint on enemy ZOC hexes, so the
+    // player can see WHY a unit's move range stops short before they even
+    // click it, not just infer it from the highlight's shorter-than-expected
+    // edge. Only computed while a unit is selected (matches move/attack/etc,
+    // which are likewise selection-scoped) to avoid a constant board-wide cost.
+    const zocSet = state.selectionMode === 'unit' && state.selectedUnitId
+      ? getZocHexes(state, playerId)
+      : new Set<string>();
+    // Agrar Infrastructure Reach / Cultivated Influence — Farm-UX pass:
+    // shown only for the VIEWER's own Agrar territory, and only while it's
+    // actually useful (a Builder selected, an owned Farm selected, or a
+    // Farm/Road/teleport build mode active via state.buildHexes) — not a
+    // permanent board-wide wash. Two visually distinct rings: infrastructure
+    // reach (radius 2, subtle outer wash — where a new Farm/Road may land)
+    // and cultivated influence (radius 1 from active Farms only, stronger
+    // inner tint — blocks enemy Temple founding/reconstruction) so the
+    // player never has to infer either invisible radius.
+    const territorySet = new Set<string>();
+    const cultivationSet = new Set<string>();
+    const viewerPlayer = state.players.find(p => p.id === playerId);
+    if (viewerPlayer?.faction === 'agrar') {
+      const selectedUnit = state.selectionMode === 'unit' && state.selectedUnitId
+        ? state.units.find(u => u.id === state.selectedUnitId) : undefined;
+      const selectedOwnFarm = state.selectionMode === 'site' && state.selectedSiteId
+        ? state.farms.some(f => f.id === state.selectedSiteId && f.ownerId === playerId) : false;
+      const relevant = state.buildHexes.length > 0
+        || (selectedUnit?.type === 'founder' && selectedUnit.playerId === playerId)
+        || selectedOwnFarm;
+      if (relevant) {
+        for (const key of getAgrarTerritory(state, playerId)) territorySet.add(key);
+        for (const key of getAgrarCultivation(state, playerId)) cultivationSet.add(key);
+      }
+    }
 
     let i = 0;
-    const place = (hex: HexCoord, color: number, opacity: number) => {
+    const place = (hex: HexCoord, color: number, opacity: number, pulse = false) => {
       let mesh = this.highlightPool[i];
       if (!mesh) {
         mesh = new THREE.Mesh(this.highlightGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.4 }));
@@ -1079,80 +1323,526 @@ export class Renderer3D {
       mat.color.setHex(color);
       mat.opacity = opacity;
       mesh.visible = true;
+      // Farm-UX pass (§15/§18) — Farm build-placement hexes pulse continuously
+      // (driven every animation frame in advanceAnimations) instead of sitting
+      // at one flat opacity like every other highlight kind, so legal Farm
+      // cells are unmistakably distinct from ordinary movement/build tints.
+      mesh.userData.pulse = pulse;
+      if (pulse) mesh.userData.pulseBaseOpacity = opacity;
       i++;
     };
 
     for (const hex of this.mapHexes) {
       const key = hexKey(hex);
-      if (!explored.has(key)) continue;
+      // Unexplored hexes get no highlight — except a legal move target: a fast
+      // unit can outrun its own vision, and a move that's allowed but not shown
+      // used to be clickable only by accident.
+      if (!explored.has(key)) {
+        if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
+        continue;
+      }
       // Attackable enemies get a bold red tint. The set comes straight from the
       // engine's state.attackHexes (updateHighlights → getEffectiveRange, fog /
       // forest visibility, hasAttacked & cantShootAfterMove gating) — i.e. the
       // exact legal-target set combat validation uses, never re-derived here.
-      if (attackSet.has(key)) place(hex, 0xff2020, 0.62);
+      if (roadSelectionSet.has(key)) place(hex, 0xffd23f, 0.7, true); // strong pulsing gold "ghost" — committed Road selection
+      else if (farmSelectionKey === key) place(hex, 0xf0ffb0, 0.78, true); // Farm-placement UX pass — much stronger pulse for the tentatively-selected Farm tile, above the plain candidate pulse
+      // Red only where the viewer can see now: a target list from an older server
+      // or rules version must never mark a hex inside the fog.
+      else if (attackSet.has(key) && (!this.frameVisible || this.frameVisible.has(key))) place(hex, 0xff2020, 0.62);
       else if (moveSet.has(key)) place(hex, 0x3cc850, 0.4);
-      else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4);
+      else if (buildSet.has(key) && state.buildKind === 'farm') place(hex, 0x2ee65a, 0.55, true); // pulsating agricultural green — see place()
+      else if (buildSet.has(key) && state.buildKind === 'road') place(hex, 0x22d0ff, 0.5, true); // Road-placement UX pass — pulsing cyan/blue, distinct from Farm's green
+      else if (buildSet.has(key)) place(hex, 0x00c8ff, 0.4); // teleport / fallback
       else if (supportSet.has(key)) place(hex, 0x5096e1, 0.4);
+      else if (roadSet.has(key)) place(hex, 0xb98c50, 0.3);
+      else if (zocSet.has(key)) place(hex, 0xff9a2a, 0.22);
+      // Cultivated Influence (radius 1, active Farms only) is the tighter,
+      // stronger-tinted inner ring; Infrastructure Reach (radius 2, Capital
+      // + Farms) is the subtler outer wash — visually distinct so the two
+      // never get confused despite overlapping (§5 Farm-UX pass).
+      else if (cultivationSet.has(key)) place(hex, 0xa020f0, 0.34);
+      else if (territorySet.has(key)) place(hex, 0xe8401f, 0.2);
     }
     for (; i < this.highlightPool.length; i++) this.highlightPool[i].visible = false;
   }
 
-  private syncStructures(state: GameState, explored: Set<string>, visible: Set<string>, showToMove = false, playerId = -1): void {
-    // Temples the selected unit could step onto (same set / explored gating as the
-    // flat green move highlights in syncHighlights — the temple mesh occludes those
-    // flat tints, which is exactly why we tint the model itself here).
-    const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
-    for (const temple of state.temples) {
-      const key = hexKey(temple.pos);
-      const owner = temple.ownerId !== null ? state.players.find(p => p.id === temple.ownerId) : null;
-      const colorNum = owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral;
-      let entry = this.templeMeshes.get(temple.id);
-      let rebuilt = false;
-      if (!entry || entry.color !== colorNum || entry.level !== temple.level) {
-        if (entry) { this.structureGroup.remove(entry.mesh); this.disposeObject(entry.mesh); }
-        const mesh = buildTemple(colorNum, temple.level);
-        const { x, z } = hexToWorld(temple.pos);
-        mesh.position.set(x, 0, z);
-        this.structureGroup.add(mesh);
-        entry = { mesh, color: colorNum, level: temple.level };
-        this.templeMeshes.set(temple.id, entry);
-        rebuilt = true;
+  // Placeholder visual "tier" fed into the reused buildTemple(color, tier)
+  // model — there's no more level system, but the model's tier scaling is a
+  // convenient existing placeholder for "how developed does this look" (§70
+  // asset-fallback policy: reuse an existing model rather than block on new
+  // art). Capitals render at the top tier; a founding/neutral/ruined site at
+  // the bottom; a completed City/Temple in between.
+  private structureVisualTier(kind: 'capital' | 'neutralOrRuins' | 'founding' | 'completed'): number {
+    switch (kind) {
+      case 'capital': return 10;
+      case 'completed': return 5;
+      case 'founding': return 2;
+      case 'neutralOrRuins': default: return 1;
+    }
+  }
+
+  // ── Fog-of-war memory ──
+
+  // Returns the structures to draw: live ones on visible hexes (and the viewer's
+  // own, which they always know), remembered ones on explored-but-dark hexes.
+  // A structure first seen on a dark hex (built there unseen) stays hidden; one
+  // that vanished from a dark hex (destroyed unseen) stays as last seen until the
+  // hex is visible again.
+  private applyStructureMemory(live: StructureVisual[], state: GameState, visible: Set<string>): RememberedStructure[] {
+    const viewer = this.frameViewer;
+    let shown: RememberedStructure[] = live;
+    if (!this.lastOmniscient) {
+      let memory = this.seenStructs.get(viewer);
+      if (!memory) {
+        // First frame for this viewer (new page load / reconnect): seed from the
+        // explored area so the map isn't empty until everything is re-seen.
+        memory = new Map();
+        this.seenStructs.set(viewer, memory);
+        for (const st of live) if (this.frameExplored?.has(hexKey(st.pos))) memory.set(st.id, { ...st, remembered: true });
       }
-      // Remembered-but-unseen temples dim like the terrain (fading) instead of
-      // staying bright; only currently-visible temples show at full brightness.
+      const own = new Set<string>();
+      for (const c of state.capitals) if (c.playerId === viewer) own.add(c.id);
+      for (const f of state.farms) if (f.ownerId === viewer) own.add(f.id);
+      for (const s of state.strategicSites) if (s.ownerId === viewer) own.add(s.id);
+      for (const f of state.fertileSites) if (f.ownerId === viewer) own.add(f.id);
+
+      const liveIds = new Set(live.map(st => st.id));
+      shown = [];
+      for (const st of live) {
+        const isOwn = own.has(st.id);
+        if (isOwn || visible.has(hexKey(st.pos))) {
+          memory.set(st.id, { ...st, remembered: true, own: isOwn });
+          shown.push(st);
+        } else {
+          const seen = memory.get(st.id);
+          if (seen) shown.push(seen);
+        }
+      }
+      for (const [id, seen] of [...memory]) {
+        if (liveIds.has(id)) continue;
+        if (seen.own || visible.has(hexKey(seen.pos))) memory.delete(id);
+        else shown.push(seen);
+      }
+    }
+    this.prevFarms = this.curFarms;
+    this.curFarms = new Map();
+    for (const st of shown) {
+      if (st.kind === 'farm') this.curFarms.set(st.id, { pos: st.pos, hp: st.hp, maxHp: st.maxHp, colorNum: st.colorNum, live: !st.remembered });
+    }
+    return shown;
+  }
+
+  // Same memory for roads (keyed by hex). Own roads always show their true state.
+  private fogRoads(roads: Road[], visible: Set<string> | null): Road[] {
+    if (!visible || this.lastOmniscient) return roads;
+    const viewer = this.frameViewer;
+    let memory = this.seenRoads.get(viewer);
+    if (!memory) {
+      memory = new Map();
+      this.seenRoads.set(viewer, memory);
+      for (const r of roads) if (this.frameExplored?.has(hexKey(r.pos))) memory.set(hexKey(r.pos), r);
+    }
+    const liveKeys = new Set<string>();
+    const shown: Road[] = [];
+    for (const r of roads) {
+      const key = hexKey(r.pos);
+      liveKeys.add(key);
+      if (r.ownerId === viewer || visible.has(key)) { memory.set(key, r); shown.push(r); }
+      else { const seen = memory.get(key); if (seen) shown.push(seen); }
+    }
+    for (const [key, r] of [...memory]) {
+      if (liveKeys.has(key)) continue;
+      if (r.ownerId === viewer || visible.has(key)) memory.delete(key);
+      else shown.push(r);
+    }
+    return shown;
+  }
+
+  // ── Farm destruction ──
+
+  // Called when a structure mesh is about to be removed. If it is a built farm
+  // the viewer watched get destroyed, takes over the mesh and plays the effect;
+  // otherwise returns false and the caller disposes the mesh as before.
+  private startFarmCollapse(id: string, building: THREE.Object3D): boolean {
+    const farm = this.prevFarms.get(id);
+    if (!farm || !farm.live || !(farm.maxHp > 0) || !this.frameVisible?.has(hexKey(farm.pos))) return false;
+    const bar = this.structHpBars.get(id);
+    if (bar) bar.group.parent?.remove(bar.group);
+
+    const now = performance.now();
+    const { x, z } = hexToWorld(farm.pos);
+    const group = new THREE.Group();
+    group.position.set(x, 0, z);
+    this.overlayGroup.add(group);
+    this.structureGroup.remove(building);
+    building.position.set(0, 0, 0);
+    group.add(building);
+
+    // Private, fadeable copies of the building's (possibly shared) materials.
+    const buildingMats: THREE.Material[] = [];
+    building.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !m.material) return;
+      const list = (Array.isArray(m.material) ? m.material : [m.material]).map(mat => {
+        const c = mat.clone();
+        c.transparent = true;
+        buildingMats.push(c);
+        return c;
+      });
+      m.material = Array.isArray(m.material) ? list : list[0]!;
+    });
+
+    // Debris: straw, timber, crop green and the owner's colour.
+    const box = new THREE.BoxGeometry(0.14, 0.14, 0.14);
+    const colours = [0xe8c35a, 0xc99f4a, 0x8b5a2b, 0x6b4423, 0x6fa84b, farm.colorNum];
+    const debris: FarmCollapse['debris'] = [];
+    for (let i = 0; i < 18; i++) {
+      const mat = new THREE.MeshStandardMaterial({ color: colours[i % colours.length], roughness: 0.9, metalness: 0, transparent: true });
+      const mesh = new THREE.Mesh(box, mat);
+      const angle = (i / 18) * Math.PI * 2 + Math.random() * 0.5;
+      const speed = 1.4 + Math.random() * 2.2;
+      mesh.position.set((Math.random() - 0.5) * 0.4, 0.25 + Math.random() * 0.3, (Math.random() - 0.5) * 0.4);
+      mesh.scale.setScalar(0.6 + Math.random() * 0.9);
+      mesh.visible = false;
+      group.add(mesh);
+      debris.push({
+        mesh, mat,
+        vel: new THREE.Vector3(Math.cos(angle) * speed, 2.6 + Math.random() * 2.8, Math.sin(angle) * speed),
+        spin: new THREE.Vector3(Math.random() * 9, Math.random() * 9, Math.random() * 9),
+        bounced: false,
+      });
+    }
+
+    const puff = new THREE.SphereGeometry(0.32, 8, 6);
+    const smoke: FarmCollapse['smoke'] = [];
+    for (let i = 0; i < 8; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: i % 2 ? 0x6b6b6b : 0x5a5a5a, transparent: true, opacity: 0, depthWrite: false });
+      const mesh = new THREE.Mesh(puff, mat);
+      mesh.position.set((Math.random() - 0.5) * 0.6, 0.2, (Math.random() - 0.5) * 0.6);
+      mesh.visible = false;
+      group.add(mesh);
+      smoke.push({ mesh, mat, delay: 150 + i * 85, drift: new THREE.Vector3((Math.random() - 0.5) * 0.5, 1 + Math.random() * 0.6, (Math.random() - 0.5) * 0.5) });
+    }
+
+    const spark = new THREE.SphereGeometry(0.045, 5, 4);
+    const embers: FarmCollapse['embers'] = [];
+    for (let i = 0; i < 14; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: i % 3 ? 0xff8a2a : 0xffdc66, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      const mesh = new THREE.Mesh(spark, mat);
+      mesh.position.set((Math.random() - 0.5) * 0.5, 0.3, (Math.random() - 0.5) * 0.5);
+      mesh.visible = false;
+      group.add(mesh);
+      embers.push({ mesh, mat, vel: new THREE.Vector3((Math.random() - 0.5) * 1.2, 1.2 + Math.random() * 1.8, (Math.random() - 0.5) * 1.2), life: 900 + Math.random() * 700 });
+    }
+
+    // Scorched hex left on the ground (a 6-segment disc is a hexagon).
+    const scorchMat = new THREE.MeshBasicMaterial({ color: 0x2a1d12, transparent: true, opacity: 0, depthWrite: false });
+    const scorch = new THREE.Mesh(new THREE.RingGeometry(0, 0.86, 6), scorchMat);
+    scorch.rotation.x = -Math.PI / 2;
+    scorch.rotation.z = Math.PI / 6;
+    scorch.position.y = (this.lastState ? this.elevationAt(this.lastState, farm.pos) : 0) + 0.03;
+    group.add(scorch);
+
+    // The final blow never reaches detectHits (the farm is already gone from
+    // the state), so the impact flash and shockwaves are fired here.
+    this.startHitAnimation(farm.pos, 0, Math.max(8, farm.hp || 8));
+    this.startShockwave(farm.pos, 0);
+    this.startShockwave(farm.pos, 200);
+
+    this.farmCollapses.push({ start: now, last: now, group, building, buildingMats, debris, smoke, embers, scorchMat });
+    return true;
+  }
+
+  private updateFarmCollapses(now: number): void {
+    this.farmCollapses = this.farmCollapses.filter(fx => {
+      const t = now - fx.start;
+      const dt = Math.min((now - fx.last) / 1000, 0.05);
+      fx.last = now;
+      if (t >= FARM_COLLAPSE_MS) {
+        this.overlayGroup.remove(fx.group);
+        this.disposeObject(fx.group);
+        return false;
+      }
+
+      // Building: shudder and pop, then crumple into the ground and fade.
+      const b = fx.building;
+      if (b.visible) {
+        if (t < 170) {
+          const k = 1 - t / 170;
+          b.position.set((Math.random() - 0.5) * 0.09 * k, 0, (Math.random() - 0.5) * 0.09 * k);
+          b.scale.setScalar(1 + 0.08 * Math.sin((t / 170) * Math.PI));
+        } else if (t < 1150) {
+          const k = Math.min((t - 170) / 730, 1);
+          const e = k * k * k;
+          b.position.set(0, -0.18 * e, 0);
+          b.scale.set(1 + 0.25 * e, Math.max(0.06, 1 - 0.94 * e), 1 + 0.25 * e);
+          b.rotation.z = 0.22 * e;
+          b.rotation.x = -0.12 * e;
+          const opacity = t < 650 ? 1 : Math.max(0, 1 - (t - 650) / 500);
+          for (const m of fx.buildingMats) m.opacity = opacity;
+        } else {
+          b.visible = false;
+        }
+      }
+
+      // Debris: thrown out, falls, bounces once, slides to a stop, fades.
+      for (const d of fx.debris) {
+        if (t < 110) continue;
+        d.mesh.visible = true;
+        d.vel.y -= 9.8 * dt;
+        d.mesh.position.addScaledVector(d.vel, dt);
+        d.mesh.rotation.x += d.spin.x * dt;
+        d.mesh.rotation.y += d.spin.y * dt;
+        d.mesh.rotation.z += d.spin.z * dt;
+        if (d.mesh.position.y < 0.04) {
+          d.mesh.position.y = 0.04;
+          if (d.bounced) { d.vel.set(d.vel.x * 0.6, 0, d.vel.z * 0.6); d.spin.multiplyScalar(0.7); }
+          else { d.vel.y = -d.vel.y * 0.32; d.vel.x *= 0.7; d.vel.z *= 0.7; d.bounced = true; }
+        }
+        d.mat.opacity = t < 1700 ? 1 : Math.max(0, 1 - (t - 1700) / 900);
+      }
+
+      // Smoke: rises, swells and thins out.
+      for (const p of fx.smoke) {
+        const a = t - p.delay;
+        if (a < 0) continue;
+        const k = Math.min(a / 1600, 1);
+        p.mesh.visible = k < 1;
+        p.mesh.position.addScaledVector(p.drift, dt * 0.9);
+        p.mesh.scale.setScalar(0.45 + k * 1.5);
+        p.mat.opacity = 0.36 * (1 - k) * (1 - k) * Math.min(a / 120, 1);
+      }
+
+      // Embers: float up and flicker out.
+      for (const p of fx.embers) {
+        const a = t - 120;
+        if (a < 0) continue;
+        const k = a / p.life;
+        p.mesh.visible = k < 1;
+        p.vel.y -= 0.6 * dt;
+        p.mesh.position.addScaledVector(p.vel, dt);
+        p.mat.opacity = k < 1 ? (1 - k) * (0.6 + 0.4 * Math.sin(a * 0.05 + p.life)) : 0;
+      }
+
+      // Scorch mark: appears as the dust settles, lingers, fades.
+      fx.scorchMat.opacity = t < 300 ? 0 : t < 520 ? 0.62 * (t - 300) / 220 : t < 2600 ? 0.62 : Math.max(0, 0.62 * (1 - (t - 2600) / 2000));
+      return true;
+    });
+  }
+
+
+  // Placement-UX pass — a built Road previously had no 3D presence at all
+  // (just a faint flat ground tint, §23-25 — easy to lose among the other
+  // placement-mode highlight tints layered on top of it). Every Road tile
+  // now also gets a real, low-profile "worn path" model, same pooled/keyed-
+  // by-position pattern as the structure loop below, so it reads clearly
+  // regardless of what highlight happens to be drawn over the same hex.
+  private syncRoads(state: GameState, explored: Set<string>, visible: Set<string>): void {
+    const roads = this.fogRoads(state.roads, visible);
+    const liveKeys = new Set(roads.map(r => hexKey(r.pos)));
+    for (const [key, mesh] of this.roadMeshes) {
+      if (liveKeys.has(key)) continue;
+      this.overlayGroup.remove(mesh);
+      this.disposeObject(mesh);
+      this.roadMeshes.delete(key);
+      this.structFogState.delete('R' + key);
+    }
+    for (const road of roads) {
+      const key = hexKey(road.pos);
+      if (!explored.has(key)) continue;
+      let mesh = this.roadMeshes.get(key);
+      if (!mesh) {
+        mesh = buildRoadModel();
+        const { x, z } = hexToWorld(road.pos);
+        mesh.position.set(x, this.elevationAt(state, road.pos), z);
+        this.overlayGroup.add(mesh);
+        this.roadMeshes.set(key, mesh);
+      }
+      const want = visible.has(key) ? 'lit' : 'dark';
+      this.applyStructFog(mesh, 'R' + key, want, false);
+    }
+  }
+
+  private syncStructures(state: GameState, explored: Set<string>, visible: Set<string>, showToMove = false, playerId = -1): void {
+    // Structures the selected unit could step onto (same set / explored gating
+    // as the flat green move highlights in syncHighlights — the structure mesh
+    // occludes those flat tints, which is exactly why we tint the model itself here).
+    const moveSet = new Set(state.moveHexes.map(h => hexKey(h)));
+    // Structures the selected unit could ATTACK right now — same idea, same
+    // reason (see structureAttackTintIds above). Unit-vs-unit attacks don't
+    // need this (units are small enough that the flat highlight under them
+    // stays visible), only structureAttackHexes.
+    const attackableStructSet = new Set(state.structureAttackHexes.map(h => hexKey(h)));
+
+    const structures: StructureVisual[] = [];
+    for (const capital of state.capitals as Capital[]) {
+      const owner = state.players.find(p => p.id === capital.playerId);
+      structures.push({
+        id: capital.id, pos: capital.pos, kind: 'capital',
+        tier: this.structureVisualTier('capital'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
+        canPendingFound: false,
+        hp: capital.hp, maxHp: capital.maxHp,
+        // Faction-specific Capital model (voxelCapital.ts) — null until the
+        // owner's pick is revealed, which keeps the shared ziggurat.
+        faction: owner?.faction ?? null,
+      });
+    }
+    for (const site of state.strategicSites as StrategicSite[]) {
+      const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
+      const foundingOwner = site.founding ? state.players.find(p => p.id === site.founding!.playerId) : null;
+      const isCompleted = site.state === 'temple' || site.state === 'upgradingTemple';
+      const isFounding = site.state === 'foundingTemple';
+      structures.push({
+        id: site.id, pos: site.pos, kind: 'site',
+        tier: this.structureVisualTier(isCompleted ? 'completed' : isFounding ? 'founding' : 'neutralOrRuins'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex()
+          : foundingOwner ? new THREE.Color(foundingOwner.color).getHex()
+          : this.P.colors.neutral,
+        canPendingFound: site.state === 'neutral' || site.state === 'ruins',
+        hp: site.hp, maxHp: site.maxHp,
+        faction: null,
+      });
+    }
+    // Farms — Agrar's physical income buildings, own dedicated low-profile
+    // model (voxelFarm.ts) with a 3-stage damage look driven by HP fraction.
+    for (const farm of state.farms as Farm[]) {
+      const owner = state.players.find(p => p.id === farm.ownerId);
+      structures.push({
+        id: farm.id, pos: farm.pos, kind: 'farm',
+        tier: this.structureVisualTier('founding'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
+        canPendingFound: false,
+        hp: farm.hp, maxHp: farm.maxHp,
+        faction: null,
+      });
+    }
+
+    // Fertile Sites (v14, Agrar-vs-Agrar only — empty array otherwise): a
+    // pure occupation objective, so unlike everything else here it has no
+    // HP/maxHp at all (hp:0 skips the HP-bar block below, matching its
+    // "no combat, presence-only" design).
+    for (const site of state.fertileSites as FertileSite[]) {
+      const owner = site.ownerId !== null ? state.players.find(p => p.id === site.ownerId) : null;
+      structures.push({
+        id: site.id, pos: site.pos, kind: 'fertile',
+        tier: this.structureVisualTier('founding'),
+        colorNum: owner ? new THREE.Color(owner.color).getHex() : this.P.colors.neutral,
+        canPendingFound: false,
+        hp: 0, maxHp: 0,
+        faction: null,
+      });
+    }
+
+    // Fog of war: out-of-vision hexes show what this viewer last saw.
+    const shown = this.applyStructureMemory(structures, state, visible);
+    structures.length = 0;
+    structures.push(...shown);
+
+    // Farms are the only structure that can vanish outright (destroyed, not
+    // Ruins) — prune any mesh whose id no longer appears in the live state.
+    // A farm destroyed in plain sight hands its mesh to the collapse effect.
+    const liveIds = new Set(structures.map(s => s.id));
+    for (const [id, entry] of this.structureMeshes) {
+      if (liveIds.has(id)) continue;
+      if (!this.startFarmCollapse(id, entry.mesh)) {
+        this.structureGroup.remove(entry.mesh);
+        this.disposeObject(entry.mesh);
+      }
+      this.structureMeshes.delete(id);
+      this.structureTintIds.delete(id);
+      this.structureAttackTintIds.delete(id);
+      const bar = this.structHpBars.get(id);
+      if (bar) { this.disposeObject(bar.group); this.structHpBars.delete(id); }
+      this.structFlashUntil.delete(id);
+    }
+
+    for (const st of structures) {
+      const key = hexKey(st.pos);
+      // Coarse 3-stage damage look (structure combat pass §11/§26): above
+      // 66% HP = normal, 33-66% = damaged, below 33% = heavily damaged. Only
+      // meaningful once a structure actually has HP (maxHp > 0) — a
+      // neutral/founding site's tier already carries that distinction.
+      const stage: number = st.maxHp <= 0 ? 0 : st.hp / st.maxHp > 0.66 ? 0 : st.hp / st.maxHp > 0.33 ? 1 : 2;
+      let entry = this.structureMeshes.get(st.id);
+      let rebuilt = false;
+      if (!entry || entry.color !== st.colorNum || entry.level !== st.tier || entry.faction !== st.faction || (st.kind === 'farm' && entry.stage !== stage)) {
+        if (entry) { this.structureGroup.remove(entry.mesh); this.disposeObject(entry.mesh); }
+        const mesh = st.kind === 'farm' ? buildFarm(st.colorNum, stage as 0 | 1 | 2)
+          : st.kind === 'fertile' ? buildFertileSite(st.colorNum === this.P.colors.neutral ? null : st.colorNum)
+          : st.kind === 'capital' ? buildCapital(st.colorNum, st.faction)
+          : buildTemple(st.colorNum, st.tier);
+        const { x, z } = hexToWorld(st.pos);
+        mesh.position.set(x, 0, z);
+        mesh.userData.hexKey = key; // selection-reliability — see pickHex
+        this.structureGroup.add(mesh);
+        entry = { mesh, color: st.colorNum, level: st.tier, stage, faction: st.faction };
+        this.structureMeshes.set(st.id, entry);
+        rebuilt = true;
+      } else {
+        entry.stage = stage;
+      }
+      // Remembered-but-unseen structures dim like the terrain (fading) instead
+      // of staying bright; only currently-visible structures show at full brightness.
       const want = visible.has(key) ? 'lit' : explored.has(key) ? 'dark' : 'hidden';
-      this.applyStructFog(entry.mesh, 'T' + temple.id, want, rebuilt);
+      this.applyStructFog(entry.mesh, 'T' + st.id, want, rebuilt);
+
+      // Structure HP bar (§10) — a small billboarded bar above the model,
+      // same visual language as unit HP bars. Visible while damaged, while
+      // this structure is the current site selection, or briefly after a
+      // hit (structFlashUntil, set in detectHits) — never on a pristine,
+      // unselected structure (avoids cluttering an otherwise clean board).
+      if (st.maxHp > 0) {
+        let bar = this.structHpBars.get(st.id);
+        if (!bar || rebuilt) {
+          if (bar) this.disposeObject(bar.group);
+          bar = this.addStructHpBar(entry.mesh, st.id, st.kind);
+        }
+        const isSelected = state.selectionMode === 'site' && state.selectedSiteId === st.id;
+        const recentlyHit = this.structFlashUntil.has(st.id);
+        this.updateStructHpBar(st.id, st.hp, st.maxHp, isSelected || recentlyHit);
+      }
 
       // Warm-yellow tint (emissive pulsed in advanceAnimations, same phase as the
       // unit to-move tint):
       //   (a) a reachable move destination for the selected unit — explored-gated
       //       exactly like the flat move highlights.
-      //   (b) a local unit stands on it with a pending capture — gated like the
-      //       unit to-move tint (own unit, viewer's turn). Rare with auto-capture,
-      //       kept for legacy/edge states.
+      //   (b) a local Builder/Acolyte stands on it and could start founding —
+      //       gated like the unit to-move tint (own unit, viewer's turn).
+      // Red "attackable" tint takes priority — checked first, and skips the
+      // warm-yellow logic entirely when it applies (see structureAttackTintIds).
+      const attackable = visible.has(key) && attackableStructSet.has(key);
+      if (attackable) {
+        this.structureAttackTintIds.add(st.id);
+        if (this.structureTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
+        continue;
+      }
+      if (this.structureAttackTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
+
       const tintA = explored.has(key) && moveSet.has(key);
       let tintB = false;
-      if (showToMove) {
-        const u = getUnitAt(state, temple.pos);
-        tintB = !!u && u.playerId === playerId && canCaptureTemple(state, u) !== null;
+      if (showToMove && st.canPendingFound) {
+        const u = getUnitAt(state, st.pos);
+        tintB = !!u && u.playerId === playerId && canStartFounding(state, u) !== null;
       }
-      if (tintA || tintB) this.templeTintIds.add(temple.id);
-      else if (this.templeTintIds.delete(temple.id)) this.setTempleEmissive(entry.mesh, null);
+      if (tintA || tintB) this.structureTintIds.add(st.id);
+      else if (this.structureTintIds.delete(st.id)) this.setStructureEmissive(entry.mesh, null);
     }
 
-    // Position the rotating pointer over the selected temple.
-    const selId = state.selectionMode === 'temple' ? state.selectedTempleId : null;
-    const selTemple = selId ? state.temples.find(t => t.id === selId) : null;
-    if (this.templePointer) {
-      if (selTemple) {
-        const { x, z } = hexToWorld(selTemple.pos);
-        const entry = this.templeMeshes.get(selTemple.id);
+    // Position the rotating pointer over the selected structure.
+    const selId = state.selectionMode === 'site' ? state.selectedSiteId : null;
+    const selStructure = selId ? structures.find(s => s.id === selId) : null;
+    if (this.structurePointer) {
+      if (selStructure) {
+        const { x, z } = hexToWorld(selStructure.pos);
+        const entry = this.structureMeshes.get(selStructure.id);
         const topY = entry ? new THREE.Box3().setFromObject(entry.mesh).max.y : 2.4;
-        this.templePointerBaseY = topY + 0.5;
-        this.templePointer.position.set(x, this.templePointerBaseY, z);
-        this.templePointer.visible = true;
+        this.structurePointerBaseY = topY + 0.5;
+        this.structurePointer.position.set(x, this.structurePointerBaseY, z);
+        this.structurePointer.visible = true;
       } else {
-        this.templePointer.visible = false;
+        this.structurePointer.visible = false;
       }
     }
 
@@ -1175,8 +1865,8 @@ export class Renderer3D {
     }
   }
 
-  private buildUnitMesh(unit: Unit, colorNum: number): THREE.Object3D {
-    const wrap = buildUnitModel(unit.type, colorNum);
+  private buildUnitMesh(unit: Unit, colorNum: number, faction?: FactionId | null): THREE.Object3D {
+    const wrap = buildUnitModel(unit.type, colorNum, faction);
     // Support units get pulsating range "circles" (rings only — tiles inside are
     // NOT highlighted). Green = healer, orange = damage, cyan = range.
     // Radius of the N-tile ring in world units (linear in tile count).
@@ -1216,6 +1906,7 @@ export class Renderer3D {
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.y = 0.07;
       mesh.userData.baseOpacity = ring.op;
+      mesh.raycast = () => {}; // decorative only — see pickHex's unit/structure raycast
       wrap.add(mesh);
       meshes.push(mesh);
     }
@@ -1243,6 +1934,7 @@ export class Renderer3D {
     fg.renderOrder = 999;
     group.add(fg);
 
+    group.traverse(o => { o.raycast = () => {}; }); // decorative only — see pickHex's unit/structure raycast
     parent.add(group);
     this.unitHpBars.set(unitId, { group, fg, barW });
   }
@@ -1270,7 +1962,7 @@ export class Renderer3D {
   // setUnitEmissive, but temples ship their own emissive glows (team-tinted
   // niches, cyan magic core), so each material's original emissive is captured
   // on first tint and restored when the tint clears — never left black.
-  private setTempleEmissive(mesh: THREE.Object3D, rgb: [number, number, number] | null): void {
+  private setStructureEmissive(mesh: THREE.Object3D, rgb: [number, number, number] | null): void {
     mesh.traverse(o => {
       const m = o as THREE.Mesh;
       if (!m.isMesh || !m.material) return;
@@ -1305,6 +1997,52 @@ export class Renderer3D {
     (bar.fg.material as THREE.MeshBasicMaterial).color.setHex(c);
   }
 
+  // Floating HP bar above a structure (Capital/Temple/Farm) — same visual
+  // language as addHpBar, just a taller offset for the bigger models and a
+  // wider bar for the Capital/Temple's larger footprint (structure combat
+  // pass §10).
+  private addStructHpBar(parent: THREE.Object3D, id: string, kind: 'capital' | 'site' | 'farm' | 'fertile'): { group: THREE.Group; fg: THREE.Mesh; barW: number; yOffset: number } {
+    const barW = kind === 'farm' ? 0.9 : 1.15, barH = 0.15;
+    const yOffset = kind === 'farm' ? 0.85 : kind === 'capital' ? 3.4 : 2.6;
+    const group = new THREE.Group();
+    group.position.y = yOffset;
+
+    const bg = new THREE.Mesh(
+      new THREE.PlaneGeometry(barW + 0.06, barH + 0.06),
+      new THREE.MeshBasicMaterial({ color: 0x101014, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false }),
+    );
+    bg.renderOrder = 998;
+    group.add(bg);
+
+    const fg = new THREE.Mesh(
+      new THREE.PlaneGeometry(barW, barH),
+      new THREE.MeshBasicMaterial({ color: 0x44cc44, transparent: true, depthTest: false, depthWrite: false }),
+    );
+    fg.position.z = 0.001;
+    fg.renderOrder = 999;
+    group.add(fg);
+
+    group.traverse(o => { o.raycast = () => {}; }); // decorative only — see pickHex's unit/structure raycast
+    parent.add(group);
+    const bar = { group, fg, barW, yOffset };
+    this.structHpBars.set(id, bar);
+    return bar;
+  }
+
+  // `forceVisible` covers "currently selected" and "recently hit" (structure
+  // combat pass §10) — otherwise the bar only shows once actually damaged,
+  // same rule as units, so a pristine board stays uncluttered.
+  private updateStructHpBar(id: string, hp: number, maxHp: number, forceVisible: boolean): void {
+    const bar = this.structHpBars.get(id);
+    if (!bar) return;
+    bar.group.visible = forceVisible || hp < maxHp;
+    const ratio = Math.max(0, Math.min(1, hp / maxHp));
+    bar.fg.scale.x = Math.max(0.0001, ratio);
+    bar.fg.position.x = (-bar.barW * (1 - ratio)) / 2;
+    const c = ratio > 0.5 ? 0x44cc44 : ratio > 0.25 ? 0xcccc44 : 0xcc4444;
+    (bar.fg.material as THREE.MeshBasicMaterial).color.setHex(c);
+  }
+
   // Spawn a hit explosion wherever a unit lost HP since the last render — covers
   // your attacks, splash, revenge damage, AND enemy attacks, uniformly.
   private detectHits(state: GameState, playerId: number, visible: Set<string>, omniscient: boolean): void {
@@ -1319,9 +2057,43 @@ export class Renderer3D {
       this.lastUnitHp.set(unit.id, unit.hp);
     }
     for (const id of [...this.lastUnitHp.keys()]) if (!alive.has(id)) this.lastUnitHp.delete(id);
+
+    // Structure combat pass — same hit-detection treatment for Capital/
+    // Temple/Farm: a flash+spark burst on hit, and a brief red emissive
+    // flash on the model itself (destruction, if any, follows from the
+    // normal structure sync — a Farm vanishes, a Temple/Capital just sits
+    // there at 0/low HP until its state actually changes).
+    const structAlive = new Set<string>();
+    const structHits: { id: string; pos: HexCoord; dmg: number }[] = [];
+    const noteStruct = (id: string, pos: HexCoord, hp: number) => {
+      structAlive.add(id);
+      const prev = this.lastStructHp.get(id);
+      if (prev !== undefined && hp < prev && (omniscient || visible.has(hexKey(pos)))) {
+        structHits.push({ id, pos: { ...pos }, dmg: prev - hp });
+      }
+      this.lastStructHp.set(id, hp);
+    };
+    for (const capital of state.capitals) noteStruct(capital.id, capital.pos, capital.hp);
+    for (const site of state.strategicSites) {
+      if (site.state === 'temple' || site.state === 'upgradingTemple') noteStruct(site.id, site.pos, site.hp);
+    }
+    for (const farm of state.farms) if (farm.state === 'farm') noteStruct(farm.id, farm.pos, farm.hp);
+    for (const id of [...this.lastStructHp.keys()]) if (!structAlive.has(id)) this.lastStructHp.delete(id);
+    for (const h of structHits) {
+      this.startHitAnimation(h.pos, 0, h.dmg);
+      this.structFlashUntil.set(h.id, performance.now() + 260);
+    }
+
     // Split the explosions in time: the struck enemy first, your unit's hit-back after.
+    // Capped, not linear — an AI turn resolves (and calls render()) only once at
+    // the end, so a busy turn can land dozens of hits in a single detectHits()
+    // pass; an uncapped `i * 260ms` stagger turned that into a barrage that took
+    // over a minute to finish playing out, reading as a stuck/"permanent"
+    // explosion loop. Past MAX_HIT_STAGGER hits, the rest fire together with the
+    // last wave instead of the delay growing without bound.
+    const MAX_HIT_STAGGER = 4;
     hits.sort((a, b) => Number(a.mine) - Number(b.mine));
-    hits.forEach((h, i) => this.startHitAnimation(h.pos, i * 260, h.dmg));
+    hits.forEach((h, i) => this.startHitAnimation(h.pos, Math.min(i, MAX_HIT_STAGGER) * 260, h.dmg));
     // Splash/AoE: when one attack damages 2+ enemy units, add an expanding ground
     // ring centred on the hardest-hit tile so the area effect reads clearly.
     const enemyHits = hits.filter(h => !h.mine);
@@ -1341,15 +2113,19 @@ export class Renderer3D {
       if (!omniscient && unit.playerId !== playerId && !isForestUnitRevealed(state, unit.pos, playerId)) continue;
       seen.add(unit.id);
 
+      const player = state.players.find(p => p.id === unit.playerId)!;
       let mesh = this.unitMeshes.get(unit.id);
       if (!mesh) {
-        const player = state.players.find(p => p.id === unit.playerId)!;
         const colorNum = new THREE.Color(player.color).getHex();
         // The model lives in an inner "facer" group that we rotate to face the
         // unit's heading; the outer group carries position + the HP bar (so the
         // billboarded HP bar never inherits the unit's facing rotation).
-        const model = this.buildUnitMesh(unit, colorNum);
-        const off = forwardOffset(unit.type);
+        const model = this.buildUnitMesh(unit, colorNum, player.faction);
+        // A new unit spawns facing the camera (a static one-off — units keep
+        // whatever way they last moved/attacked afterwards; they do NOT track
+        // the camera, that read as staring at the player).
+        const w0 = hexToWorld(unit.pos);
+        const off = Math.atan2(this.camera.position.x - w0.x, this.camera.position.z - w0.z) + forwardOffset(unit.type, player.faction);
         model.rotation.y = off;
         mesh = new THREE.Group();
         mesh.add(model);
@@ -1372,23 +2148,35 @@ export class Renderer3D {
       // forest (not revealed to the enemy); solid once spotted.
       this.applyForestFade(state, unit, mesh, playerId, omniscient);
 
-      let pos = hexToWorld(unit.pos);
-      let elev = this.elevationAt(state, unit.pos);
+      // Capital occupancy is tracked purely for advanceAnimations' per-frame
+      // camera-follow (see getDisplayHexPos) — never read for anything
+      // gameplay-affecting, which all keeps reading unit.pos straight off
+      // GameState like before.
+      const onCapital = state.capitals.some(c => hexKey(c.pos) === key) || state.fertileSites.some(f => hexKey(f.pos) === key);
+      if (onCapital) this.capitalOccupants.set(unit.id, { ...unit.pos });
+      else if (this.capitalOccupants.delete(unit.id)) this.capitalOccupantAngle.delete(unit.id);
+
+      let { x, y, z } = this.getDisplayHexPos(state, unit.pos, unit.id);
       const anim = this.moveAnims.get(unit.id);
       if (anim) {
         const t = Math.min((now - anim.start) / MOVE_ANIM_MS, 1);
         const ease = 1 - Math.pow(1 - t, 3);
-        const from = hexToWorld(anim.from);
-        pos = { x: from.x + (pos.x - from.x) * ease, z: from.z + (pos.z - from.z) * ease };
-        const fromElev = this.elevationAt(state, anim.from);
-        elev = fromElev + (elev - fromElev) * ease;
-        // Face the direction of travel.
-        const dx = hexToWorld(unit.pos).x - from.x, dz = hexToWorld(unit.pos).z - from.z;
+        const from = this.getDisplayHexPos(state, anim.from, unit.id);
+        x = from.x + (x - from.x) * ease;
+        y = from.y + (y - from.y) * ease;
+        z = from.z + (z - from.z) * ease;
+        // Face the direction of travel — always the LOGICAL hex-to-hex
+        // direction, regardless of either endpoint's display offset (facing
+        // and display position are separate concepts, see getDisplayHexPos).
+        const fromLogical = hexToWorld(anim.from);
+        const toLogical = hexToWorld(unit.pos);
+        const dx = toLogical.x - fromLogical.x, dz = toLogical.z - fromLogical.z;
         const f = this.unitFacing.get(unit.id);
-        if (f && (dx || dz)) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type);
+        if (f && (dx || dz)) f.tgt = Math.atan2(dx, dz) + forwardOffset(unit.type, player.faction);
         if (t >= 1) this.moveAnims.delete(unit.id);
       }
-      mesh.position.set(pos.x, elev, pos.z);
+      mesh.position.set(x, y, z);
+      mesh.userData.hexKey = key; // selection-reliability — see pickHex
       mesh.visible = true;
     }
     // Remove meshes for units that died / went out of view.
@@ -1401,17 +2189,67 @@ export class Renderer3D {
         this.unitHpBars.delete(id);
         this.toMoveTintIds.delete(id);
         this.unitFacing.delete(id);
+        this.capitalOccupants.delete(id);
+        this.capitalOccupantAngle.delete(id);
         this.unitFaded.delete(id);
       }
     }
   }
 
-  // y offset for a unit standing on this tile: lifted on hills, perched on temples.
+  // y offset for a unit standing on this tile: lifted on hills, perched on structures.
   private elevationAt(state: GameState, pos: HexCoord): number {
     const k = hexKey(pos);
     let y = state.hills.has(k) ? HILL_ELEV : 0;
-    if (state.temples.some(t => hexKey(t.pos) === k)) y = Math.max(y, TEMPLE_ELEV);
+    const onStructure = state.capitals.some(c => hexKey(c.pos) === k) || state.strategicSites.some(s => hexKey(s.pos) === k);
+    if (onStructure) y = Math.max(y, STRUCTURE_ELEV);
     return y;
+  }
+
+  // THE canonical world position a unit should actually render at for a
+  // given LOGICAL hex — never used to change occupancy/movement/combat/ZOC
+  // (those all keep reading the real hex straight off GameState). Every
+  // normal hex just resolves to its center, same as hexToWorld + elevationAt
+  // always did. A Capital hex is the one exception: Polytopia-style, the
+  // occupant renders toward the camera-facing side of that SAME tile instead
+  // of perched on the Capital's steps, so it reads clearly in front of the
+  // building instead of buried behind/inside it. Movement animations, HP
+  // bars, support auras, and spawn all go through this one function (see its
+  // callers in syncUnits/advanceAnimations) so nothing computes a separate,
+  // possibly-inconsistent Capital offset of its own.
+  private getDisplayHexPos(state: GameState, hex: HexCoord, unitId: string): { x: number; y: number; z: number } {
+    // Capitals AND Fertile Sites (the Sacred Oak) are tall landmarks that
+    // would swallow a unit standing on them — both get the foreground offset.
+    const landmark = state.capitals.some(c => hexKey(c.pos) === hexKey(hex)) || state.fertileSites.some(f => hexKey(f.pos) === hexKey(hex));
+    const { x: cx, z: cz } = hexToWorld(hex);
+    if (!landmark) return { x: cx, y: this.elevationAt(state, hex), z: cz };
+    const angle = this.smoothedCapitalOccupantAngle(unitId, cx, cz);
+    const off = CAPITAL_OCCUPANT_OFFSET * HEX_R;
+    const groundY = (state.hills.has(hexKey(hex)) ? HILL_ELEV : 0) + CAPITAL_OCCUPANT_Y_EPSILON;
+    return { x: cx + Math.sin(angle) * off, y: groundY, z: cz + Math.cos(angle) * off };
+  }
+
+  // The camera-relative "foreground" angle (radians, same atan2(dx,dz)
+  // convention as unit facing elsewhere) for a Capital occupant, smoothed
+  // toward the camera's TRUE current angle each call rather than snapping —
+  // so orbiting the camera glides the unit around the tile instead of
+  // popping. A unit's first-ever call resolves directly to the true angle
+  // (nothing to smooth from yet), which is what keeps a freshly spawned/
+  // deployed/arrived unit from ever rendering buried for even one frame.
+  private smoothedCapitalOccupantAngle(unitId: string, capX: number, capZ: number): number {
+    const target = Math.atan2(this.camera.position.x - capX, this.camera.position.z - capZ);
+    const prev = this.capitalOccupantAngle.get(unitId);
+    if (prev === undefined) {
+      this.capitalOccupantAngle.set(unitId, target);
+      return target;
+    }
+    const now = performance.now();
+    const dt = Math.min((now - this.lastCapitalAngleNow) / 1000, 0.1);
+    this.lastCapitalAngleNow = now;
+    const step = CAPITAL_OCCUPANT_TURN_SPEED * dt;
+    const delta = Math.atan2(Math.sin(target - prev), Math.cos(target - prev)); // shortest path
+    const next = Math.abs(delta) <= step ? target : prev + Math.sign(delta) * step;
+    this.capitalOccupantAngle.set(unitId, next);
+    return next;
   }
 
   // Fade the viewer's own units while hidden in a forest (not revealed to the
@@ -1438,11 +2276,26 @@ export class Renderer3D {
   // ── render loop + animation ──
 
   private startLoop(): void {
+    this.renderer.info.autoReset = false; // count the board + HUD passes of one frame together (see perfInfo)
+    let frameNo = 0;
     const tick = () => {
+      requestAnimationFrame(tick);
+      // Hidden behind the full-screen menu: draw nothing (the menu has its own scene).
+      if (this.paused) return;
+      frameNo++;
       this.resizeToContainer();
       this.applyCameraKeys();
       this.controls.update();
+      // Full frame rate while anything moves or the player is interacting;
+      // otherwise ~20 fps on touch devices (~30 on desktop) — the pulses and
+      // the spinning selection pointer still animate, just less often.
+      const busy = this.isBusy() || performance.now() - this.lastActivity < ACTIVE_HOLD_MS;
+      if (!busy && frameNo % (IS_TOUCH ? 3 : 2) !== 0) return;
+      this.renderer.info.reset();
+      this.framesDrawn++;
       this.advanceAnimations();
+      this.renderer.shadowMap.needsUpdate = this.shadowDirty || busy || frameNo % 60 === 0;
+      this.shadowDirty = false;
       this.renderer.render(this.scene, this.camera);
       // HUD pass: draw the screen-space buttons on top of the board.
       if (this.hudVisible && this.hudButtons.length) {
@@ -1451,9 +2304,33 @@ export class Renderer3D {
         this.renderer.render(this.hudScene, this.hudCamera);
         this.renderer.autoClear = true;
       }
-      requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
+  }
+
+  /** Something changed or the player is interacting: full frame rate + fresh shadows. */
+  markActive(): void {
+    this.lastActivity = performance.now();
+    this.shadowDirty = true;
+  }
+
+  /** Stop drawing while the board is fully covered (e.g. by the menu). */
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) return;
+    this.paused = paused;
+    if (!paused) this.markActive();
+  }
+
+  private isBusy(): boolean {
+    return this.moveAnims.size > 0 || this.explosions.length > 0 || this.shockwaves.length > 0
+      || this.farmCollapses.length > 0 || this.tileFades.size > 0 || this.structFades.size > 0
+      || this.structFlashUntil.size > 0 || this.facingBusy;
+  }
+
+  // Debug-only perf readout (draw calls / triangles of the last frame).
+  perfInfo(): { calls: number; triangles: number; pixelRatio: number; size: [number, number]; framesDrawn: number; paused: boolean } {
+    const r = this.renderer;
+    return { calls: r.info.render.calls, triangles: r.info.render.triangles, pixelRatio: r.getPixelRatio(), size: [r.domElement.width, r.domElement.height], framesDrawn: this.framesDrawn, paused: this.paused };
   }
 
   // ── HUD buttons (Three.js screen-space layer) ──
@@ -1664,7 +2541,20 @@ export class Renderer3D {
     const now = performance.now();
     this.updateTileFades(now);
     this.updateStructFades(now);
+    // Farm build-placement pulse (§15/§18 Farm-UX pass) — a fast, strong
+    // opacity breathe on every legal-Farm-hex highlight, well above the
+    // usual ~1.3s/subtle pulses elsewhere on the board so it reads as its
+    // own distinct mode, not a variant of the ordinary move/attack tints.
+    const pulseOsc = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(now * 0.008));
+    for (const mesh of this.highlightPool) {
+      if (!mesh.visible || !mesh.userData.pulse) continue;
+      const base = (mesh.userData.pulseBaseOpacity as number) ?? 0.5;
+      (mesh.material as THREE.MeshBasicMaterial).opacity = base * pulseOsc;
+    }
+    // Units keep the facing their last move/attack gave them — no camera
+    // tracking (it read as every unit staring at the player).
     // Smoothly rotate each unit toward its facing target (set by moves/attacks).
+    this.facingBusy = false;
     if (this.unitFacing.size > 0) {
       const dt = Math.min((now - this.lastFacingNow) / 1000, 0.1);
       this.lastFacingNow = now;
@@ -1674,7 +2564,7 @@ export class Renderer3D {
         const facer = mesh?.userData.facer as THREE.Object3D | undefined;
         if (!facer) continue;
         let d = Math.atan2(Math.sin(f.tgt - f.cur), Math.cos(f.tgt - f.cur)); // shortest path
-        if (Math.abs(d) <= step) f.cur = f.tgt; else f.cur += Math.sign(d) * step;
+        if (Math.abs(d) <= step) f.cur = f.tgt; else { f.cur += Math.sign(d) * step; this.facingBusy = true; }
         facer.rotation.y = f.cur;
       }
     } else {
@@ -1694,18 +2584,36 @@ export class Renderer3D {
       });
     }
     // Spin + bob the selected-temple pointer.
-    if (this.templePointer && this.templePointer.visible) {
-      this.templePointer.rotation.y = now * 0.0022;
-      this.templePointer.position.y = this.templePointerBaseY + Math.sin(now * 0.004) * 0.12;
+    if (this.structurePointer && this.structurePointer.visible) {
+      this.structurePointer.rotation.y = now * 0.0022;
+      this.structurePointer.position.y = this.structurePointerBaseY + Math.sin(now * 0.004) * 0.12;
     }
     // Billboard HP bars to face the camera.
     if (this.unitHpBars.size > 0) {
       for (const bar of this.unitHpBars.values()) bar.group.quaternion.copy(this.camera.quaternion);
     }
+    if (this.structHpBars.size > 0) {
+      for (const bar of this.structHpBars.values()) bar.group.quaternion.copy(this.camera.quaternion);
+    }
+    // Structure hit-flash: a brief solid red emissive punch (structure combat
+    // pass §11), cleared once its timer lapses — restores the model's normal
+    // tint/emissive state (including the pulsing "pending found" tint above,
+    // which reapplies next frame if still active).
+    if (this.structFlashUntil.size > 0) {
+      for (const [id, until] of [...this.structFlashUntil]) {
+        const entry = this.structureMeshes.get(id);
+        if (now >= until) {
+          this.structFlashUntil.delete(id);
+          if (entry && !this.structureTintIds.has(id) && !this.structureAttackTintIds.has(id)) this.setStructureEmissive(entry.mesh, null);
+        } else if (entry) {
+          this.setStructureEmissive(entry.mesh, [0.8, 0.05, 0.05]);
+        }
+      }
+    }
     // Pulse the "still to move" yellow tint: a subtle, uniform emissive breathe
     // on the tinted units' materials (~1.3s period). Kept low so it reads as a
     // faint yellow wash, not a solid recolor.
-    if (this.toMoveTintIds.size > 0 || this.templeTintIds.size > 0) {
+    if (this.toMoveTintIds.size > 0 || this.structureTintIds.size > 0) {
       const osc = 0.5 + 0.5 * Math.sin(now * 0.005); // 0..1, ~1.3s period
       const e = 0.10 + 0.26 * osc;                    // emissive strength
       const rgb: [number, number, number] = [e, e * 0.88, e * 0.20]; // warm yellow
@@ -1714,9 +2622,22 @@ export class Renderer3D {
         if (mesh) this.setUnitEmissive(mesh, rgb);
       }
       // Temples breathe in sync with the units (same phase / rgb).
-      for (const id of this.templeTintIds) {
-        const entry = this.templeMeshes.get(id);
-        if (entry) this.setTempleEmissive(entry.mesh, rgb);
+      for (const id of this.structureTintIds) {
+        const entry = this.structureMeshes.get(id);
+        if (entry) this.setStructureEmissive(entry.mesh, rgb);
+      }
+    }
+    // Pulse the "attackable structure" red tint — same cadence/shape as the
+    // yellow pulse above, so a Capital/Temple/Farm the selected unit could
+    // attack right now reads clearly even though its own tall model hides
+    // the flat red attack highlight under/behind it (see structureAttackTintIds).
+    if (this.structureAttackTintIds.size > 0) {
+      const osc = 0.5 + 0.5 * Math.sin(now * 0.005);
+      const e = 0.16 + 0.34 * osc;
+      const rgb: [number, number, number] = [e, e * 0.12, e * 0.10]; // red
+      for (const id of this.structureAttackTintIds) {
+        const entry = this.structureMeshes.get(id);
+        if (entry) this.setStructureEmissive(entry.mesh, rgb);
       }
     }
     // Booster/healer range rings ripple outward from the unit: each ring scales
@@ -1742,6 +2663,19 @@ export class Renderer3D {
         : (this.lastViewer !== undefined ? getPlayerVisible(this.lastState, this.lastViewer) : getCurrentPlayerVisible(this.lastState));
       this.syncUnits(this.lastState, playerId, visible, !!this.lastOmniscient, this.lastShowToMove);
     }
+    // Capital occupants — keep the camera-relative foreground offset current
+    // as the camera orbits, even with nothing else animating this frame (a
+    // unit mid-move is already handled by the syncUnits re-run just above).
+    if (this.capitalOccupants.size > 0 && this.lastState) {
+      for (const [unitId, capHex] of this.capitalOccupants) {
+        if (this.moveAnims.has(unitId)) continue;
+        const mesh = this.unitMeshes.get(unitId);
+        if (!mesh) continue;
+        const { x, y, z } = this.getDisplayHexPos(this.lastState, capHex, unitId);
+        mesh.position.set(x, y, z);
+      }
+    }
+    if (this.farmCollapses.length > 0) this.updateFarmCollapses(now);
     if (this.explosions.length > 0) {
       this.explosions = this.explosions.filter(ex => {
         const t = (now - ex.start) / EXPLOSION_MS;

@@ -3,8 +3,17 @@
 // precomputes the few O(units) quantities once (effective atk/def, capturable
 // temples, enemy positions), so per-candidate cost is a handful of hex-distance
 // ops. Concatenated with the state features, this is the policy net's input.
-import { GameState, Unit, Temple, HexCoord, UnitType, TechId, UNIT_COSTS, templeUpgradeCost, TECH_COST, TECH_NODES } from '../src/types';
-import { getEffectiveAttack, getEffectiveDefense } from '../src/game';
+//
+// PHASE 3 NOTE: the fixed UNIT_TYPES/ACTION_TYPES vocabulary (and therefore
+// ACTION_DIM) is left UNCHANGED on purpose — it's baked into already-trained
+// model checkpoints (policy-g2, value-net-v2mc-best). 'capture'/'upgrade-temple'
+// no longer exist as real dispatcher actions and 'found'/'attack-structure'
+// have no one-hot slot yet; both fall through to "no match" (index -1) rather
+// than crash. Properly representing the new site/structure mechanics needs a
+// deliberate retraining pass, out of scope here — this just keeps the
+// existing pipeline compiling and non-crashing against the new engine types.
+import { GameState, Unit, StrategicSite, HexCoord, UnitType, TechId, UNIT_COSTS, TECH_NODES } from '../src/types';
+import { getEffectiveAttack, getEffectiveDefense, getUnitTypeMultiplier } from '../src/game';
 import { hexDistance, hexKey } from '../src/hex';
 import { Micro } from './gameEnv';
 
@@ -18,17 +27,17 @@ export const ACTION_DIM = ACTION_TYPES.length + UNIT_TYPES.length + UNIT_TYPES.l
 
 export interface ActionCtx {
   pid: number; R: number; aura: number;
-  capturable: HexCoord[];         // temples not owned by pid
+  capturable: HexCoord[];         // strategic sites not owned by pid (neutral/ruins/enemy-owned)
   enemies: HexCoord[];            // alive enemy unit positions
   unitById: Map<string, Unit>;
-  templeById: Map<string, Temple>;
+  templeById: Map<string, StrategicSite>;
   effAtk: Map<string, number>;    // acting player's units
   effDef: Map<string, number>;    // enemy units (attack targets)
 }
 
 export function buildActionCtx(state: GameState, pid: number): ActionCtx {
   const unitById = new Map<string, Unit>();
-  const templeById = new Map<string, Temple>();
+  const templeById = new Map<string, StrategicSite>();
   const effAtk = new Map<string, number>();
   const effDef = new Map<string, number>();
   const enemies: HexCoord[] = [];
@@ -39,7 +48,7 @@ export function buildActionCtx(state: GameState, pid: number): ActionCtx {
     else { enemies.push(u.pos); effDef.set(u.id, getEffectiveDefense(state, u)); }
   }
   const capturable: HexCoord[] = [];
-  for (const t of state.temples) { templeById.set(t.id, t); if (t.ownerId !== pid) capturable.push(t.pos); }
+  for (const t of state.strategicSites) { templeById.set(t.id, t); if (t.ownerId !== pid) capturable.push(t.pos); }
   return { pid, R: state.mapRadius, aura: state.players[pid]!.aura, capturable, enemies, unitById, templeById, effAtk, effDef };
 }
 
@@ -86,20 +95,25 @@ export function actionFeatures(state: GameState, ctx: ActionCtx, micro: Micro, o
     if (tgt) {
       const atk = ctx.effAtk.get(actor.id) ?? actor.stats.attack;
       const def = ctx.effDef.get(tgt.id) ?? tgt.stats.defense;
-      const bonus = actor.stats.attackBonusAgainst?.[tgt.type] ?? 1;
+      const bonus = getUnitTypeMultiplier(actor.type, tgt.type);
       const est = Math.max(0, atk * bonus - def);
       s[6] = tgt.stats.maxHp > 0 ? tgt.hp / tgt.stats.maxHp : 0;
       s[7] = tgt.hp > 0 ? Math.min(1, est / tgt.hp) : 1;
       s[8] = est >= tgt.hp ? 1 : 0;
     }
   }
-  // 9: spend fraction of aura (recruit cost / upgrade cost / tech cost) / aura
+  // 9: spend fraction of aura (recruit cost / tech cost) / aura
+  // Temple leveling is gone (phase 3) — the old "upgrade-temple" branch (and
+  // the temple-level feature at index 10) is dead; left as a zeroed slot
+  // rather than reused, to avoid shifting every other index's meaning.
   const aura = Math.max(1, ctx.aura);
   if (micro.action === 'recruit' && typeof p.unitType === 'string') s[9] = Math.min(1, (UNIT_COSTS[p.unitType as UnitType] ?? 3) / aura);
-  else if (micro.action === 'upgrade-temple' && typeof p.templeId === 'string') { const t = ctx.templeById.get(p.templeId); const c = t ? templeUpgradeCost(t.level) : null; s[9] = c ? Math.min(1, c / aura) : 0; }
-  else if (micro.action === 'research') s[9] = Math.min(1, TECH_COST / aura);
-  // 10: temple level frac (upgrade)
-  if (micro.action === 'upgrade-temple' && typeof p.templeId === 'string') { const t = ctx.templeById.get(p.templeId); s[10] = t ? t.level / 5 : 0; }
+  else if (micro.action === 'research' && typeof p.techId === 'string') {
+    // Tech-tree pacing pass: TECH_COST (a single flat constant) is gone —
+    // every node sets its own cost now, so look it up per-node.
+    const node = TECH_NODES.find(n => n.id === p.techId);
+    s[9] = Math.min(1, (node?.cost ?? 16) / aura);
+  }
   // 11: tech index bucket (research)
   if (micro.action === 'research' && typeof p.techId === 'string') { const ti = techIdx.get(p.techId as TechId); s[11] = ti !== undefined ? (ti + 1) / (TECH_NODES.length + 1) : 0; }
   // 12: current aura context (shared)

@@ -7,17 +7,24 @@
 // engagement). Without these, a value net would score most move actions
 // identically and 1-ply lookahead couldn't pick tactically — so these give the
 // net a gradient over movement.
-import { GameState, UnitType, TEMPLE_AURA_PER_LEVEL, templeEconomyLevel } from '../src/types';
+// PHASE 3 NOTE: FEATURE_NAMES/FEATURE_DIM are left UNCHANGED on purpose — the
+// dimension is baked into already-trained value-net checkpoints. "Temple"
+// features below are now computed against owned structures (Capital +
+// completed City/Temple sites) as the closest equivalent; the old per-temple
+// "level" no longer exists (leveling is gone) so myAvgLvl/themAvgLvl are
+// left as zeroed dead slots rather than reused for something else, to avoid
+// shifting any other index's meaning. A real retraining pass should replace
+// these approximations once the new economy (phase 4) lands.
+import { GameState, UnitType } from '../src/types';
 import { TECH_NODES } from '../src/types';
-import { getPopulationCap, getPopulationCount, getEffectiveRange } from '../src/game';
+import { getPopulationCap, getPopulationCount, getEffectiveRange, getOwnedStructures, getPlayerIncome } from '../src/game';
 import { hexDistance } from '../src/hex';
 
 const UNIT_TYPES: UnitType[] = ['warrior', 'archer', 'catapult', 'horserider', 'heavyknight', 'spearsman', 'healer', 'damageBooster', 'rangeBooster'];
 const TECH_IDS = TECH_NODES.map(n => n.id);
 
 function income(state: GameState, pid: number): number {
-  return state.temples.filter(t => t.ownerId === pid)
-    .reduce((s, t) => s + templeEconomyLevel(t.level) * TEMPLE_AURA_PER_LEVEL, 0);
+  return getPlayerIncome(state, pid);
 }
 
 // Human-readable feature names (documentation + debugging). Order === vector order.
@@ -53,10 +60,12 @@ export function featurize(state: GameState, ref: number): Float64Array {
   const me = players[ref]!;
   const myUnits = state.units.filter(u => u.hp > 0 && u.playerId === ref);
   const enemyUnits = state.units.filter(u => u.hp > 0 && others.includes(u.playerId));
-  const myTemples = state.temples.filter(t => t.ownerId === ref);
-  const enemyTemples = state.temples.filter(t => t.ownerId !== null && t.ownerId !== ref);
-  const neutralTemples = state.temples.filter(t => t.ownerId === null);
-  const capturableTemples = state.temples.filter(t => t.ownerId !== ref); // neutral + enemy
+  // "Temples" -> owned structures (Capital + completed City/Temple sites) —
+  // the closest equivalent now that capture-by-presence and leveling are gone.
+  const myTemples = getOwnedStructures(state, ref);
+  const enemyTemples = others.flatMap(id => getOwnedStructures(state, id));
+  const neutralTemples = state.strategicSites.filter(s => s.state === 'neutral' || s.state === 'ruins');
+  const capturableTemples = state.strategicSites.filter(s => s.ownerId !== ref); // neutral/ruins + enemy-owned sites (Capitals are never "capturable")
 
   const myAura = me.aura;
   const themAura = others.reduce((s, id) => s + players[id]!.aura, 0);
@@ -66,11 +75,11 @@ export function featurize(state: GameState, ref: number): Float64Array {
   const myCap = getPopulationCap(state, ref);
   const themPop = others.reduce((s, id) => s + getPopulationCount(state, id), 0);
   const themCap = others.reduce((s, id) => s + getPopulationCap(state, id), 0);
-  const totT = Math.max(1, state.temples.length);
+  const totT = Math.max(1, state.capitals.length + state.strategicSites.length);
   const myHp = myUnits.reduce((s, u) => s + u.hp, 0);
   const themHp = enemyUnits.reduce((s, u) => s + u.hp, 0);
-  const myAvgLvl = myTemples.length ? myTemples.reduce((s, t) => s + t.level, 0) / myTemples.length : 0;
-  const themAvgLvl = enemyTemples.length ? enemyTemples.reduce((s, t) => s + t.level, 0) / enemyTemples.length : 0;
+  const myAvgLvl = 0;   // dead slot — see phase-3 note above (no more temple levels)
+  const themAvgLvl = 0; // dead slot — see phase-3 note above
 
   let i = 0;
   f[i++] = myAura / 30; f[i++] = themAura / 30; f[i++] = myInc / 20; f[i++] = themInc / 20;

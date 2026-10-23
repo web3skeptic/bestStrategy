@@ -1,0 +1,193 @@
+// Voxel Farm — a small agricultural plot, visually distinct from the shared
+// Temple/Capital ziggurat model (voxelTemple.ts) it used to placeholder-reuse.
+// Built from simple primitives: a soil plinth, rows of crops, a small hut
+// with a team-tinted roof, and a low perimeter fence — low-profile so it
+// never hides units standing behind it. Takes a coarse `damageStage`
+// (0 = healthy, 1 = damaged, 2 = heavily damaged) so a Farm under fire
+// visibly degrades before it's destroyed outright (structure combat pass).
+import * as THREE from 'three';
+import { sacredOak } from './proposals/fertileSites';
+
+const SOIL = 0x8a6b45;
+const SOIL_DK = 0x5f4a30;
+const CROP_GREEN = 0x5fae3a;
+const CROP_WILTED = 0xb8a030;
+const CROP_DEAD = 0x6b5a30;
+const HUT_WALL = 0xcabf9e;
+const HUT_ROOF = 0x8a4a2e;
+const HUT_ROOF_DAMAGED = 0x4a2e1e;
+const FENCE = 0x6b4a2e;
+const SMOKE = 0x555555;
+
+// Enlarges the plot to a sensible footprint within the hex tile — smaller
+// than a Temple/Capital (a Farm is deliberately modest next to them).
+const FARM_SCALE = 1.15;
+
+function mat(color: number, rough = 0.9): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0 });
+}
+
+function block(w: number, h: number, d: number, material: THREE.Material, x: number, y: number, z: number, rotY = 0): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+  m.position.set(x, y, z);
+  if (rotY) m.rotation.y = rotY;
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+function cone(r: number, h: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), material);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  return m;
+}
+
+// A hex-prism plot — same 6-sided cylinder + 30° twist convention used for
+// the ground tiles themselves, so the Farm's own footprint actually reads
+// as a hexagon matching the tile underneath it, not a square dropped onto one.
+function hexPlot(r: number, h: number, material: THREE.Material, y: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 6), material);
+  m.rotation.y = Math.PI / 6;
+  m.position.y = y;
+  m.receiveShadow = true;
+  m.castShadow = true;
+  return m;
+}
+
+// The 6 corners of that same hex footprint (radius r), for perimeter fence
+// posts — matches hexPlot's 30° twist (corners sit at 30°, 90°, 150°...).
+function hexCorners(r: number): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 6 + (i * Math.PI) / 3;
+    pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return pts;
+}
+
+function pyramidRoof(w: number, h: number, d: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const geo = new THREE.ConeGeometry(Math.max(w, d) * 0.72, h, 4);
+  geo.rotateY(Math.PI / 4);
+  geo.scale(1, 1, d / w);
+  const m = new THREE.Mesh(geo, material);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  return m;
+}
+
+// One small crop cluster (a few short cones on a stubby stem) — a single
+// "instance" repeated in a grid to read as planted rows from any camera angle.
+function cropCluster(material: THREE.Material, x: number, z: number, healthy: boolean): THREE.Group {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const h = healthy ? 0.16 : 0.10;
+  g.add(cone(0.05, h, material, 0, h / 2 + 0.02, 0));
+  if (healthy) {
+    g.add(cone(0.04, 0.12, material, 0.06, 0.08, 0.04));
+    g.add(cone(0.04, 0.12, material, -0.05, 0.08, -0.05));
+  }
+  if (!healthy) g.rotation.z = 0.35; // bent/wilted lean
+  return g;
+}
+
+export function buildFarm(teamColor: number, damageStage: 0 | 1 | 2 = 0): THREE.Group {
+  const g = new THREE.Group();
+  const soilMat = mat(damageStage >= 2 ? SOIL_DK : SOIL);
+  const cropColor = damageStage >= 2 ? CROP_DEAD : damageStage >= 1 ? CROP_WILTED : CROP_GREEN;
+  const cropMat = mat(cropColor, 0.85);
+  const teamMat = new THREE.MeshStandardMaterial({ color: teamColor, roughness: 0.6, metalness: 0.1 });
+
+  // Soil plot — a low hex-prism plinth filling most of the tile, matching
+  // the hex ground tile's own footprint (§ hexagon fix).
+  const plotR = 0.78;
+  g.add(hexPlot(plotR, 0.08, soilMat, 0.04));
+
+  // Crop rows — a grid, skipping cells as damage increases (a raided/burned
+  // field, not a uniform darken) so the degradation reads at a glance.
+  const rows = 3, cols = 4;
+  let cell = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      cell++;
+      // Deterministic "randomness" (no Math.random — meshes must be stable
+      // across rebuilds with the same damageStage) via a simple hash.
+      const skip = damageStage === 1 && cell % 3 === 0;
+      const skipMore = damageStage === 2 && cell % 2 === 0;
+      if (skip || skipMore) continue;
+      const x = (c - (cols - 1) / 2) * 0.30;
+      const z = (r - (rows - 1) / 2) * 0.34 - 0.15;
+      g.add(cropCluster(cropMat, x, z, damageStage === 0));
+    }
+  }
+
+  // Small hut in the back corner — the farm's "structure" component that
+  // visibly takes damage (roof darkens/tilts, then loses its roof outright).
+  const hutX = 0.48, hutZ = 0.48;
+  const wallMat = mat(HUT_WALL, 0.85);
+  g.add(block(0.34, 0.22, 0.34, wallMat, hutX, 0.15, hutZ));
+  if (damageStage < 2) {
+    const roofMat = mat(damageStage === 1 ? HUT_ROOF_DAMAGED : HUT_ROOF, 0.7);
+    const roof = pyramidRoof(0.4, 0.18, 0.4, roofMat, hutX, 0.35, hutZ);
+    if (damageStage === 1) roof.rotation.z = 0.12; // slightly knocked askew
+    g.add(roof);
+  } else {
+    // Roof is gone outright — charred stub + a little smoke puff.
+    const smokeMat = new THREE.MeshStandardMaterial({ color: SMOKE, roughness: 1, transparent: true, opacity: 0.55 });
+    const smoke = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), smokeMat);
+    smoke.position.set(hutX, 0.34, hutZ);
+    g.add(smoke);
+  }
+  // Team-colored door trim — faction ownership reads even at a glance.
+  g.add(block(0.08, 0.14, 0.03, teamMat, hutX, 0.11, hutZ + 0.185));
+
+  // Low perimeter fence — a post at each of the hex plot's 6 corners (plus
+  // one at each edge midpoint for a denser enclosure), missing a few once
+  // heavily damaged (a raided field, fence knocked down). Following the
+  // plot's own hex corners keeps the fence reading as a hexagon too.
+  const fenceMat = mat(FENCE, 0.9);
+  const fenceR = plotR + 0.04;
+  const corners = hexCorners(fenceR);
+  const edgeMids: [number, number][] = corners.map(([x, z], i) => {
+    const [nx, nz] = corners[(i + 1) % 6]!;
+    return [(x + nx) / 2, (z + nz) / 2];
+  });
+  [...corners, ...edgeMids].forEach(([x, z], idx) => {
+    if (damageStage >= 2 && idx % 3 === 0) return; // knocked-down gap
+    g.add(block(0.04, 0.16, 0.04, fenceMat, x, 0.08, z));
+  });
+
+  g.scale.setScalar(FARM_SCALE);
+  return g;
+}
+
+// ── Fertile Site (v14 — Agrar-vs-Agrar central objective) ──
+//
+// A visually larger, richer relative of the ordinary Farm — denser golden
+// crop rows plus a windmill landmark instead of a hut, so it reads as a
+// special contested objective rather than just another player-built Farm.
+// `ownerColor` is null while neutral/unclaimed (grey mill, no team tint).
+const FERTILE_CROP_GOLD = 0xd9b23a;
+const MILL_WALL = 0xb7a98a;
+const MILL_ROOF = 0x6b4a2e;
+const BLADE = 0xe8ddc8;
+const NEUTRAL_TRIM = 0x8a8a8a;
+const FERTILE_SCALE = 1.05; // the Sacred Oak: kept modest so a unit standing on the tile stays visible
+
+function cyl(rTop: number, rBot: number, h: number, seg: number, material: THREE.Material, x: number, y: number, z: number): THREE.Mesh {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, h, seg), material);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  return m;
+}
+
+// Fertile Site — the Sacred Oak (picked on /fertile-proposals): an ancient oak
+// on a mound inside a stone ring, owner ribbons tied in its boughs. Grey
+// ribbons while neutral. Deliberately NOT a farm any more — it used to be a
+// bigger golden plot with a windmill and read as just another Farm.
+export function buildFertileSite(ownerColor: number | null): THREE.Group {
+  const g = sacredOak(ownerColor);
+  g.scale.setScalar(FERTILE_SCALE);
+  return g;
+}

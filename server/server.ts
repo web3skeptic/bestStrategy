@@ -7,6 +7,7 @@ import { handleConnect, handleDisconnect, handleMessage, getActiveGames } from '
 import { headlessRouter, handleListReplays, handleGetReplay } from './headlessApi';
 import { authRouter } from './authRoutes';
 import { requireAuth } from './auth';
+import { chatRouter } from './chatAgent';
 
 // Use PORT env var if set, otherwise bind to 0 (OS picks a free port)
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 0;
@@ -33,6 +34,10 @@ app.get('/api/games', (_req, res) => {
   res.json(getActiveGames());
 });
 
+// ── In-game chat agent ──
+// Mounted before the SPA catch-all below, which would otherwise swallow it.
+app.use('/api/chat', chatRouter);
+
 // ── Static files (production build) ──
 const distPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../dist');
 app.use(express.static(distPath));
@@ -47,6 +52,37 @@ app.get('/replays', (_req, res) => {
 // Asset demo — showcases every tile, unit and structure.
 app.get('/demo', (_req, res) => {
   res.sendFile(path.join(distPath, 'demo.html'));
+});
+// Design proposals — static preview page for rule changes under discussion.
+app.get('/proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'proposals.html'));
+});
+app.get('/tech-proposal', (_req, res) => {
+  res.sendFile(path.join(distPath, 'tech-proposal.html'));
+});
+app.get('/menu-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'menu-proposals.html'));
+});
+app.get('/capital-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'capital-proposals.html'));
+});
+app.get('/hair-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'hair-proposals.html'));
+});
+app.get('/hat-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'hat-proposals.html'));
+});
+app.get('/face-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'face-proposals.html'));
+});
+app.get('/nomad-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'nomad-proposals.html'));
+});
+app.get('/menu-proposals-2', (_req, res) => {
+  res.sendFile(path.join(distPath, 'menu-proposals-2.html'));
+});
+app.get('/fertile-proposals', (_req, res) => {
+  res.sendFile(path.join(distPath, 'fertile-proposals.html'));
 });
 app.get('/{*path}', (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));

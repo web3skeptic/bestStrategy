@@ -5,26 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Replays Browser</title>
   <style>
+    @font-face { font-family: 'Lilita One'; src: url('fonts/LilitaOne.woff2') format('woff2'); font-display: swap; }
+    @font-face { font-family: 'Nunito'; src: url('fonts/Nunito.woff2') format('woff2'); font-weight: 200 1000; font-display: swap; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      background: #0d0d1a;
-      color: #ccc;
-      font-family: 'Segoe UI', sans-serif;
+      background: #0a1510;
+      color: #fff4dc;
+      font-family: 'Nunito', 'Segoe UI', system-ui, sans-serif;
       min-height: 100%;
     }
     .container {
       max-width: 1200px;
       margin: 0 auto;
       padding: 24px;
+      overflow-x: auto; /* the results table is wider than a phone */
     }
     h1 {
+      font-family: 'Lilita One', 'Nunito', sans-serif; letter-spacing: .04em;
       font-size: 22px;
-      color: #ccf;
+      color: #f5c451;
       letter-spacing: 0.5px;
       margin-bottom: 4px;
     }
     .subtitle {
-      color: #889;
+      color: rgba(255,244,220,.5);
       font-size: 13px;
       margin-bottom: 20px;
     }
@@ -35,85 +39,85 @@
       flex-wrap: wrap;
       margin-bottom: 18px;
       padding: 14px;
-      background: rgba(22,22,44,0.85);
-      border: 1px solid #334;
+      background: rgba(13,31,20,.9);
+      border: 1px solid rgba(255,244,220,.12);
       border-radius: 8px;
     }
     .controls input[type="search"] {
       flex: 1;
       min-width: 220px;
       padding: 8px 12px;
-      background: #181830;
-      border: 1px solid #334;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,244,220,.12);
       border-radius: 6px;
-      color: #eef;
+      color: #fff4dc;
       font-size: 14px;
       font-family: inherit;
     }
-    .controls input[type="search"]:focus { outline: none; border-color: #6ef; }
+    .controls input[type="search"]:focus { outline: none; border-color: #f5c451; }
     .controls label {
       display: inline-flex;
       align-items: center;
       gap: 6px;
       font-size: 13px;
-      color: #aab;
+      color: rgba(255,244,220,.7);
       user-select: none;
       cursor: pointer;
     }
-    .controls input[type="checkbox"] { accent-color: #6ef; }
+    .controls input[type="checkbox"] { accent-color: #f5c451; }
     .controls button {
       padding: 8px 14px;
-      background: #2a2a4a;
-      border: 1px solid #445;
+      background: rgba(255,244,220,.08);
+      border: 1px solid rgba(255,244,220,.16);
       border-radius: 6px;
-      color: #ccf;
+      color: #f5c451;
       cursor: pointer;
       font-family: inherit;
       font-size: 13px;
     }
-    .controls button:hover { background: #353560; }
+    .controls button:hover { background: rgba(255,244,220,.14); }
     .stats {
-      color: #889;
+      color: rgba(255,244,220,.5);
       font-size: 12px;
       margin-bottom: 8px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      background: rgba(17,17,34,0.85);
-      border: 1px solid #334;
+      background: rgba(9,22,14,.9);
+      border: 1px solid rgba(255,244,220,.12);
       border-radius: 8px;
       overflow: hidden;
       font-size: 13px;
     }
     thead {
-      background: rgba(40,40,80,0.6);
+      background: rgba(255,244,220,.06);
     }
     th {
       text-align: left;
       padding: 10px 12px;
-      color: #aab;
+      color: rgba(255,244,220,.7);
       font-weight: 600;
       cursor: pointer;
       user-select: none;
-      border-bottom: 1px solid #334;
+      border-bottom: 1px solid rgba(255,244,220,.12);
       white-space: nowrap;
     }
-    th:hover { color: #ccf; }
+    th:hover { color: #f5c451; }
     th .arrow {
       display: inline-block;
       width: 12px;
-      color: #6ef;
+      color: #f5c451;
     }
     td {
       padding: 10px 12px;
-      border-bottom: 1px solid #223;
+      border-bottom: 1px solid rgba(255,244,220,.1);
     }
     tbody tr:hover { background: rgba(50,50,100,0.25); }
     .gid {
       font-family: monospace;
       font-size: 11px;
-      color: #6ef;
+      color: #f5c451;
     }
     .winner-cell { color: #8c8; font-weight: 500; }
     .winner-cell.none { color: #888; font-style: italic; }
@@ -130,7 +134,7 @@
     .badge-timeout { background: #553; color: #eb7; }
     .badge-live    { background: #353; color: #8d8; }
     a.watch {
-      color: #6ef;
+      color: #f5c451;
       text-decoration: none;
       padding: 4px 10px;
       border: 1px solid #345;
@@ -141,7 +145,7 @@
     .empty {
       text-align: center;
       padding: 40px;
-      color: #889;
+      color: rgba(255,244,220,.5);
     }
     .error {
       padding: 12px;

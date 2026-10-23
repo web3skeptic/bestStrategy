@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Hex Strategy Game</title>
+  <title>Tactical Tribes</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       background: #0d0d1a;
       color: #ccc;
-      font-family: 'Segoe UI', sans-serif;
+      font-family: 'Nunito', 'Segoe UI', system-ui, sans-serif;
       height: 100%;
       overflow: hidden;
       touch-action: none;
@@ -257,6 +257,12 @@
       backdrop-filter: blur(4px);
     }
     #captureBtn:active { background: rgba(130,90,30,0.9); }
+    #captureBtn.active {
+      border-color: #ffcc44;
+      background: rgba(140,100,30,0.95);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(0,200,255,0.4);
+    }
 
     /* ── Tile actions (terraform) ── */
     .tile-actions {
@@ -323,16 +329,16 @@
       overflow-x: auto;
       overflow-y: hidden;
       padding: 8px 10px;
-      background: rgba(12,12,28,0.82);
-      border: 1px solid #2a2a48;
-      border-radius: 14px;
-      backdrop-filter: blur(6px);
+      background: rgba(9,22,14,.86);
+      border: 1px solid rgba(255,244,220,.12);
+      border-radius: 18px;
+      backdrop-filter: blur(8px);
       box-shadow: 0 4px 16px rgba(0,0,0,0.4);
       scrollbar-width: thin;
-      scrollbar-color: #3a3a60 transparent;
+      scrollbar-color: rgba(255,244,220,.2) transparent;
     }
     .spawn-bar::-webkit-scrollbar { height: 6px; }
-    .spawn-bar::-webkit-scrollbar-thumb { background: #3a3a60; border-radius: 3px; }
+    .spawn-bar::-webkit-scrollbar-thumb { background: rgba(255,244,220,.2); border-radius: 3px; }
     .spawn-bar::-webkit-scrollbar-track { background: transparent; }
 
     .unit-card {
@@ -382,7 +388,12 @@
       text-overflow: ellipsis;
       max-width: 100%;
     }
-    .unit-card-cost {
+    .unit-card-stats {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .unit-card-cost, .unit-card-pop {
       display: inline-flex;
       align-items: center;
       gap: 3px;
@@ -396,11 +407,52 @@
       color: #ffe39a;
     }
     .unit-card-cost .cost-icon { color: #ffd24a; }
-    .unit-card.disabled .unit-card-cost {
+    /* Population (Command) cost chip — a distinct blue/lavender tint from the
+       Energy chip's gold, so the two costs read as clearly different things
+       at a glance (§ population clarity pass). */
+    .unit-card-pop {
+      border-color: rgba(140,170,255,0.45);
+      color: #cdd8ff;
+    }
+    .unit-card-pop .pop-icon { color: #9fb4ff; }
+    /* Whichever specific chip(s) are actually the blocking reason turn red —
+       NOT the whole card uniformly — so a disabled card tells you why
+       (can't afford it vs. would bust the population cap) instead of every
+       disabled reason looking identical. */
+    .unit-card-cost.chip-bad, .unit-card-pop.chip-bad {
       border-color: rgba(255,120,120,0.5);
       color: #ffb0b0;
     }
-    .unit-card.disabled .unit-card-cost .cost-icon { color: #ff9090; }
+    .unit-card-cost.chip-bad .cost-icon, .unit-card-pop.chip-bad .pop-icon { color: #ff9090; }
+    /* Queued-count badge — how many of this exact type are already waiting
+       in the training queue at the currently selected structure (§ the
+       "which units are waiting to be created" indicator). */
+    .unit-card-queued {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: #4a6fd8;
+      border: 2px solid #0e1424;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 14px;
+      text-align: center;
+      pointer-events: none;
+    }
+    .unit-card-queued.hidden { display: none; }
+    /* Activation indicator — a brief bright flash the instant a recruit
+       order is actually queued, so the click's effect is unmistakable
+       before the combat-log line or the queued badge even update. */
+    @keyframes unitCardFlash {
+      0%   { box-shadow: 0 0 0 0 rgba(126,199,126,0.9); border-color: #bdf2bd; }
+      100% { box-shadow: 0 0 14px 4px rgba(126,199,126,0); border-color: #4a6a4a; }
+    }
+    .unit-card-flash { animation: unitCardFlash 0.5s ease-out; }
 
     /* ── Combat log (collapsible) ── */
     .log-toggle {
@@ -408,23 +460,24 @@
       align-items: center;
       gap: 8px;
       padding: 6px 12px;
-      font-size: 12px;
-      color: #888;
+      font-size: 12px; font-weight: 800;
+      color: rgba(255,244,220,.6);
       cursor: pointer;
-      background: rgba(17,17,34,0.8);
-      border-radius: 6px;
-      backdrop-filter: blur(4px);
+      background: rgba(9,22,14,.8);
+      border: 1px solid rgba(255,244,220,.1);
+      border-radius: 999px;
+      backdrop-filter: blur(6px);
     }
-    .log-toggle:active { background: rgba(30,30,50,0.9); }
+    .log-toggle:active { background: rgba(13,31,20,.9); }
     #combatLog {
       max-height: 0;
       overflow-y: auto;
       transition: max-height 0.3s ease;
       font-size: 11px;
       line-height: 1.4;
-      color: #aaa;
-      background: rgba(17,17,34,0.85);
-      border-radius: 6px;
+      color: rgba(255,244,220,.75);
+      background: rgba(9,22,14,.88);
+      border-radius: 12px;
       width: 100%;
       max-width: 400px;
       backdrop-filter: blur(4px);
@@ -436,7 +489,15 @@
     #combatLog div { border-bottom: 1px solid #1a1a2e; padding: 2px 0; }
 
     /* ── Menu overlay ── */
+    @font-face { font-family: 'Lilita One'; src: url('fonts/LilitaOne.woff2') format('woff2'); font-display: swap; }
+    @font-face { font-family: 'Nunito'; src: url('fonts/Nunito.woff2') format('woff2'); font-weight: 200 1000; font-display: swap; }
+
+    /* ── Main menu: the "living board" ──
+       A dedicated Three.js scene (src/menuScene.ts) fills the overlay; the menu
+       itself is a wordmark plus a thumb-zone bottom sheet. Sub-panels (custom
+       setup, difficulty, online lobby) float over the same scene. */
     .menu-overlay {
+      --gold: #f5c451; --gold-dk: #b9821a; --cream: #fff4dc; --moss: #0d1f14;
       position: absolute;
       inset: 0;
       z-index: 100;
@@ -444,78 +505,85 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(10, 10, 26, 0.95);
-      backdrop-filter: blur(8px);
-      gap: 20px;
-      overflow-y: auto;
-      padding: 16px 0;
+      background: #0a1510;
+      overflow: hidden;
+      font-family: 'Nunito', 'Segoe UI', system-ui, sans-serif;
+      color: var(--cream);
     }
     .menu-overlay.hidden { display: none; }
-    /* main-menu column: title + subtitle + buttons, cleanly centered */
-    #lobbyMain {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 14px;
-    }
+    #menuScene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .menu-sky { position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(180deg, rgba(6,14,10,.55) 0%, rgba(6,14,10,0) 34%, rgba(6,14,10,0) 55%, rgba(6,14,10,.75) 100%); }
+    #lobbyMain { position: absolute; inset: 0; }
     #lobbyMain.hidden { display: none; }
-    .menu-title {
-      font-size: 32px;
-      font-weight: bold;
-      color: #dde;
-      letter-spacing: 2px;
-      text-align: center;
-      text-shadow: 0 0 20px rgba(100,100,255,0.3);
+    .menu-top { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 12px); left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
+    .menu-chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px 0 10px; border-radius: 999px; text-decoration: none;
+      background: rgba(8,20,14,.72); border: 1px solid rgba(255,244,220,.14); font-weight: 800; font-size: 12px; color: var(--cream); backdrop-filter: blur(6px); cursor: pointer; }
+    .menu-chip svg { width: 17px; height: 17px; stroke: var(--gold); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    /* Polytopia-style main menu (picked from /menu-proposals-2, option A): the
+       live world fills the screen, the wordmark sits on top, equal flat
+       buttons stack at the bottom; New Game / Multiplayer open one sheet each. */
+    .menu-brand { position: absolute; left: 0; right: 0; top: 8%; text-align: center; pointer-events: none; line-height: .9;
+      transition: transform .5s cubic-bezier(.2,.8,.2,1), top .5s cubic-bezier(.2,.8,.2,1); }
+    .menu-overlay.sheet-open .menu-brand { top: 4%; transform: scale(.72); }
+    .menu-brand .hex { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(50px, 12vw, 100px); color: var(--cream); letter-spacing: .02em;
+      text-shadow: 0 3px 0 rgba(0,0,0,.28), 0 12px 26px rgba(0,0,0,.45); }
+    .menu-brand .strat { display: block; font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(42px, 10.5vw, 84px); letter-spacing: .14em; padding-left: .14em; margin-top: 2px; color: var(--gold);
+      text-shadow: 0 3px 0 rgba(0,0,0,.28), 0 12px 26px rgba(0,0,0,.45); }
+    .menu-stack { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 9%); transform: translateX(-50%); width: min(340px, 86vw); display: flex; flex-direction: column; gap: 10px; }
+    .mbtn { display: flex; align-items: center; justify-content: center; gap: 10px; height: 54px; border: none; border-radius: 14px; cursor: pointer; color: var(--cream); text-decoration: none;
+      font: inherit; font-weight: 900; font-size: 18px; letter-spacing: .04em; text-transform: uppercase; background: #2f8f83; box-shadow: 0 4px 0 #226b62, 0 8px 18px rgba(0,0,0,.3); transition: transform .06s, box-shadow .06s; }
+    .mbtn:active { transform: translateY(3px); box-shadow: 0 1px 0 #226b62, 0 4px 10px rgba(0,0,0,.3); }
+    .mbtn.gold { background: var(--gold); color: #3a2604; box-shadow: 0 4px 0 var(--gold-dk), 0 8px 18px rgba(0,0,0,.3); }
+    .mbtn.quiet { background: rgba(23,34,28,.66); box-shadow: 0 4px 0 rgba(0,0,0,.35), 0 8px 18px rgba(0,0,0,.25); }
+    /* Continue card: title over the save summary, so neither wraps or squeezes on a phone. */
+    #menuContinue { flex-direction: column; gap: 2px; height: auto; min-height: 54px; padding: 8px 16px; line-height: 1.15; }
+    #menuContinue small { font-size: 11.5px; }
+    .mbtn small { font-weight: 800; font-size: 11px; opacity: .75; letter-spacing: .08em; text-transform: none; }
+    .mbtn b { font-weight: 900; }
+    .menu-sheet2 { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 5%); transform: translateX(-50%); width: min(420px, 92vw); display: flex; flex-direction: column; gap: 10px; padding: 16px;
+      border-radius: 22px; background: rgba(23,34,28,.78); backdrop-filter: blur(8px); box-shadow: 0 20px 50px rgba(0,0,0,.45); }
+    .menu-sheet2.hidden, .menu-stack.hidden { display: none; }
+    .menu-sheet2 h2 { margin: 0; font-family: 'Lilita One', sans-serif; font-weight: 400; color: var(--cream); font-size: 26px; text-align: center; letter-spacing: .03em; }
+    .mlabel { font-size: 11px; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; color: rgba(255,244,220,.7); text-align: center; }
+    .mtribes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+    .mtribe { position: relative; border-radius: 18px; border: 3px solid transparent; background: rgba(255,244,220,.07); cursor: pointer; color: var(--cream); text-align: left; padding: 12px 14px; display: grid; grid-template-columns: 1fr 56px; align-items: center; gap: 8px; font: inherit; }
+    .mtribe.on { border-color: var(--gold); background: rgba(47,143,131,.7); }
+    .mtribe b { display: block; font-family: 'Lilita One', sans-serif; font-weight: 400; font-size: 22px; letter-spacing: .03em; }
+    .mtribe small { font-weight: 800; font-size: 11.5px; opacity: .8; }
+    .mtribe .sig { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; }
+    .mtribe .sig.f { background: radial-gradient(circle at 40% 35%, #ffd978, #b9821a); } .mtribe .sig.n { background: radial-gradient(circle at 40% 35%, #b7a8ff, #4a3f9a); }
+    .mtribe .sig svg { width: 32px; height: 32px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .mpills { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+    .mpill { padding: 8px 14px; border-radius: 999px; border: 2px solid rgba(255,244,220,.35); background: rgba(23,34,28,.5); color: var(--cream); font: inherit; font-weight: 900; font-size: 13px; cursor: pointer; }
+    .mpill.on { background: var(--cream); color: #17221c; border-color: var(--cream); }
+    .menu-foot { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); display: flex; justify-content: center; gap: 14px; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: rgba(255,244,220,.5); pointer-events: none; }
+    .menu-foot a { color: inherit; text-decoration: none; }
+    .menu-sky { background: linear-gradient(180deg, rgba(6,14,10,.35) 0%, rgba(6,14,10,0) 30%, rgba(6,14,10,0) 55%, rgba(6,14,10,.6) 100%); }
+    @media (min-width: 761px) {
+      .menu-stack { bottom: 8%; }
     }
-    .menu-subtitle {
-      font-size: 14px;
-      color: #667;
-      text-align: center;
-      margin-top: -8px; /* tuck just under the title */
-    }
-    .menu-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      min-width: 220px;
-    }
-    .menu-btn {
-      padding: 16px 32px;
-      font-size: 18px;
-      font-weight: bold;
-      border: 2px solid #555;
-      border-radius: 12px;
-      cursor: pointer;
-      text-align: center;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .menu-btn:active { transform: scale(0.97); }
-    /* Stone slabs (skin from .menu-btn); only the engraved label is tinted per mode. */
-    #menuVsAI     { color: #bcd0ff; }
-    #menu2P       { color: #bfe9bf; }
-    #menuVsHardAI { color: #ffbcbc; }
-    #menuCustom   { color: #e8dca6; }
-    #menuOnline   { color: #d8c9ff; }
 
     /* ── Custom-game setup panel ── */
     .setup-row {
       display: flex; align-items: center; justify-content: space-between;
-      margin: 8px 0; font-size: 14px; color: #cdbb93;
+      margin: 4px 0; font-size: 14px; font-weight: 800; color: var(--cream);
     }
     .setup-stepper { display: flex; align-items: center; gap: 12px; }
-    .setup-stepper span { min-width: 20px; text-align: center; font-size: 18px; color: #f0e4c4; }
-    .setup-stepper .lobby-btn { padding: 4px 12px; font-size: 18px; min-width: 40px; }
+    .setup-stepper span { min-width: 24px; text-align: center; font-family: 'Lilita One', sans-serif; font-size: 22px; color: var(--gold); }
+    .setup-stepper .lobby-btn { padding: 4px 12px; font-size: 18px; min-width: 40px; border-radius: 999px; }
     .setup-slot {
       display: flex; align-items: center; gap: 10px;
-      margin: 6px 0; padding: 6px 8px; border-radius: 8px;
-      background: rgba(0,0,0,0.25);
+      margin: 6px 0; padding: 8px 10px; border-radius: 14px;
+      background: rgba(0,0,0,0.28); border: 1px solid rgba(255,244,220,.1);
     }
-    .setup-slot .slot-swatch { width: 16px; height: 16px; border-radius: 4px; flex: 0 0 auto; }
-    .setup-slot .slot-label { flex: 1; font-size: 13px; color: #cdbb93; }
+    .setup-slot .slot-swatch { width: 16px; height: 16px; border-radius: 5px; flex: 0 0 auto; box-shadow: 0 0 0 2px rgba(0,0,0,.3); }
+    .setup-slot .slot-label { flex: 1; font-size: 13px; font-weight: 800; color: var(--cream); }
     .setup-slot select {
-      background: #1a1e28; color: #e6dcc2; border: 1px solid #4a4030;
-      border-radius: 6px; padding: 4px 6px; font-size: 13px;
+      background: rgba(255,244,220,.08); color: var(--cream); border: 1px solid rgba(255,244,220,.16);
+      border-radius: 10px; padding: 6px 8px; font: inherit; font-weight: 800; font-size: 13px;
     }
+    .setup-slot select option { background: #0d1f14; color: var(--cream); }
 
     /* ── Per-player HUD status chips ── */
     .player-list { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -529,85 +597,75 @@
     .player-chip.dead { opacity: 0.32; text-decoration: line-through; }
     .player-chip .chip-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
     .player-chip .chip-stat { color: #b8ab8c; font-size: 11px; }
-    /* Continue game — primary CTA. Same stone slab + a gold accent rim/glow and
-       gold label so it reads as the highlighted action. Hidden until JS finds a
-       saved local game. */
-    .menu-btn.menu-continue {
-      display: none;
-      color: #e7c24a;
-      box-shadow:
-        inset 0 0 0 2px #11141c,                   /* hewn rim */
-        inset 0 0 0 4px rgba(231,194,74,0.45),      /* gold accent rim */
-        inset 2px 2px 0 rgba(160,175,200,0.30),
-        inset -2px -2px 0 rgba(0,0,0,0.45);
-      filter: drop-shadow(0 4px 7px rgba(0,0,0,0.55)) drop-shadow(0 0 6px rgba(231,194,74,0.35));
-    }
-
-    /* ── Lobby panel ── */
+    /* ── Lobby sub-panels (custom setup / difficulty / online) — float over the living board ── */
     .lobby-panel {
-      background: rgba(14,14,30,0.98);
-      border: 1px solid #334;
-      border-radius: 16px;
-      width: 320px;
+      position: relative;
+      background: linear-gradient(180deg, rgba(13,31,20,.9), rgba(9,22,14,.96));
+      border: 1px solid rgba(255,244,220,.12);
+      border-radius: 22px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.5);
+      backdrop-filter: blur(10px);
+      width: 340px;
       max-width: 95vw;
       padding: 20px;
       display: flex;
       flex-direction: column;
       gap: 12px;
+      color: var(--cream);
     }
     .lobby-panel.hidden { display: none; }
     .lobby-title {
-      font-size: 18px;
-      font-weight: bold;
-      color: #ccf;
-      margin-bottom: 4px;
+      font-family: 'Lilita One', 'Nunito', sans-serif;
+      font-size: 22px;
+      letter-spacing: .04em;
+      color: var(--gold);
+      margin-bottom: 2px;
     }
     .lobby-input {
       width: 100%;
-      padding: 10px 12px;
-      font-size: 14px;
-      background: rgba(10,10,28,0.9);
-      border: 1px solid #445;
-      border-radius: 8px;
-      color: #cce;
+      padding: 11px 12px;
+      font: inherit; font-weight: 700; font-size: 14px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,244,220,.16);
+      border-radius: 12px;
+      color: var(--cream);
       outline: none;
     }
-    .lobby-input:focus { border-color: #66a; }
+    .lobby-input:focus { border-color: rgba(245,196,81,.6); }
     .lobby-btn {
-      padding: 10px 20px;
-      font-size: 14px;
-      font-weight: bold;
-      border: 2px solid #446;
-      border-radius: 8px;
-      background: rgba(40,35,80,0.85);
-      color: #ccf;
+      padding: 11px 18px;
+      font: inherit; font-weight: 900; font-size: 14px;
+      border: 1px solid rgba(255,244,220,.14);
+      border-radius: 14px;
+      background: rgba(255,244,220,.07);
+      color: var(--cream);
       cursor: pointer;
       text-align: center;
+      box-shadow: 0 4px 0 rgba(0,0,0,.35);
     }
-    .lobby-btn:active { background: rgba(60,55,110,0.9); }
-    /* Primary lobby button: same stone, with a bluish accent rim + glow. */
+    .lobby-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
     .lobby-btn.primary {
-      box-shadow:
-        inset 0 3px 0 rgba(206,220,244,0.34),
-        inset 0 -5px 9px rgba(0,0,0,0.55),
-        inset 0 0 0 2px rgba(120,150,212,0.6),
-        0 0 11px rgba(92,132,214,0.28);
-      color: #e2ecff;
+      font-family: 'Lilita One', 'Nunito', sans-serif; font-weight: 400; font-size: 18px; letter-spacing: .05em;
+      color: #2b1c05; border: none;
+      background: linear-gradient(180deg, #ffd978, #f2b83e);
+      box-shadow: 0 5px 0 var(--gold-dk), 0 8px 18px rgba(0,0,0,.4), inset 0 2px 0 rgba(255,255,255,.5);
     }
+    .lobby-btn.primary:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--gold-dk); }
     .lobby-status {
-      font-size: 12px;
-      color: #889;
+      font-size: 12px; font-weight: 700;
+      color: rgba(255,244,220,.55);
       min-height: 16px;
     }
-    .lobby-status.ok  { color: #6c6; }
-    .lobby-status.err { color: #c66; }
+    .lobby-status.ok  { color: #8fe0a3; }
+    .lobby-status.err { color: #ff8a7a; }
     .lobby-code {
-      font-size: 28px;
-      font-weight: bold;
-      color: #6ef;
-      letter-spacing: 6px;
+      font-family: 'Lilita One', 'Nunito', sans-serif;
+      font-size: 40px;
+      color: var(--gold);
+      letter-spacing: 8px;
       text-align: center;
-      font-family: monospace;
+      text-shadow: 0 3px 0 var(--gold-dk), 0 8px 18px rgba(0,0,0,.45);
+      user-select: all;
     }
     .lobby-room-list {
       max-height: 180px;
@@ -621,34 +679,85 @@
       align-items: center;
       justify-content: space-between;
       padding: 8px 10px;
-      background: rgba(25,25,55,0.85);
-      border: 1px solid #334;
-      border-radius: 8px;
-      font-size: 13px;
+      background: rgba(0,0,0,.28);
+      border: 1px solid rgba(255,244,220,.1);
+      border-radius: 14px;
+      font-size: 13px; font-weight: 700;
     }
     .lobby-room-item button {
-      padding: 4px 12px;
-      font-size: 12px;
-      font-weight: bold;
-      border: 1px solid #557;
-      border-radius: 6px;
-      background: rgba(50,45,90,0.85);
-      color: #ccf;
+      padding: 6px 14px;
+      font: inherit; font-size: 12px; font-weight: 900;
+      border: none;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffd978, #f2b83e);
+      color: #2b1c05;
+      box-shadow: 0 3px 0 var(--gold-dk);
       cursor: pointer;
     }
-    .lobby-room-item button:active { background: rgba(70,65,120,0.9); }
+    .lobby-room-item button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--gold-dk); }
     .lobby-divider {
       border: none;
-      border-top: 1px solid #223;
+      border-top: 1px solid rgba(255,244,220,.1);
       margin: 0;
     }
+    .lobby-section { font-size: 10.5px; font-weight: 900; letter-spacing: .22em; text-transform: uppercase; color: rgba(255,244,220,.5); }
     .lobby-back {
-      font-size: 12px;
-      color: #668;
+      font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+      color: rgba(255,244,220,.5);
       cursor: pointer;
       text-align: center;
+      padding: 4px;
     }
-    .lobby-back:hover { color: #99b; }
+    .lobby-back:hover { color: var(--cream); }
+
+    /* ── Choose your opponent: a sheet of four opponent cards ── */
+    .opp-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      width: auto; max-width: none;
+      border-radius: 26px 26px 0 0; border-width: 1px 0 0;
+      padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 12px);
+      gap: 12px;
+    }
+    .opp-sheet::before { content: ''; width: 44px; height: 5px; border-radius: 3px; background: rgba(255,244,220,.25); margin: -2px auto 0; }
+    .opp-head { display: flex; flex-direction: column; gap: 1px; padding: 0 2px; }
+    .opp-kicker { font-size: 10.5px; font-weight: 900; letter-spacing: .28em; text-transform: uppercase; color: rgba(255,244,220,.5); }
+    .opp-head .lobby-title { margin: 0; }
+    .opp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .opp-card {
+      --tint: #8fe0a3;
+      position: relative; display: grid; grid-template-columns: 1fr; justify-items: start; gap: 2px;
+      padding: 12px 12px 12px; min-height: 172px;
+      border: 1px solid rgba(255,244,220,.12); border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,244,220,.07), rgba(255,244,220,.03));
+      box-shadow: 0 5px 0 rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+      color: var(--cream); font: inherit; text-align: left; cursor: pointer; overflow: hidden;
+      transition: transform .06s, box-shadow .06s, border-color .15s;
+    }
+    .opp-card::before { content: ''; position: absolute; right: -28px; top: -28px; width: 120px; height: 120px; border-radius: 50%;
+      background: radial-gradient(circle, color-mix(in srgb, var(--tint) 45%, transparent), transparent 70%); pointer-events: none; }
+    .opp-card:active { transform: translateY(4px); box-shadow: 0 1px 0 rgba(0,0,0,.35); }
+    .opp-card:hover { border-color: color-mix(in srgb, var(--tint) 60%, transparent); }
+    .opp-art { position: absolute; right: -6px; top: 4px; width: 92px; height: 92px; object-fit: contain; filter: drop-shadow(0 6px 8px rgba(0,0,0,.5)); pointer-events: none; }
+    .opp-name { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: 18px; letter-spacing: .02em; color: var(--tint); margin-top: 2px; max-width: 62%; line-height: 1.05; }
+    .opp-tier { font-size: 10.5px; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; color: rgba(255,244,220,.75);
+      background: rgba(0,0,0,.28); border: 1px solid rgba(255,244,220,.12); border-radius: 999px; padding: 2px 8px; margin-top: 4px; }
+    .opp-desc { font-size: 11.5px; font-weight: 700; line-height: 1.3; color: rgba(255,244,220,.72); margin-top: auto; padding-top: 34px; }
+    .opp-meter { display: flex; gap: 4px; margin-top: 8px; }
+    .opp-meter i { width: 14px; height: 12px; background: rgba(255,244,220,.14); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+    .opp-easy   { --tint: #8fe0a3; } .opp-easy   .opp-meter i:nth-child(-n+1) { background: var(--tint); }
+    .opp-normal { --tint: #8fc8f0; } .opp-normal .opp-meter i:nth-child(-n+2) { background: var(--tint); }
+    .opp-hard   { --tint: #f08fae; } .opp-hard   .opp-meter i:nth-child(-n+3) { background: var(--tint); }
+    .opp-expert { --tint: #f5c451; } .opp-expert .opp-meter i:nth-child(-n+4) { background: var(--tint); box-shadow: 0 0 6px var(--tint); }
+    @media (min-width: 761px) {
+      .opp-sheet { left: 5vw; right: auto; bottom: 7vh; width: 480px; border-radius: 26px; border-width: 1px; padding: 18px; }
+      .opp-sheet::before { display: none; }
+      .opp-card { min-height: 180px; }
+    }
+    @media (max-width: 360px) {
+      .opp-grid { grid-template-columns: 1fr; }
+      .opp-card { min-height: 0; }
+      .opp-desc { padding-top: 6px; }
+    }
 
     /* Menu button is styled as the plaque tab (.plaque-menu-tab) on the top edge. */
 
@@ -666,7 +775,7 @@
     }
     #techTreeBtn:active { background: rgba(60,50,110,0.9); }
 
-    /* ── Tech tree overlay ── */
+    /* ── Tech tree overlay (lane × tier research graph) ── */
     .tech-overlay {
       position: absolute;
       inset: 0;
@@ -680,135 +789,138 @@
     .tech-overlay.hidden { display: none; }
     .tech-panel {
       position: relative;
-      /* chiselled-rock panel frame */
-      background: #41464f; /* flat stone frame */
-      border: 3px solid #11141c;
-      box-shadow:
-        inset 0 2px 0 rgba(160,175,200,0.32),
-        inset 0 -3px 8px rgba(0,0,0,0.55),
-        inset 0 0 0 2px rgba(42,46,54,0.7),
-        0 10px 30px rgba(0,0,0,0.6);
-      clip-path: polygon(
-        2% 0%, 98% 0%, 100% 3%, 100% 97%, 98% 100%,
-        2% 100%, 0% 97%, 0% 3%
-      );
-      max-width: 660px;
+      display: flex;
+      flex-direction: column;
       width: 95%;
+      max-width: 760px;
       max-height: 88vh;
-      overflow-y: auto;
-      padding: 20px;
+      overflow: hidden;            /* the graph scrolls inside; header + detail pane stay put */
+      padding: 18px 20px 16px;
+      border-radius: 14px;
+      color: #d6dbe6;
+      background: radial-gradient(120% 90% at 50% 0%, #1c2233 0%, #11141d 60%, #0b0d14 100%);
+      border: 1px solid #2b3446;
+      box-shadow: 0 18px 50px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.05);
     }
     .tech-header {
+      flex: 0 0 auto;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      gap: 10px;
-      margin-bottom: 18px;
-      padding-bottom: 14px;
-      border-bottom: 2px solid #11141c;
+      gap: 12px;
+      margin-bottom: 12px;
     }
     .tech-title {
-      font-size: 20px;
-      font-weight: 900;
-      letter-spacing: 0.5px;
-      /* warm gold display title to match the rock/gold accent */
+      font-size: 19px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
       background: linear-gradient(180deg, #ffe9b0 0%, #e7c24a 60%, #c79a26 100%);
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
       color: #e7c24a;
-      filter: drop-shadow(0 2px 0 rgba(0,0,0,0.45));
     }
-    .tech-aura  {
-      font-size: 13px;
+    .tech-aura {
+      margin-left: auto;
       font-weight: 800;
-      color: #e7c24a;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+      font-size: 13px;
+      color: #ffd86a;
+      background: rgba(231,194,74,.12);
+      border: 1px solid rgba(231,194,74,.35);
+      border-radius: 999px;
+      padding: 4px 12px;
     }
     .tech-close {
       flex: 0 0 auto;
-      background: #565c67; /* flat stone */
-      border: 2px solid #11141c;
-      color: #e3e8f0;
-      font-size: 18px;
+      font-size: 16px;
       line-height: 1;
       cursor: pointer;
-      padding: 5px 11px;
-      box-shadow:
-        inset 0 1px 0 rgba(160,175,200,0.32),
-        inset 0 -2px 4px rgba(0,0,0,0.55);
-      clip-path: polygon(15% 0%, 85% 0%, 100% 28%, 100% 72%, 85% 100%, 15% 100%, 0% 72%, 0% 28%);
+      padding: 6px 11px;
     }
-    .tech-close:active { transform: translateY(1px); }
-    .tech-section { margin-bottom: 18px; }
-    .tech-section-title {
-      font-size: 11px;
-      font-weight: 800;
-      color: #aab4c6;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      margin-bottom: 6px;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    #techBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+    .tt-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 2px; }
+    .tt-slot {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      font-size: 12px; color: #aab4c6;
+      background: rgba(255,255,255,.03); border: 1px solid #263044; border-radius: 10px;
+      padding: 8px 12px; margin-bottom: 14px;
     }
-    .tech-branch-label {
-      font-size: 11px;
-      font-weight: 700;
-      color: #e7c24a;
-      margin-bottom: 8px;
+    .tt-slot b { color: #e7c24a; }
+    .tt-slot .bar { flex: 1 1 80px; height: 6px; border-radius: 3px; background: #1f2533; overflow: hidden; }
+    .tt-slot .bar i { display: block; height: 100%; background: linear-gradient(90deg, #c79a26, #ffd86a); }
+    .tt-slot.idle b { color: #7fd6ff; }
+    .tt-slot.idle .bar i { background: #5fd0ff; opacity: .45; }
+    .tt-graph { position: relative; display: grid; grid-template-columns: 96px repeat(3, minmax(0, 1fr)); column-gap: 18px; row-gap: 14px; padding-bottom: 4px; }
+    .tt-tiers, .tt-lane { display: contents; }
+    .tt-tier { font-size: 10px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #6f7a90; text-align: center; padding-bottom: 4px; border-bottom: 1px dashed #263044; }
+    .tt-lane-label { align-self: center; font-size: 11px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #aab4c6; padding-right: 6px; line-height: 1.3; }
+    .tt-lane-label small { display: block; font-size: 9px; font-weight: 600; letter-spacing: .4px; color: #e7c24a; text-transform: none; }
+    .tt-cell { display: flex; flex-direction: column; gap: 8px; justify-content: center; min-height: 64px; min-width: 0; }
+    .tt-cell.pick { position: relative; padding: 6px; border: 1px dashed rgba(231,194,74,.35); border-radius: 12px; }
+    .tt-cell.pick::before { content: 'choose one'; position: absolute; top: -8px; left: 10px; font-size: 9px; font-weight: 800; letter-spacing: .8px; text-transform: uppercase; color: #e7c24a; background: #11141d; padding: 0 6px; }
+    .tt-cell.pick.locked-branch::before { content: 'choice made'; color: #33e0a0; }
+    .tt-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+    .tt-node {
+      position: relative; display: flex; align-items: center; gap: 10px; min-width: 0;
+      padding: 7px 10px 7px 7px; border-radius: 12px; cursor: pointer; outline: none;
+      background: linear-gradient(180deg, #1d2432, #151a25); border: 1px solid #2b3446;
+      transition: transform .1s, box-shadow .15s, border-color .15s;
     }
-    .tech-nodes { display: flex; flex-wrap: wrap; gap: 8px; }
-    .tech-node {
-      flex: 1;
-      min-width: 140px;
-      max-width: 200px;
-      padding: 10px 12px;
-      /* chiselled rock chip */
-      border: 2px solid #11141c;
-      background: #4b515c; /* flat stone chip */
-      box-shadow:
-        inset 0 1px 0 rgba(160,175,200,0.30),
-        inset 0 -2px 5px rgba(0,0,0,0.55);
-      clip-path: polygon(6% 0%, 94% 0%, 100% 14%, 100% 86%, 94% 100%, 6% 100%, 0% 86%, 0% 14%);
-      cursor: pointer;
-      transition: filter 0.12s, transform 0.08s;
+    .tt-node:hover, .tt-node:focus-visible { transform: translateY(-1px); border-color: #4a5a78; }
+    .tt-node.sel { border-color: #5fd0ff; box-shadow: 0 0 0 2px rgba(95,208,255,.25); }
+    .tt-med { position: relative; flex: 0 0 auto; width: 46px; height: 46px; border-radius: 50%; background: #0e1119; display: grid; place-items: center; }
+    .tt-med img { width: 44px; height: 44px; object-fit: contain; }
+    .tt-med span { font-size: 20px; }
+    .tt-ring { position: absolute; inset: -3px; border-radius: 50%; border: 3px solid #333c4e; pointer-events: none; }
+    .tt-txt { min-width: 0; }
+    .tt-name { font-size: 12.5px; font-weight: 800; color: #eef2f8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tt-meta { display: flex; gap: 6px; margin-top: 3px; font-size: 10px; font-weight: 700; }
+    .tt-cost { color: #ffd86a; }
+    .tt-time { color: #8b94a4; }
+    .tt-badge { position: absolute; top: -7px; right: -6px; font-size: 10px; font-weight: 900; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; border: 2px solid #11141d; }
+    .tt-node.available .tt-ring { border-color: #5fd0ff; box-shadow: 0 0 10px rgba(95,208,255,.45); }
+    .tt-node.available { border-color: #2f5670; }
+    .tt-node.researched .tt-ring { border-color: #33e0a0; }
+    .tt-node.researched { background: linear-gradient(180deg, #183a33, #12281f); border-color: #245a48; }
+    .tt-node.researched .tt-badge { background: #33e0a0; color: #062; }
+    .tt-node.researching .tt-ring {
+      border-color: transparent;
+      background: conic-gradient(#ffd86a var(--p, 0%), #3a3020 0);
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
     }
-    .tech-node:hover:not(.tech-node--locked):not(.tech-node--researched) {
-      filter: brightness(1.18);
+    .tt-node.researching { background: linear-gradient(180deg, #3a3120, #2a2417); border-color: #6a5626; box-shadow: 0 0 12px rgba(231,194,74,.25); }
+    .tt-node.researching .tt-badge { background: #ffd86a; color: #4a3300; }
+    .tt-node.locked { opacity: .45; filter: saturate(.4); }
+    .tt-node.locked .tt-badge { background: #2a3040; color: #8b94a4; }
+    .tt-node.poor .tt-cost { color: #ff8a5a; }
+    .tt-node.poor .tt-ring { border-color: #7a4a2a; }
+    /* detail pane — flex sibling of the scroll area, so it is always visible at the panel bottom */
+    .tt-detail {
+      flex: 0 0 auto;
+      display: flex; gap: 14px; align-items: center;
+      margin-top: 12px; padding: 12px 14px; border-radius: 12px;
+      background: rgba(255,255,255,.04); border: 1px solid #2b3446;
+      box-shadow: 0 -8px 20px rgba(0,0,0,.35);
+      min-height: 72px;
     }
-    .tech-node:active:not(.tech-node--locked):not(.tech-node--researched) {
-      transform: translateY(1px);
+    .tt-detail .tt-med { width: 56px; height: 56px; }
+    .tt-detail .tt-med img { width: 54px; height: 54px; }
+    .tt-detail-txt { flex: 1 1 0; min-width: 0; }
+    .tt-detail h4 { margin: 0 0 2px; font-size: 14px; color: #eef2f8; }
+    .tt-detail h4 span { font-weight: 600; color: #8b94a4; font-size: 11px; }
+    .tt-detail p { margin: 0; font-size: 12px; color: #c2c8d4; line-height: 1.4; }
+    .tt-detail .req { font-size: 11px; color: #8b94a4; margin-top: 3px; }
+    .tt-detail .req b { color: #33e0a0; font-weight: 700; }
+    .tt-detail .req s { text-decoration: none; opacity: .8; }
+    .tt-btn {
+      flex: 0 0 auto; padding: 9px 18px; border-radius: 10px;
+      font-weight: 800; font-size: 13px; cursor: pointer;
+      border: 1px solid #3fa7d6; color: #062f45;
+      background: linear-gradient(180deg, #8fe0ff, #3fb7ea);
+      box-shadow: 0 4px 12px rgba(95,208,255,.25);
     }
-    .tech-node--researched {
-      /* teal gem aura — researched/owned */
-      border-color: #11141c;
-      background:
-        linear-gradient(180deg, rgba(95,208,255,0.18) 0%, rgba(0,0,0,0) 30%),
-        linear-gradient(180deg, #2f5a4e 0%, #234a42 55%, #1b3a34 100%);
-      box-shadow:
-        inset 0 1px 0 rgba(95,208,255,0.32),
-        inset 0 -2px 5px rgba(0,0,0,0.5),
-        0 0 8px rgba(51,224,160,0.3);
-      cursor: default;
-    }
-    .tech-node--locked { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
-    .tech-node--poor   {
-      cursor: not-allowed;
-      filter: saturate(0.7) brightness(0.85);
-    }
-    .tech-node-art {
-      display: block; width: 100%; height: 72px; object-fit: contain;
-      margin: -2px auto 7px;
-      filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55));
-    }
-    .tech-node--researched .tech-node-art { opacity: 0.92; }
-    .tech-node-name  { font-size: 13px; font-weight: 800; color: #f0f3f8; margin-bottom: 3px; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
-    .tech-node-cost  { font-size: 11px; color: #e7c24a; margin-bottom: 4px; }
-    .tech-node-desc  { font-size: 10px; color: #c2c8d4; line-height: 1.4; }
-    .tech-node-status { font-size: 11px; font-weight: 800; margin-top: 6px; }
-    .status-researched { color: #33e0a0; }
-    .status-available  { color: #5fd0ff; }
-    .status-locked     { color: #8b94a4; }
-    .status-poor       { color: #e08a4a; }
+    .tt-btn:active { transform: translateY(1px); }
+    .tt-btn[disabled] { background: #232a38; color: #7a8598; border-color: #2b3446; box-shadow: none; cursor: not-allowed; transform: none; }
 
     /* ── Build Teleport button ── */
     #teleportBtn {
@@ -828,7 +940,51 @@
       border-color: #0ef;
       background: rgba(0,80,120,0.95);
       color: #fff;
+    }
+
+    /* ── Build Farm / Buy Devotion button (Phase 4 economy) ── */
+    #economyBtn {
+      display: none;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: bold;
+      border: 2px solid #5a3;
+      border-radius: 8px;
+      background: rgba(20,60,20,0.85);
+      color: #9e6;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+    #economyBtn:active { background: rgba(30,80,30,0.9); }
+    #economyBtn.active {
+      border-color: #7f0;
+      background: rgba(30,100,30,0.95);
+      color: #fff;
       box-shadow: 0 0 10px rgba(0,200,255,0.4);
+    }
+
+    /* ── Farm/Road placement mode: Cancel button + compact legend ── */
+    #placementCancelBtn {
+      border-color: #a33;
+      background: rgba(60,20,20,0.85);
+      color: #f88;
+    }
+    #placementCancelBtn:active { background: rgba(90,30,30,0.9); }
+    .placement-legend {
+      position: absolute;
+      left: 50%;
+      bottom: 118px;
+      transform: translateX(-50%);
+      background: rgba(10,10,20,0.82);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #cfd6e6;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 40;
     }
 
     /* Settings button is styled as the small gear (.plaque-gear) inside the plaque. */
@@ -849,7 +1005,8 @@
     #opponentTurnOverlay {
       position: fixed;
       inset: 0;
-      background: #0a0a1a;
+      background: radial-gradient(120% 90% at 50% 0%, #17301f 0%, #0d1f14 55%, #070f0a 100%);
+      font-family: 'Nunito', system-ui, sans-serif;
       z-index: 200;
       display: flex;
       flex-direction: column;
@@ -860,66 +1017,136 @@
     }
     #opponentTurnOverlay.hidden { display: none; }
     #opponentTurnCard {
-      background: rgba(20, 20, 50, 1);
-      border: 2px solid #4a90d9;
-      border-radius: 16px;
-      padding: 40px 64px;
+      width: min(420px, 88vw);
+      background: linear-gradient(180deg, rgba(13,31,20,.9), rgba(9,22,14,.96));
+      border: 1px solid rgba(255,244,220,.12);
+      border-radius: 26px;
+      padding: 36px 28px 30px;
       text-align: center;
-      color: #e8e8ff;
-      font-size: 22px;
-      line-height: 1.8;
+      color: #fff4dc;
+      font-size: 16px;
+      line-height: 1.5;
       pointer-events: none;
       user-select: none;
-      box-shadow: 0 0 40px rgba(74, 144, 217, 0.2);
+      box-shadow: 0 20px 50px rgba(0,0,0,.5);
     }
-    #opponentTurnCard .spinner { font-size: 40px; animation: spin-slow 3s linear infinite; }
+    #opponentTurnCard .spinner { display: block; width: 64px; height: 64px; margin: 0 auto 8px; animation: spin-slow 12s linear infinite; }
+    #opponentTurnCard .spinner svg { width: 100%; height: 100%; stroke: #f5c451; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
     @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-    #opponentTurnCard .label { font-weight: bold; font-size: 24px; margin-top: 8px; color: #fff; }
-    #opponentTurnCard .opp-name { color: #4a90d9; font-size: 18px; margin-top: 4px; }
-    #opponentTurnCard .sublabel { font-size: 14px; color: #556; margin-top: 12px; letter-spacing: 0.05em; }
+    #opponentTurnCard .label { font-weight: 900; font-size: 13px; letter-spacing: .28em; text-transform: uppercase; color: rgba(255,244,220,.6); margin-top: 6px; }
+    #opponentTurnCard .hand-name { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: 40px; line-height: 1.05; color: #f5c451; margin-top: 4px; text-shadow: 0 3px 0 #b9821a, 0 8px 18px rgba(0,0,0,.45); }
+    #opponentTurnCard .sublabel { font-size: 13px; font-weight: 700; color: rgba(255,244,220,.55); margin-top: 16px; }
+    /* ── Faction choice overlay (immediate, before Round 1) ── */
+    #factionChoiceOverlay {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(120% 90% at 50% 0%, rgba(23,48,31,.96) 0%, rgba(13,31,20,.97) 55%, rgba(7,15,10,.98) 100%);
+      backdrop-filter: blur(8px);
+      z-index: 210;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 18px 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
+      font-family: 'Nunito', system-ui, sans-serif;
+      color: #fff4dc;
+      overflow-y: auto;
+    }
+    #factionChoiceOverlay.hidden { display: none; }
+    #factionChoiceOverlay .fc-title { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: clamp(26px, 7vw, 36px); line-height: 1.1; color: #f5c451; text-align: center; text-shadow: 0 3px 0 #b9821a, 0 8px 18px rgba(0,0,0,.45); }
+    #factionChoiceOverlay .fc-sub { color: rgba(255,244,220,.65); font-size: 13px; font-weight: 700; text-align: center; max-width: 420px; margin-bottom: 4px; }
+    #factionChoiceOverlay .fc-choices { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; width: 100%; max-width: 640px; }
+    #factionChoiceOverlay .fc-card {
+      --tint: #ffb054;
+      position: relative; flex: 1 1 260px; max-width: 310px;
+      background: linear-gradient(180deg, rgba(255,244,220,.07), rgba(255,244,220,.03));
+      border: 1px solid rgba(255,244,220,.12);
+      border-radius: 22px;
+      padding: 18px 18px 16px;
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      box-shadow: 0 6px 0 rgba(0,0,0,.35), 0 16px 40px rgba(0,0,0,.4);
+      transition: transform .08s, border-color .15s, box-shadow .08s;
+    }
+    #factionChoiceOverlay .fc-card::before { content: ''; position: absolute; right: -40px; top: -40px; width: 200px; height: 200px; border-radius: 50%;
+      background: radial-gradient(circle, color-mix(in srgb, var(--tint) 45%, transparent), transparent 70%); pointer-events: none; }
+    #factionChoiceOverlay .fc-card:hover { border-color: color-mix(in srgb, var(--tint) 70%, transparent); }
+    #factionChoiceOverlay .fc-card:active { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,.35); }
+    #factionChoiceOverlay .fc-card.fc-agrar { --tint: #ffb054; }
+    #factionChoiceOverlay .fc-card.fc-temple { --tint: #8f7bff; }
+    #factionChoiceOverlay .fc-art { position: absolute; right: -4px; top: 2px; width: 118px; height: 118px; object-fit: contain; filter: drop-shadow(0 8px 10px rgba(0,0,0,.5)); pointer-events: none; }
+    #factionChoiceOverlay .fc-kicker { font-size: 10.5px; font-weight: 900; letter-spacing: .28em; text-transform: uppercase; color: rgba(255,244,220,.55); }
+    #factionChoiceOverlay .fc-card .fc-name { font-family: 'Lilita One', 'Nunito', sans-serif; font-size: 30px; line-height: 1; color: var(--tint); margin: 2px 0 14px; }
+    #factionChoiceOverlay .fc-card ul { margin: 0; padding: 0; list-style: none; font-size: 13px; font-weight: 700; color: rgba(255,244,220,.8); line-height: 1.5; }
+    #factionChoiceOverlay .fc-card li { position: relative; padding-left: 16px; }
+    #factionChoiceOverlay .fc-card li::before { content: ''; position: absolute; left: 0; top: 7px; width: 9px; height: 8px; background: var(--tint); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
+    #factionChoiceOverlay .fc-pick { display: inline-block; margin-top: 14px; font-family: 'Lilita One', sans-serif; font-size: 15px; letter-spacing: .05em; color: var(--tint); }
+    #factionChoiceOverlay .fc-locked { color: rgba(255,244,220,.6); font-size: 14px; font-weight: 700; margin-top: 8px; }
     /* ── Subtle non-blocking "waiting for opponent" pill (vs-AI / online) ── */
     /* Persistent opponent-turn banner — carved-stone slab (same family as the
        bottom 3D HUD slabs: #5e6470 fill, octagon bevel, chiselled rim). */
     #waitingIndicator {
       position: fixed;
-      top: 16px;
+      top: calc(env(safe-area-inset-top, 0px) + 16px);
       left: 50%;
       transform: translateX(-50%);
       z-index: 120;               /* above the board, below menus/overlays */
       display: flex;
       align-items: center;
       gap: 11px;
-      padding: 12px 30px;
-      background: #5e6470;
-      color: #eef1f7;
-      font-size: 15px;
+      padding: 10px 22px;
+      background: rgba(9,22,14,.86);
+      color: #fff4dc;
+      font-size: 14px;
       font-weight: 800;
-      letter-spacing: 0.03em;
-      /* octagon bevel silhouette — matches the HUD slabs */
-      clip-path: polygon(4% 0%, 96% 0%, 100% 26%, 100% 74%, 96% 100%, 4% 100%, 0% 74%, 0% 26%);
-      box-shadow:
-        inset 0 0 0 2px #11141c,
-        inset 2px 2px 0 rgba(160,175,200,0.30),
-        inset -2px -2px 0 rgba(0,0,0,0.45);
-      filter: drop-shadow(0 5px 10px rgba(0,0,0,0.55));
-      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      letter-spacing: 0.02em;
+      border-radius: 999px;
+      border: 1px solid rgba(255,244,220,.14);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 6px 18px rgba(0,0,0,.45);
       pointer-events: none;       /* never blocks the board */
       user-select: none;
       white-space: nowrap;
     }
     #waitingIndicator.hidden { display: none; }
+    #trainingQueueBanner {
+      position: fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 16px);
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 120;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 10px 22px;
+      background: rgba(9,22,14,.86);
+      color: #fff4dc;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      border-radius: 999px;
+      border: 1px solid rgba(255,244,220,.14);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 6px 18px rgba(0,0,0,.45);
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+    }
+    #trainingQueueBanner.hidden { display: none; }
     #waitingIndicator .wi-dot {
       width: 10px; height: 10px; border-radius: 50%;
-      background: #ffd98a;
-      box-shadow: 0 0 6px rgba(255,217,138,0.7);
+      background: #f5c451;
+      box-shadow: 0 0 6px rgba(245,196,81,0.7);
       animation: wi-pulse 1.1s ease-in-out infinite;
     }
-    #waitingIndicator .wi-name { color: #ffd98a; }
+    #waitingIndicator .wi-name { color: #f5c451; }
 
     /* Toast notifications — small carved-stone chips, auto-dismissed, stacked. */
     #toastStack {
       position: fixed;
-      top: 70px;
+      top: calc(env(safe-area-inset-top, 0px) + 70px);
       right: 14px;
       z-index: 121;               /* above the board / banner, below overlays */
       display: flex;
@@ -930,20 +1157,17 @@
       max-width: 82vw;
     }
     .toast {
-      background: #5e6470;
-      color: #eef1f7;
-      font-size: 13.5px;
-      font-weight: 700;
+      background: rgba(9,22,14,.9);
+      color: #fff4dc;
+      font-size: 13px;
+      font-weight: 800;
       letter-spacing: 0.02em;
-      padding: 10px 20px;
+      padding: 9px 16px;
       max-width: 100%;
-      clip-path: polygon(4% 0%, 96% 0%, 100% 26%, 100% 74%, 96% 100%, 4% 100%, 0% 74%, 0% 26%);
-      box-shadow:
-        inset 0 0 0 2px #11141c,
-        inset 2px 2px 0 rgba(160,175,200,0.30),
-        inset -2px -2px 0 rgba(0,0,0,0.45);
-      filter: drop-shadow(0 5px 10px rgba(0,0,0,0.55));
-      text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+      border-radius: 999px;
+      border: 1px solid rgba(255,244,220,.14);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 6px 18px rgba(0,0,0,.45);
       white-space: nowrap;
       opacity: 0;
       transform: translateX(18px);
@@ -951,7 +1175,7 @@
     }
     .toast.show { opacity: 1; transform: translateX(0); }
     .toast.hide { opacity: 0; transform: translateX(18px); }
-    .toast.good { color: #bdf0c6; }
+    .toast.good { color: #8fe0a3; border-color: rgba(143,224,163,.35); }
     .toast.bad  { color: #f3b3b3; }
     @media (prefers-reduced-motion: reduce) {
       .toast { transition: opacity 0.2s ease; transform: none; }
@@ -1007,7 +1231,7 @@
        (that distortion is what squished the wide "Connect" button).
        The octagon scales cleanly to any button width.
        ============================================================ */
-    .menu-btn, .lobby-btn, .action-btn, .tile-btn,
+    .action-btn, .tile-btn,
     #captureBtn, #teleportBtn, #restartBtn,
     .settings-reset, .settings-close, .tech-close {
       background: #5e6470;
@@ -1024,13 +1248,13 @@
       backdrop-filter: none;
       transition: filter 0.12s ease, transform 0.05s ease;
     }
-    .menu-btn:hover, .lobby-btn:hover, .action-btn:hover, .tile-btn:hover,
+    .action-btn:hover, .tile-btn:hover,
     #captureBtn:hover, #teleportBtn:hover, #restartBtn:hover,
     .settings-reset:hover, .settings-close:hover, .tech-close:hover {
       filter: drop-shadow(0 6px 11px rgba(0,0,0,0.6)) brightness(1.08);
     }
     /* Pressed = slab shoved in: drops + bevel flips */
-    .menu-btn:active, .lobby-btn:active, .action-btn:active, .tile-btn:active,
+    .action-btn:active, .tile-btn:active,
     #captureBtn:active, #teleportBtn:active, #restartBtn:active,
     .settings-reset:active, .settings-close:active, .tech-close:active {
       transform: translateY(2px);
@@ -1041,17 +1265,17 @@
         inset -2px -2px 0 rgba(160,175,200,0.18);    /* light now bottom-right */
     }
     /* Disabled stone reads cold + sunken */
-    .action-btn:disabled, .lobby-btn:disabled, #captureBtn:disabled,
+    .action-btn:disabled, #captureBtn:disabled,
     #teleportBtn:disabled, .tile-btn.disabled {
       filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4)) grayscale(0.55) brightness(0.7);
       cursor: not-allowed;
     }
     /* Respect reduced-motion: kill the press jump */
     @media (prefers-reduced-motion: reduce) {
-      .menu-btn, .lobby-btn, .action-btn, .tile-btn,
+      .action-btn, .tile-btn,
       #captureBtn, #teleportBtn, #restartBtn,
       .settings-reset, .settings-close, .tech-close { transition: none; }
-      .menu-btn:active, .lobby-btn:active, .action-btn:active, .tile-btn:active,
+      .action-btn:active, .tile-btn:active,
       #captureBtn:active, #teleportBtn:active, #restartBtn:active,
       .settings-reset:active, .settings-close:active, .tech-close:active { transform: none; }
     }
@@ -1109,7 +1333,7 @@
     #spectatorBanner {
       display: none;
       position: absolute;
-      top: 44px;
+      top: calc(env(safe-area-inset-top, 0px) + 44px);
       left: 0;
       right: 0;
       z-index: 25;
@@ -1156,12 +1380,22 @@
         max-width: 96vw;
         max-height: 90vh;
       }
-      .tech-node { min-width: 132px; }
+      .tt-graph { column-gap: 12px; grid-template-columns: 84px repeat(3, minmax(0, 1fr)); }
     }
 
     /* ── Phones (≤480px) ── */
     @media (max-width: 480px) {
-      .top-bar { padding: 6px 8px 0; }
+      /* Keep the notch / Dynamic Island inset (0 in a normal browser tab). */
+      .top-bar { padding: calc(env(safe-area-inset-top, 0px) + 6px) 8px 0 calc(env(safe-area-inset-left, 0px) + 8px); }
+      /* Phones: the HUD fills the top two rows, so the banners stack below the
+         player chips instead of covering them — training, then waiting, then toasts. */
+      #trainingQueueBanner { top: calc(env(safe-area-inset-top, 0px) + 100px); max-width: 94vw; }
+      #waitingIndicator { top: calc(env(safe-area-inset-top, 0px) + 150px); }
+      #toastStack { top: calc(env(safe-area-inset-top, 0px) + 200px); }
+      .mtribe { padding: 10px 10px; grid-template-columns: minmax(0, 1fr) 44px; }
+      .mtribe b { font-size: 19px; }
+      .mtribe .sig { width: 44px; height: 44px; }
+      .mtribe .sig svg { width: 26px; height: 26px; }
       .stone-plaque {
         width: 94vw;
         margin-top: 20px;
@@ -1193,13 +1427,29 @@
       }
       .tech-header { margin-bottom: 14px; }
       .tech-title, .settings-title { font-size: 18px; }
-      /* tech nodes go full-width and stack so they're tappable */
-      .tech-node {
-        flex: 1 1 100%;
-        min-width: 0;
-        max-width: none;
-        padding: 12px 14px;
-      }
+      /* research graph: lane label becomes a row header, three narrow tier
+         columns, medallion stacked over the name; detail pane stays pinned */
+      .tech-panel { padding: 12px 10px calc(env(safe-area-inset-bottom, 0px) + 10px); }
+      .tt-graph { grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 10px; row-gap: 8px; }
+      .tt-tiers > div:first-child { display: none; }
+      .tt-tier { font-size: 9px; letter-spacing: .8px; }
+      .tt-lane-label { grid-column: 1 / -1; padding: 8px 2px 0; font-size: 10px; }
+      .tt-lane-label small { display: none; }
+      .tt-cell { min-height: 0; gap: 6px; }
+      .tt-cell.pick { padding: 8px 4px 4px; }
+      .tt-cell.pick::before { left: 6px; }
+      .tt-node { flex-direction: column; align-items: stretch; gap: 5px; padding: 8px 6px 6px; text-align: center; border-radius: 10px; }
+      .tt-med { width: 38px; height: 38px; margin: 0 auto; }
+      .tt-med img { width: 36px; height: 36px; }
+      .tt-med span { font-size: 17px; }
+      .tt-name { font-size: 11px; white-space: normal; line-height: 1.15; }
+      .tt-meta { justify-content: center; gap: 5px; font-size: 9.5px; }
+      .tt-slot { font-size: 11px; padding: 7px 9px; }
+      .tt-slot .bar { flex-basis: 100%; }
+      .tt-detail { flex-wrap: wrap; gap: 10px; padding: 10px; margin-top: 8px; }
+      .tt-detail .tt-med { width: 44px; height: 44px; }
+      .tt-detail .tt-med img { width: 42px; height: 42px; }
+      .tt-btn { flex-basis: 100%; }
 
       /* Unit-card tray: shrink + horizontal scroll, stay centred.
          Stats removed → bigger picture, slightly tighter cards. */
@@ -1211,7 +1461,8 @@
       .unit-card { width: 84px; padding: 6px 5px 5px; }
       .unit-card-thumb { width: 64px; height: 64px; }
       .unit-card-name { font-size: 10px; }
-      .unit-card-cost { font-size: 10px; padding: 2px 6px; }
+      .unit-card-stats { gap: 3px; }
+      .unit-card-cost, .unit-card-pop { font-size: 10px; padding: 2px 6px; }
       .spawn-arrow { width: 44px; min-width: 44px; font-size: 26px; }
 
       /* contextual action buttons stay reachable + tap-sized */
@@ -1226,9 +1477,6 @@
       .log-toggle { padding: 5px 10px; font-size: 11px; }
 
       /* menu / lobby panels fit narrow screens */
-      .menu-title { font-size: 26px; }
-      .menu-btn { padding: 14px 24px; font-size: 16px; }
-      .menu-buttons { min-width: 0; width: 86vw; }
       .lobby-panel { width: 92vw; padding: 16px; }
     }
 
@@ -1237,24 +1485,74 @@
       .tech-panel, .settings-panel { max-height: 96vh; }
       #combatLog.open { max-height: 70px; }
     }
+    /* ── Touch devices (phones / tablets) ── */
+    /* Instant, clean taps: no grey tap flash, no double-tap-zoom wait, no text
+       selection when a finger lingers on a button. */
+    button, a, .mbtn, .mtribe, .mpill, .hud-chip, .opp-card, .fc-card, .lobby-room-item button {
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+      -webkit-user-select: none; user-select: none;
+    }
+    @media (hover: none) and (pointer: coarse) {
+      /* backdrop-filter re-blurs everything behind an element on every frame;
+         over the animated 3D board that is one of the most expensive things a
+         mobile WebView can do (19 blurred panels here). Use slightly more
+         opaque fills instead — they read the same at phone size. */
+      *, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+      .menu-sheet2 { background: rgba(23,34,28,.93); }
+      .mbtn.quiet { background: rgba(23,34,28,.86); }
+      .menu-chip { background: rgba(8,20,14,.88); }
+      /* Clear press feedback the moment a finger lands. */
+      .mbtn:active, .mtribe:active, .mpill:active { filter: brightness(1.12); }
+    }
   </style>
 </head>
 <body>
   <div class="app">
     <!-- Menu overlay -->
     <div class="menu-overlay" id="menuOverlay">
+      <canvas id="menuScene"></canvas>
+      <div class="menu-sky"></div>
       <!-- Main menu -->
       <div id="lobbyMain">
-        <div class="menu-title">Hex Strategy</div>
-        <div class="menu-subtitle">Choose game mode</div>
-        <div class="menu-buttons">
-          <button class="menu-btn menu-continue" id="menuContinue">▶ Continue game</button>
-          <button class="menu-btn" id="menuVsAI">⚔ vs AI</button>
-          <button class="menu-btn" id="menuVsHardAI">💀 vs Hard AI</button>
-          <button class="menu-btn" id="menu2P">👥 2 Players</button>
-          <button class="menu-btn" id="menuCustom">⚙ Custom Game (2–6)</button>
-          <button class="menu-btn" id="menuOnline">🌐 Online Multiplayer</button>
+        <div class="menu-top">
+          <a class="menu-chip" href="replays"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z"/></svg>Replays</a>
         </div>
+        <div class="menu-brand"><div class="hex">TACTICAL</div><div class="strat">TRIBES</div></div>
+        <div class="menu-stack" id="menuStack">
+          <button class="mbtn gold" id="menuNew">New game</button>
+          <button class="mbtn" id="menuMultiplayer">Multiplayer</button>
+          <button class="mbtn quiet" id="menuContinue"><b id="menuContinueTitle">Continue</b><small id="menuContinueSub">Saved local game</small></button>
+          <a class="mbtn quiet" href="replays">Replays</a>
+        </div>
+        <!-- New game: tribe, then opponent (a friend on this device or an AI level), then Start -->
+        <div class="menu-sheet2 hidden" id="menuNewSheet">
+          <h2>New game</h2>
+          <div class="mlabel">Your tribe</div>
+          <div class="mtribes">
+            <button class="mtribe on" data-tribe="agrar"><span><b>Farmers</b><small>Fields, roads, walls</small></span><span class="sig f"><svg viewBox="0 0 24 24"><path d="M4 20c4-8 12-8 16 0M12 4v8M8 8l4 4 4-4"/></svg></span></button>
+            <button class="mtribe" data-tribe="temple"><span><b>Nomads</b><small>Horses, raids, tents</small></span><span class="sig n"><svg viewBox="0 0 24 24"><path d="M4 20l8-14 8 14zM9 20v-5h6v5"/></svg></span></button>
+          </div>
+          <div class="mlabel">Opponent</div>
+          <div class="mpills" id="menuOppPills">
+            <button class="mpill" data-opp="friend">Friend, same device</button>
+            <button class="mpill" data-opp="easy">Easy</button>
+            <button class="mpill on" data-opp="normal">Normal</button>
+            <button class="mpill" data-opp="hard">Hard</button>
+            <button class="mpill" data-opp="expert">Expert</button>
+          </div>
+          <button class="mbtn gold" id="menuStart">Start</button>
+          <button class="mbtn quiet" data-menu-back>Back</button>
+        </div>
+        <!-- Multiplayer: same device, online rooms, custom seats -->
+        <div class="menu-sheet2 hidden" id="menuMpSheet">
+          <h2>Multiplayer</h2>
+          <button class="mbtn" id="menu2P">Same device <small>pass &amp; play</small></button>
+          <button class="mbtn" id="menuOnline">Online <small>rooms &amp; codes</small></button>
+          <button class="mbtn quiet" id="menuCustom">Custom seats <small>2 – 6, humans or AI</small></button>
+          <button class="mbtn quiet" data-menu-back>Back</button>
+        </div>
+        <div class="menu-foot"><span id="menuRules"></span><span>·</span><span>interslavic.space</span></div>
       </div>
 
       <!-- Custom local game setup: player count + per-seat human/AI picker -->
@@ -1274,10 +1572,49 @@
         <div class="lobby-back" id="setupBack">← Back</div>
       </div>
 
+      <!-- AI difficulty picker (vs AI entry point) — opponent cards over the living board -->
+      <div class="lobby-panel opp-sheet hidden" id="lobbyDifficulty">
+        <div class="opp-head">
+          <div class="opp-kicker">Play vs AI</div>
+          <div class="lobby-title">Choose your opponent</div>
+        </div>
+        <div class="opp-grid">
+          <button class="difficulty-btn opp-card opp-easy" data-difficulty="easy" data-art="warrior:agrar">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Farmhand</span>
+            <span class="opp-tier">Easy</span>
+            <span class="opp-desc">Basic tactics, a little random. Learn the ropes.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+          </button>
+          <button class="difficulty-btn opp-card opp-normal" data-difficulty="normal" data-art="archer:temple">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Captain</span>
+            <span class="opp-tier">Normal</span>
+            <span class="opp-desc">Reads threats, runs a sensible economy.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+          </button>
+          <button class="difficulty-btn opp-card opp-hard" data-difficulty="hard" data-art="heavyknight:agrar">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Warlord</span>
+            <span class="opp-tier">Hard</span>
+            <span class="opp-desc">Plans ahead and moves as one army.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+          </button>
+          <button class="difficulty-btn opp-card opp-expert" data-difficulty="expert" data-art="catapult:temple">
+            <img class="opp-art" alt="" draggable="false">
+            <span class="opp-name">The Oracle</span>
+            <span class="opp-tier">Expert</span>
+            <span class="opp-desc">Searches your replies and judges the future.</span>
+            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+          </button>
+        </div>
+        <div class="lobby-back" id="difficultyBack">← Back</div>
+      </div>
+
       <!-- Online lobby: login step -->
       <div class="lobby-panel hidden" id="lobbyLogin">
-        <div class="lobby-title">🌐 Online Multiplayer</div>
-        <input class="lobby-input" id="lobbyUsernameInput" placeholder="Enter username…" maxlength="24" />
+        <div class="lobby-title">Online Multiplayer</div>
+        <input class="lobby-input" id="lobbyUsernameInput" placeholder="Enter username…" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" maxlength="24" />
         <button class="lobby-btn primary" id="lobbyLoginBtn">Connect</button>
         <div class="lobby-status" id="lobbyLoginStatus"></div>
         <div class="lobby-back" id="lobbyLoginBack">← Back</div>
@@ -1287,28 +1624,20 @@
       <div class="lobby-panel hidden" id="lobbyRoomList">
         <div class="lobby-title">Lobby</div>
         <div class="lobby-status ok" id="lobbyWelcomeMsg"></div>
-        <div class="setup-row">
-          <span>Room size</span>
-          <div class="setup-stepper">
-            <button class="lobby-btn" id="lobbyPlayersDec">−</button>
-            <span id="lobbyPlayersCount">2</span>
-            <button class="lobby-btn" id="lobbyPlayersInc">+</button>
-          </div>
-        </div>
-        <button class="lobby-btn primary" id="lobbyCreateRoomBtn">+ Create Room</button>
+        <button class="lobby-btn primary" id="lobbyCreateRoomBtn">+ Create Room (1v1)</button>
         <hr class="lobby-divider" />
-        <div style="font-size:12px;color:#668;margin-bottom:2px">Open Rooms</div>
+        <div class="lobby-section">Open rooms</div>
         <div class="lobby-room-list" id="lobbyRoomListEl"></div>
         <button class="lobby-btn" id="lobbyRefreshBtn">↻ Refresh</button>
         <hr class="lobby-divider" />
-        <div style="font-size:12px;color:#668">Join by code</div>
+        <div class="lobby-section">Join by code</div>
         <div style="display:flex;gap:8px">
-          <input class="lobby-input" id="lobbyJoinCodeInput" placeholder="Room code…" maxlength="4" style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center" />
+          <input class="lobby-input" id="lobbyJoinCodeInput" placeholder="Room code…" maxlength="4" autocapitalize="characters" autocorrect="off" spellcheck="false" autocomplete="off" style="text-transform:uppercase;letter-spacing:4px;font-size:18px;text-align:center" />
           <button class="lobby-btn" id="lobbyJoinCodeBtn" style="white-space:nowrap">Join</button>
         </div>
         <div class="lobby-status" id="lobbyRoomStatus"></div>
         <hr class="lobby-divider" />
-        <div style="font-size:12px;color:#e90;margin-bottom:2px">👁 Watch a Game</div>
+        <div class="lobby-section">Watch a game</div>
         <div class="lobby-room-list" id="lobbyGameListEl"></div>
         <button class="lobby-btn" id="lobbyRefreshGamesBtn">↻ Refresh Games</button>
         <div class="lobby-back" id="lobbyRoomBack">← Back to Menu</div>
@@ -1358,6 +1687,9 @@
       </div>
       <button id="captureBtn">⚔ Capture Temple</button>
       <button id="teleportBtn">⬡ Teleport</button>
+      <button id="economyBtn">⚑ Build Farm</button>
+      <button id="placementCancelBtn" class="action-btn" style="display:none;">✕ Cancel</button>
+      <div class="placement-legend" id="placementLegend" style="display:none;"></div>
       <div class="action-row">
         <button class="action-btn" id="endTurnBtn">End Turn</button>
         <button id="techTreeBtn">🔬 Research</button>
@@ -1384,7 +1716,7 @@
     <div class="tech-overlay hidden" id="techOverlay">
       <div class="tech-panel">
         <div class="tech-header">
-          <div class="tech-title">🔬 Research</div>
+          <div class="tech-title">Research</div>
           <div class="tech-aura" id="techAuraInfo"></div>
           <button class="tech-close" id="techCloseBtn">✕</button>
         </div>
@@ -1395,11 +1727,42 @@
   <!-- Hot-seat hand-off curtain (opaque; only between two local human seats) -->
   <div id="opponentTurnOverlay" class="hidden">
     <div id="opponentTurnCard">
-      <div class="spinner">⚙</div>
+      <div class="spinner"><svg viewBox="0 0 24 24"><path d="M12 2l8.7 5v10L12 22l-8.7-5V7z"/><path d="M12 7v10M7.7 9.5l4.3 2.5 4.3-2.5M7.7 14.5l4.3-2.5 4.3 2.5"/></svg></div>
       <div class="label">Another player is making a move…</div>
-      <div class="opp-name" id="opponentTurnName"></div>
+      <div class="hand-name" id="opponentTurnName"></div>
       <div class="sublabel">Please wait — the board is hidden during their turn.</div>
     </div>
+  </div>
+  <!-- Faction choice overlay: shown immediately at match start (phase 11 —
+       no more Founding Round), before either player has any units. -->
+  <div id="factionChoiceOverlay" class="hidden">
+    <div class="fc-title" id="fcTitle">Choose your civilization</div>
+    <div class="fc-sub">Your pick is secret until your opponent also chooses. Once made, it cannot be changed.</div>
+    <div class="fc-choices">
+      <div class="fc-card fc-agrar" id="fcAgrarCard" data-art="warrior:agrar">
+        <img class="fc-art" alt="" draggable="false">
+        <div class="fc-kicker">Agrar</div>
+        <div class="fc-name">Farmers</div>
+        <ul>
+          <li>Slower, sturdier units</li>
+          <li>Farms, roads, durable armies</li>
+          <li>Area control: build the network</li>
+        </ul>
+        <span class="fc-pick">CHOOSE ›</span>
+      </div>
+      <div class="fc-card fc-temple" id="fcTempleCard" data-art="horserider:temple">
+        <img class="fc-art" alt="" draggable="false">
+        <div class="fc-kicker">Temple</div>
+        <div class="fc-name">Nomads</div>
+        <ul>
+          <li>Faster, lighter units</li>
+          <li>Temples, mobility, distributed armies</li>
+          <li>Point control: be everywhere</li>
+        </ul>
+        <span class="fc-pick">CHOOSE ›</span>
+      </div>
+    </div>
+    <div class="fc-locked hidden" id="fcLockedNote">Choice locked in. Waiting for the opponent…</div>
   </div>
   <!-- Toast notifications (temple captures, etc.) -->
   <div id="toastStack"></div>
@@ -1408,6 +1771,10 @@
     <span class="wi-dot"></span>
     <span>Waiting for <span class="wi-name" id="waitingIndicatorName"></span> to move…</span>
   </div>
+  <!-- Training queue reminder: what's currently recruiting for the local viewer's player (§5 — deploys next round) -->
+  <div id="trainingQueueBanner" class="hidden"></div>
   <script type="module" src="./src/main.ts"></script>
+  <!-- In-game agent chat drawer (button top-right). Self-mounting; independent of main.ts. -->
+  <script type="module" src="./src/chatPanel.ts"></script>
 </body>
 </html>

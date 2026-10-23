@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>3D model rework — proposals preview</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #12131a; overflow: hidden; }
+      #c { display: block; width: 100vw; height: 100vh; }
+      #hud {
+        position: fixed; top: 12px; left: 14px; z-index: 10; max-width: 430px;
+        font: 13px/1.45 -apple-system, system-ui, sans-serif; color: #cfd3de;
+        background: rgba(18, 19, 26, 0.78); padding: 10px 14px; border-radius: 10px;
+        user-select: none;
+      }
+      #hud h1 { font-size: 15px; margin: 0 0 6px; color: #ffd27a; }
+      #hud p { margin: 4px 0; }
+      #hud b { color: #eef; }
+      #hud .cur { color: #e08080; font-weight: 600; } #hud .prop { color: #80d8a0; font-weight: 600; }
+      #hud .btns { display: flex; gap: 6px; margin: 8px 0 4px; flex-wrap: wrap; }
+      #hud button { background: #2a2a4a; color: #cfd3de; border: 1px solid #445; border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      #hud button:hover { background: #3a3a6a; color: #fff; }
+      #hud small { color: #8a8fa0; }
+      #hud a { color: #9ab; }
+      details { margin-top: 6px; } summary { cursor: pointer; color: #bbc; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <h1>3D model rework — three proposals</h1>
+      <p>Each row: <span class="cur">CURRENT</span> models the game renders today (left) next to <span class="prop">PROPOSED</span> prototypes (right). Nothing is wired into the board yet.</p>
+      <div class="btns">
+        <button data-row="all">Overview</button>
+        <button data-row="1">1 · Faction kits</button>
+        <button data-row="2">2 · Tiles</button>
+        <button data-row="3">3 · Structures</button>
+      </div>
+      <details><summary>What each proposal changes</summary>
+        <p><b>1 · Faction body kits.</b> Today Temple and Agrar humanoids are the same Voxel Guy with a swapped weapon; only the torso tint says whose it is. Proposed: a hooded nomad robe for Temple, a broad straw-hat farmer for Agrar, with the team colour moved to a sash/apron so faction and owner both read at a glance.</p>
+        <p><b>2 · Tile set v2.</b> Bevelled two-tone rims, calmer plains, mixed conifer/broadleaf forests with undergrowth, terraced hills with rock outcrops, and jagged snow-capped mountain clusters instead of one cone.</p>
+        <p><b>3 · Structure set v2.</b> One 10-level ziggurat currently stands in for Ruins, founding, Temple I/II and the Capital. Proposed: real Ruins, an open-pillar Temple I, a two-storey Temple II with banners, and a walled keep for the Capital.</p>
+      </details>
+      <small>Drag to orbit · scroll to zoom · <a href="./tech-proposal">tech tree proposal</a> · <a href="./">back to the game</a></small>
+    </div>
+    <script type="module" src="/src/proposalsPreview.ts"></script>
+  </body>
+</html>

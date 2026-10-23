@@ -8,14 +8,20 @@ import { SerializedGameState } from './serializer';
 export type UnifiedActionName =
   | 'move'
   | 'attack'
+  | 'attack-structure'
   | 'recruit'
-  | 'capture'
+  | 'found'
   | 'destroy'
-  | 'upgrade-temple'
   | 'research'
   | 'build-teleport'
+  | 'build-farm'
+  | 'upgrade-temple'
+  | 'build-road'
+  | 'pillage-road'
+  | 'claim-fertile-site'
   | 'end-turn'
-  | 'resign';
+  | 'resign'
+  | 'choose-faction';
 
 // ── Client → Server messages ──
 
@@ -27,26 +33,30 @@ export type ClientMessage =
   | { type: 'join_room';            roomId: string }
   | { type: 'list_rooms' }
   | { type: 'rejoin_room';          roomId: string }
+  // Leave a room that hasn't started yet (the waiting screen's Back button).
+  | { type: 'leave_room';           roomId: string }
   | { type: 'list_games' }
   | { type: 'spectate';             gameId: string }
   | { type: 'action_select_unit';   unitId: string }
+  // Select an owned structure (Capital or completed City/Temple) — legacy
+  // message name, templeId is now a generic structure id.
   | { type: 'action_select_temple'; templeId: string }
   | { type: 'action_deselect' }
   | { type: 'action_move';          dest: HexCoord }
   | { type: 'action_attack';        targetPos: HexCoord }
   | { type: 'action_spawn';         templeId: string; unitType: UnitType }
-  | { type: 'action_capture' }
-  // Disband an owned unit. Carries unitId explicitly (unlike capture, which
-  // relies on server-side selection) so the remote destroys the SAME unit.
+  // Disband an owned unit. Carries unitId explicitly so the remote destroys
+  // the SAME unit.
   | { type: 'action_destroy';       unitId: string }
-  | { type: 'action_upgrade_temple'; templeId: string }
   | { type: 'action_research';      techId: TechId }
   | { type: 'action_build_teleport'; templeIdA: string; posA: HexCoord; posB: HexCoord }
   | { type: 'action_end_turn' }
   | { type: 'action_resign' }
   // Unified action shape — accepted by the server alongside the legacy
   // `action_*` family. Bots / agents should prefer this since it uses the
-  // same vocabulary as the REST headless API.
+  // same vocabulary as the REST headless API. Structure attacks, founding and
+  // faction choice are ONLY available through this unified shape — no legacy
+  // action_* message for those (added post-redesign).
   | { type: 'action';               action: UnifiedActionName; params?: Record<string, unknown> }
   // Read-only queries for agent ergonomics.
   | { type: 'request_legal_moves';  unitId?: string }   // omit unitId → all units
@@ -90,8 +100,12 @@ export type ServerMessage =
   // bad actions without polling. The field is additive — existing FE clients
   // that ignore unknown keys are unaffected.
   | { type: 'action_error';          message: string; legalMoves?: Record<string, unknown> }
-  | { type: 'opponent_disconnected' }
-  | { type: 'opponent_reconnected' }
+  // A seated player's connection dropped. If they don't rejoin within graceMs
+  // the server resigns them, and the remaining player wins (a normal
+  // state_update with phase 'gameOver' follows). Fields are optional so an
+  // older client/server pair still interoperates.
+  | { type: 'opponent_disconnected'; playerSlot?: number; playerName?: string; graceMs?: number }
+  | { type: 'opponent_reconnected';  playerSlot?: number; playerName?: string }
   // Replies to the read-only query messages.
   | { type: 'legal_moves';           unitId: string | null; actions: Record<string, unknown>[]; legalMoves: Record<string, unknown> | null }
   | { type: 'rules';                 rules: Record<string, unknown> }

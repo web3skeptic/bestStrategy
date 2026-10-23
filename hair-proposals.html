@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unit hair — proposals</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #12131a; overflow: hidden; }
+      #c { display: block; width: 100vw; height: 100vh; }
+      #hud { position: fixed; top: 12px; left: 14px; z-index: 10; max-width: 440px; font: 13px/1.45 -apple-system, system-ui, sans-serif; color: #cfd3de; background: rgba(18,19,26,0.8); padding: 10px 14px; border-radius: 10px; user-select: none; }
+      #hud h1 { font-size: 15px; margin: 0 0 6px; color: #ffd27a; }
+      #hud p { margin: 4px 0; } #hud b { color: #eef; }
+      #hud .btns { display: flex; gap: 6px; margin: 8px 0 4px; flex-wrap: wrap; }
+      #hud button { background: #2a2a4a; color: #cfd3de; border: 1px solid #445; border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+      #hud button:hover { background: #3a3a6a; color: #fff; }
+      #hud small { color: #8a8fa0; } #hud a { color: #9ab; }
+      #blurb { color: #b8c0d0; min-height: 2.6em; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div id="hud">
+      <h1>Unit hair — one head, ten options</h1>
+      <p>Today's hair wraps the whole head and reaches below the brow line, hiding most of the face. Each column shows a bare head, a Warrior and an Archer with that hair. Every option keeps the front of the hair above the eyebrows.</p>
+      <div class="btns" id="styleBtns"><button data-style="all">Overview</button></div>
+      <p id="blurb"></p>
+      <div class="btns"><button id="colorBtn">Team colour: blue</button><button id="spinBtn">Spin: on</button></div>
+      <small>Drag to orbit · scroll to zoom · <a href="./capital-proposals">capital proposals</a> · <a href="./">back to the game</a></small>
+    </div>
+    <script type="module" src="/src/hairProposals.ts"></script>
+  </body>
+</html>

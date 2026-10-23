@@ -5,11 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Game Replay</title>
   <style>
+    @font-face { font-family: 'Lilita One'; src: url('fonts/LilitaOne.woff2') format('woff2'); font-display: swap; }
+    @font-face { font-family: 'Nunito'; src: url('fonts/Nunito.woff2') format('woff2'); font-weight: 200 1000; font-display: swap; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      background: #0d0d1a;
-      color: #ccc;
-      font-family: 'Segoe UI', sans-serif;
+      background: #0a1510;
+      color: #fff4dc;
+      font-family: 'Nunito', 'Segoe UI', system-ui, sans-serif;
       height: 100%;
       overflow: hidden;
     }
@@ -25,8 +27,8 @@
       min-width: 280px;
       max-width: 360px;
       flex-shrink: 0;
-      background: rgba(17,17,34,0.95);
-      border-right: 1px solid #223;
+      background: rgba(9,22,14,.96);
+      border-right: 1px solid rgba(255,244,220,.1);
       padding: 14px;
       overflow-y: auto;
       display: flex;
@@ -34,26 +36,27 @@
       gap: 14px;
     }
     .sidebar h1 {
+      font-family: 'Lilita One', 'Nunito', sans-serif; letter-spacing: .04em;
       font-size: 16px;
-      color: #ccf;
+      color: #f5c451;
       font-weight: bold;
       letter-spacing: 0.5px;
     }
     .sidebar .game-id {
       font-family: monospace;
       font-size: 11px;
-      color: #6ef;
+      color: #f5c451;
       word-break: break-all;
     }
     .section {
-      background: rgba(22,22,44,0.85);
-      border: 1px solid #334;
+      background: rgba(13,31,20,.9);
+      border: 1px solid rgba(255,244,220,.12);
       border-radius: 8px;
       padding: 10px 12px;
     }
     .section h2 {
       font-size: 11px;
-      color: #889;
+      color: rgba(255,244,220,.5);
       text-transform: uppercase;
       letter-spacing: 1px;
       margin-bottom: 8px;
@@ -77,7 +80,7 @@
       line-height: 1.6;
     }
     .move-info .label {
-      color: #889;
+      color: rgba(255,244,220,.5);
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -131,7 +134,7 @@
       border: 1px solid #446;
       border-radius: 6px;
       background: rgba(40,40,80,0.85);
-      color: #ccf;
+      color: #f5c451;
       cursor: pointer;
     }
     .nav-btn:hover:not(:disabled) {
@@ -154,7 +157,7 @@
     .seq-label {
       font-family: monospace;
       font-size: 11px;
-      color: #ccc;
+      color: #fff4dc;
       min-width: 56px;
       text-align: right;
     }
@@ -169,10 +172,10 @@
       padding: 6px;
       font-size: 11px;
       font-weight: bold;
-      border: 1px solid #445;
+      border: 1px solid rgba(255,244,220,.16);
       border-radius: 4px;
       background: rgba(30,30,55,0.85);
-      color: #aab;
+      color: rgba(255,244,220,.7);
       cursor: pointer;
     }
     .fog-btn:hover { background: rgba(50,50,80,0.9); }
@@ -201,7 +204,7 @@
       color: #fce;
       text-align: center;
     }
-    .winner-banner.none { color: #889; background: rgba(30,30,50,0.6); border-color: #334; }
+    .winner-banner.none { color: rgba(255,244,220,.5); background: rgba(30,30,50,0.6); border-color: rgba(255,244,220,.12); }
 
     .error-banner {
       background: rgba(100,30,30,0.85);
@@ -216,7 +219,7 @@
     .canvas-area {
       flex: 1;
       position: relative;
-      background: #0a0a14;
+      background: #0a1510;
     }
     canvas#replayCanvas {
       display: block;
@@ -232,7 +235,7 @@
         max-width: none;
         max-height: 50vh;
         border-right: none;
-        border-bottom: 1px solid #223;
+        border-bottom: 1px solid rgba(255,244,220,.1);
       }
     }
   </style>

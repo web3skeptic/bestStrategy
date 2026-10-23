@@ -4,14 +4,15 @@
 
 import { Renderer } from './renderer';
 import {
-  GameState, Unit, UnitType, UnitStats, Temple, Player, PlayerTech,
-  TeleportBuilding, HexCoord, TechId,
+  GameState, Unit, UnitType, UnitStats, StrategicSite, StrategicSiteState, FoundingProgress, TempleUpgradeProgress,
+  FertileSite, Capital, Farm, Player, PlayerTech,
+  TeleportBuilding, HexCoord, TechId, FactionId, RULES_VERSION,
 } from './types';
 import { generateHexMap, hexKey } from './hex';
 
 // ── Snapshot types — mirror what serializeStateForApi() emits in headlessApi.ts ──
 
-interface SnapshotPlayer { id: number; name: string; color: string; aura: number; popCap: number; currentPop: number; }
+interface SnapshotPlayer { id: number; name: string; color: string; aura: number; faction?: FactionId | null; popCap: number; currentPop: number; }
 interface SnapshotUnit {
   id: string;
   type: UnitType;
@@ -21,17 +22,32 @@ interface SnapshotUnit {
   maxHp: number;
   hasMoved: boolean;
   hasAttacked: boolean;
-  hasCaptured?: boolean;
   stats: {
     atk: number; def: number; spd: number; rng: number; vision: number;
     splash: number; splashFactor: number; canBeRevenged: boolean;
   };
 }
-interface SnapshotTemple { id: string; pos: HexCoord; ownerId: number | null; level: number; }
+interface SnapshotCapital { id: string; pos: HexCoord; playerId: number; hp: number; maxHp: number; defense: number; }
+interface SnapshotSite {
+  id: string; pos: HexCoord; state: StrategicSiteState; ownerId: number | null;
+  founding: FoundingProgress | null; upgrade: TempleUpgradeProgress | null;
+  hp: number; maxHp: number; defense: number; templeLevel: 1 | 2 | null;
+  previousTempleLevel: 1 | 2 | null; previousOwnerId: number | null;
+}
+interface SnapshotFarm {
+  id: string; pos: HexCoord; ownerId: number; state: 'foundingFarm' | 'farm';
+  founding: { playerId: number; unitId: string; startedRound: number; completesRound: number } | null;
+  hp: number; maxHp: number; defense: number;
+}
+interface SnapshotFertileSite { id: string; pos: HexCoord; ownerId: number | null; }
 interface SnapshotTeleport {
   id: string; pos: HexCoord; builtByPlayerId: number; templeId: string; pairedId: string | null;
 }
+interface SnapshotTrainingOrder { playerId: number; unitType: string; structureId: string; readyAtRound: number; }
+interface SnapshotRoad { pos: HexCoord; ownerId: number; }
 interface ApiSnapshot {
+  /** Absent in replays recorded before the v0.2 redesign — treated as incompatible. */
+  rulesVersion?: number;
   phase: 'playing' | 'gameOver';
   currentPlayer: number;
   turnNumber: number;
@@ -40,11 +56,17 @@ interface ApiSnapshot {
   map: {
     radius: number;
     terrain: Record<string, string>;
-    temples: SnapshotTemple[];
+    capitals: SnapshotCapital[];
+    strategicSites: SnapshotSite[];
+    fertileSites?: SnapshotFertileSite[];
+    farms: SnapshotFarm[];
     teleportBuildings: SnapshotTeleport[];
+    roads: SnapshotRoad[];
+    pillagedRoadHexes: string[];
   };
   units: SnapshotUnit[];
   tech: { playerId: number; researched: string[] }[];
+  trainingQueue?: SnapshotTrainingOrder[];
   winner: { id: number; name: string } | null;
 }
 
@@ -71,33 +93,23 @@ interface ReplayDto {
   events: ReplayEventDto[];
 }
 
-// ── Default unit stat shape (used to fill in fields not carried by the API
-//    snapshot: cantShootAfterMove, attackBonusAgainst, defenseBonusAgainst).
-//    We mirror only the boolean / bonus fields, since speed/range/etc come
-//    from the snapshot.
-// ──────────────────────────────────────────────────────────────────────────
-const UNIT_DEFAULTS: Record<UnitType, Pick<UnitStats, 'cantShootAfterMove' | 'attackBonusAgainst' | 'defenseBonusAgainst'>> = {
-  warrior:       { cantShootAfterMove: false },
-  archer:        { cantShootAfterMove: false },
-  catapult:      { cantShootAfterMove: false },
-  horserider:    { cantShootAfterMove: false },
-  heavyknight:   { cantShootAfterMove: false },
-  spearsman:     {
-    cantShootAfterMove: false,
-    attackBonusAgainst:  { horserider: 3.0, heavyknight: 4.0 },
-    defenseBonusAgainst: { horserider: 3.0, heavyknight: 6.0 },
-  },
-  healer:        { cantShootAfterMove: false },
-  damageBooster: { cantShootAfterMove: false },
-  rangeBooster:  { cantShootAfterMove: false },
-};
+// Thrown by apiSnapshotToGameState() for a replay recorded under an older,
+// incompatible ruleset — callers must show a clear message, not crash.
+export class IncompatibleReplayVersionError extends Error {
+  constructor(public readonly foundVersion: number | undefined) {
+    super(`This replay used an older, incompatible ruleset (rulesVersion=${foundVersion ?? 'none'}, current=${RULES_VERSION}) and can no longer be viewed.`);
+    this.name = 'IncompatibleReplayVersionError';
+  }
+}
 
 // ── Convert an API snapshot back into a (rendering-only) GameState. ──
 // We don't reconstruct UI/selection fields (left empty) or per-turn state
 // (spawnedTempleIds). Explored is populated lazily based on viewer.
 function apiSnapshotToGameState(s: ApiSnapshot): GameState {
+  if (s.rulesVersion !== RULES_VERSION) throw new IncompatibleReplayVersionError(s.rulesVersion);
+
   const players: Player[] = s.players.map(p => ({
-    id: p.id, name: p.name, color: p.color, aura: p.aura,
+    id: p.id, name: p.name, color: p.color, aura: p.aura, faction: p.faction ?? null,
   }));
 
   const hills = new Set<string>();
@@ -109,8 +121,24 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
     else if (v === 'forest') forests.add(k);
   }
 
-  const temples: Temple[] = s.map.temples.map(t => ({
-    id: t.id, pos: t.pos, ownerId: t.ownerId, level: t.level,
+  const capitals: Capital[] = s.map.capitals.map(c => ({
+    id: c.id, pos: c.pos, playerId: c.playerId, hp: c.hp, maxHp: c.maxHp, defense: c.defense,
+  }));
+
+  const strategicSites: StrategicSite[] = s.map.strategicSites.map(site => ({
+    id: site.id, pos: site.pos, state: site.state, ownerId: site.ownerId,
+    founding: site.founding, upgrade: site.upgrade ?? null, hp: site.hp, maxHp: site.maxHp, defense: site.defense,
+    templeLevel: site.templeLevel ?? null,
+    previousTempleLevel: site.previousTempleLevel ?? null, previousOwnerId: site.previousOwnerId ?? null,
+  }));
+
+  const fertileSites: FertileSite[] = (s.map.fertileSites ?? []).map(f => ({
+    id: f.id, pos: f.pos, ownerId: f.ownerId,
+  }));
+
+  const farms: Farm[] = (s.map.farms ?? []).map(f => ({
+    id: f.id, pos: f.pos, ownerId: f.ownerId, state: f.state, founding: f.founding,
+    hp: f.hp, maxHp: f.maxHp, defense: f.defense,
   }));
 
   const teleportBuildings: TeleportBuilding[] = s.map.teleportBuildings.map(tp => ({
@@ -119,7 +147,6 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   }));
 
   const units: Unit[] = s.units.map(u => {
-    const def = UNIT_DEFAULTS[u.type] ?? { cantShootAfterMove: false };
     const stats: UnitStats = {
       maxHp: u.maxHp,
       attack: u.stats.atk,
@@ -130,14 +157,13 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
       splash: u.stats.splash,
       splashFactor: u.stats.splashFactor,
       canBeRevenged: u.stats.canBeRevenged,
-      cantShootAfterMove: def.cantShootAfterMove,
+      // No unit in the current roster shoots after moving; the flag isn't
+      // carried by the API snapshot since it never varies at runtime.
+      cantShootAfterMove: false,
     };
-    if (def.attackBonusAgainst) stats.attackBonusAgainst = def.attackBonusAgainst;
-    if (def.defenseBonusAgainst) stats.defenseBonusAgainst = def.defenseBonusAgainst;
     return {
       id: u.id, type: u.type, playerId: u.playerId, stats,
       hp: u.hp, pos: u.pos, hasMoved: u.hasMoved, hasAttacked: u.hasAttacked,
-      hasCaptured: u.hasCaptured ?? false,
     };
   });
 
@@ -150,7 +176,11 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
 
   const playerTech: PlayerTech[] = players.map((_, i) => {
     const entry = s.tech.find(t => t.playerId === i);
-    return { researched: new Set<TechId>((entry?.researched ?? []) as TechId[]) };
+    // The headless/replay snapshot only records completed research, not the
+    // in-progress single-slot state (tech-tree pacing pass) — this is a
+    // rendering-only reconstruction, so a replay never shows a still-
+    // researching tech mid-flight; it appears once completed.
+    return { researched: new Set<TechId>((entry?.researched ?? []) as TechId[]), researching: null };
   });
 
   // Winner — find full Player object by id.
@@ -160,7 +190,10 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
   }
 
   return {
-    players, units, temples,
+    players, units, strategicSites, fertileSites, capitals, farms,
+    trainingQueue: (s.trainingQueue ?? []).map(o => ({ ...o, unitType: o.unitType as UnitType })),
+    roads: (s.map.roads ?? []).map(r => ({ pos: r.pos, ownerId: r.ownerId })),
+    pillagedRoadHexes: new Set(s.map.pillagedRoadHexes ?? []),
     hills, walls, forests,
     explored: players.map(() => new Set<string>(fullyExplored)),
     currentPlayerIndex: s.currentPlayer,
@@ -172,12 +205,12 @@ function apiSnapshotToGameState(s: ApiSnapshot): GameState {
     mapRadius: s.map.radius,
     winner,
     turnNumber: s.turnNumber,
-    selectedUnitId: null, selectedTempleId: null, selectionMode: null,
-    moveHexes: [], attackHexes: [], supportHexes: [],
-    spawnedTempleIds: new Set<string>(),
+    selectedUnitId: null, selectedSiteId: null, selectionMode: null,
+    moveHexes: [], attackHexes: [], structureAttackHexes: [], supportHexes: [],
+    spawnedSiteIds: new Set<string>(),
     playerTech,
     teleportBuildings,
-    buildHexes: [],
+    buildHexes: [], buildKind: null,
   };
 }
 
@@ -193,14 +226,16 @@ function describeAction(ev: ReplayEventDto): string {
     }
     case 'attack':
       return `attack ${String(p.unitId)} → ${String(p.targetId)}`;
+    case 'attack-structure':
+      return `attack structure w/ ${String(p.unitId)}`;
     case 'recruit':
       return `recruit ${String(p.unitType)} at ${String(p.templeId)}`;
-    case 'capture':
-      return `capture w/ ${String(p.unitId)}`;
+    case 'found':
+      return `found w/ ${String(p.unitId)}`;
     case 'destroy':
       return `destroy ${String(p.unitId)}`;
-    case 'upgrade-temple':
-      return `upgrade ${String(p.templeId)}`;
+    case 'choose-faction':
+      return `choose faction`;
     case 'research':
       return `research ${String(p.techId)}`;
     case 'build-teleport':
@@ -244,15 +279,20 @@ function summariseDiff(before: ApiSnapshot | null, after: ApiSnapshot | null): s
     }
   }
 
-  // Temple ownership changes
-  for (const ta of after.map.temples) {
-    const tb = before.map.temples.find(t => t.id === ta.id);
-    if (!tb) continue;
-    if (tb.ownerId !== ta.ownerId) {
-      parts.push(`<span class="chg">${ta.id} owner ${tb.ownerId ?? 'neutral'}→${ta.ownerId ?? 'neutral'}</span>`);
+  // Strategic site state changes (founding/completion/destruction)
+  for (const sa of after.map.strategicSites) {
+    const sb = before.map.strategicSites.find(s => s.id === sa.id);
+    if (!sb) continue;
+    if (sb.state !== sa.state) {
+      parts.push(`<span class="chg">${sa.id} ${sb.state}→${sa.state}</span>`);
     }
-    if (tb.level !== ta.level) {
-      parts.push(`<span class="chg">${ta.id} Lv ${tb.level}→${ta.level}</span>`);
+  }
+  // Capital HP changes
+  for (const ca of after.map.capitals) {
+    const cb = before.map.capitals.find(c => c.id === ca.id);
+    if (!cb) continue;
+    if (cb.hp !== ca.hp) {
+      parts.push(`<span class="chg">${ca.id} HP ${cb.hp}→${ca.hp}</span>`);
     }
   }
 
@@ -335,15 +375,20 @@ async function main(): Promise<void> {
     return;
   }
 
-  // State 0 = initial state (stateBefore of new-game event)
-  states.push(apiSnapshotToGameState(events[0]!.stateBefore));
+  try {
+    // State 0 = initial state (stateBefore of new-game event)
+    states.push(apiSnapshotToGameState(events[0]!.stateBefore));
 
-  // For each subsequent event: state after it = its stateAfter (fallback to
-  // next event's stateBefore if stateAfter is null, e.g. failed actions).
-  for (let i = 1; i < events.length; i++) {
-    const ev = events[i]!;
-    const snap = ev.stateAfter ?? ev.stateBefore;
-    states.push(apiSnapshotToGameState(snap));
+    // For each subsequent event: state after it = its stateAfter (fallback to
+    // next event's stateBefore if stateAfter is null, e.g. failed actions).
+    for (let i = 1; i < events.length; i++) {
+      const ev = events[i]!;
+      const snap = ev.stateAfter ?? ev.stateBefore;
+      states.push(apiSnapshotToGameState(snap));
+    }
+  } catch (err) {
+    errorBox.innerHTML = `<div class="error-banner">${err instanceof Error ? err.message : String(err)}</div>`;
+    return;
   }
 
   // ── Renderer ──

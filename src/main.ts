@@ -1,18 +1,23 @@
-import { GameState, UnitType, HexCoord, UNIT_COSTS, TEMPLE_AURA_PER_LEVEL, templeUpgradeCost, SUPPORT_RANGE, TECH_NODES, TechId, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, MAX_PLAYERS } from './types';
-import { hexEqual, hexKey } from './hex';
+import { GameState, Unit, UnitType, HexCoord, UNIT_COSTS, SUPPORT_RANGE, TECH_NODES, TechId, PlayerTech, TELEPORT_BUILD_COST, UnitStats, Player, PLAYER_COLORS, RULES_VERSION, FactionId, HILL_DEFENSE_BONUS } from './types';
+import { SITE_ESTABLISH_COST, AGRAR_FARM_COST, MAX_ACTIVE_FARMS, TEMPLE_UPGRADE_COST, ROAD_COST_PER_HEX, ROAD_PILLAGE_REBUILD_COST, ROAD_SEGMENTS_PER_ACTIVATION, FERTILE_SITE_INCOME, FARM_MIN_SPACING } from './factions';
+import { hexEqual, hexKey, hexDistance, hexNeighbors } from './hex';
 import { Renderer3D } from './renderer3d';
 import {
   createGameState,
   getCurrentPlayer,
   getUnitAt,
-  getTempleAt,
+  getStrategicSiteAt,
   selectUnit,
-  selectTemple,
+  selectSite,
   deselectAll,
   moveUnit,
   attackUnit,
-  canCaptureTemple,
-  captureTemple,
+  canStartFounding,
+  startFounding,
+  attackStructure,
+  getStructureAt,
+  getOwnedStructures,
+  getPlayerCapital,
   canDestroyUnit,
   destroyUnit,
   spawnUnit,
@@ -21,16 +26,20 @@ import {
   getEffectiveDefense,
   getEffectiveAttack,
   getEffectiveRange,
+  isOnAgrarHomeGround,
+  HOME_GROUND_DEFENSE_BONUS,
   getCurrentPlayerVisible,
   getPlayerVisible,
   canAfford,
-  upgradeTemple,
-  canUpgradeTemple,
   getPopulationCap,
   getPopulationCount,
+  getUnitCommandCost,
+  getProductionSlots,
+  getBusyProductionSlotCount,
   HEALER_HEAL_AMOUNT,
   DAMAGE_BOOST_AMOUNT,
   RANGE_BOOST_AMOUNT,
+  getPlayerIncome,
   getUnlockedUnits,
   canResearch,
   researchTech,
@@ -40,11 +49,35 @@ import {
   getValidTeleportHexes,
   getValidTeleportHexesForOtherTemples,
   getTeleportAt,
+  canStartFarm,
+  startFarm,
+  getValidFarmHexes,
+  getFarmPlacementResult,
+  getAgrarTerritory,
+  isSiteCultivationBlocked,
+  canStartTempleUpgrade,
+  startTempleUpgrade,
+  canBuildRoad,
+  buildRoadPath,
+  getValidRoadHexes,
+  getRoadPlacementResult,
+  isLegalRoadTile,
+  canPillageRoad,
+  pillageRoad,
+  getRoadAt,
+  canClaimFertileSite,
+  claimFertileSite,
+  isAwaitingFactionReveal,
+  chooseFaction,
+  founderDisplayName,
+  unitDisplayName,
+  getUnitCost,
 } from './game';
-import { getUnitThumbnail, getPortalThumbnail } from './unitThumbnails';
-import { runAITurn, runHardAITurn } from './ai';
+import { getUnitThumbnail } from './unitThumbnails';
+import { createMenuScene, MenuScene, MenuPlace } from './menuScene';
+import { runAiTurn, difficultyLabel, AiDifficulty } from './ai';
 import { MultiplayerClient } from './multiplayer';
-import { serialize, deserialize, SerializedGameState } from './serializer';
+import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from './serializer';
 import type { ServerMessage } from './protocol';
 
 // ── Unit artwork (bundled by Vite) — same sprites the board renderer uses ──
@@ -68,6 +101,9 @@ const UNIT_ART: Record<UnitType, string> = {
   healer:       healerImg,
   damageBooster: damageBoosterImg,
   rangeBooster:  rangeBoosterImg,
+  // Placeholder — Builder/Acolyte has no dedicated art yet (§46 asset
+  // fallback policy). Reuses the Warrior thumbnail.
+  founder:      warriorImg,
 };
 
 const AI_DELAY_MS = 600;
@@ -76,7 +112,7 @@ const AI_DELAY_MS = 600;
 // 'human' = a local seat, 'normal'/'hard' = an AI seat of that difficulty. This
 // generalizes the old single "AI is slot 1" assumption to N players with any mix
 // of humans and AIs (1 human + 3 AI, hotseat N humans, etc.).
-type ControllerKind = 'human' | 'normal' | 'hard';
+type ControllerKind = 'human' | AiDifficulty;
 let controllers: ControllerKind[] = ['human', 'normal'];
 
 // Is the given local slot controlled by an AI? (Never true in online play — the
@@ -97,15 +133,23 @@ let spectatorMode = false;
 let myPlayerSlot = 0;
 let mpClient: MultiplayerClient | null = null;
 
+// Online session bookkeeping, used to get back into the same room/game after a
+// dropped connection.
+let mpRoomId: string | null = null;            // room we're seated (or waiting) in
+let mpSpectatingGameId: string | null = null;  // game we're watching
+let mpReconnecting = false;                    // logged in again, rejoin still to send
+let mpRetryTimer: number | null = null;
+let mpRetryCount = 0;
+
+// Instant selection (online): the latest select/deselect applied locally while
+// actions are still awaiting the server. Re-applied on top of replies to older
+// actions so the selection doesn't flicker back. See sendOrCall.
+let pendingLocalSelection: (() => void) | null = null;
+
 // Optimistic-research rollback snapshot (MP only). Set when a research purchase
 // is applied locally before the server confirms; cleared on the next authoritative
 // state_update, or restored if the server rejects the action.
 let researchRollback: SerializedGameState | null = null;
-
-// After spawning in MP we don't know the server-assigned unit id, so remember the
-// temple we spawned from and auto-select whatever unit lands on it in the next
-// state_update (mirrors the local path's spawn→select for instant move range).
-let pendingSpawnSelectTempleId: string | null = null;
 
 // Hot-seat hand-off: true while the opaque privacy curtain is up between two local
 // human seats (see doEndTurn / dismissHandoff). Never set in vs-AI or online games.
@@ -119,15 +163,29 @@ renderer.init(state.mapRadius);
 // Debug-only getters for automated verification of touch camera controls.
 (window as any).__cam = () => renderer.cameraDebug();
 (window as any).__tinted = () => renderer.tintedUnitCount();
+(window as any).__perf = () => renderer.perfInfo();
+// iOS Safari only applies :active (button press feedback) when the page has a
+// touch listener; a passive no-op is enough and costs nothing.
+document.addEventListener('touchstart', () => {}, { passive: true });
+
+// The board is completely covered while the menu is up (the menu draws its own
+// living-board scene), so stop rendering it — two 3D scenes at once was the
+// main cause of menu lag on phones. Tracks every way the menu opens/closes.
+{
+  const overlay = document.getElementById('menuOverlay')!;
+  const sync = () => renderer.setPaused(!overlay.classList.contains('hidden'));
+  new MutationObserver(sync).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  sync();
+}
 (window as any).__sel = () => ({
   mode: state.selectionMode,
-  templeId: state.selectedTempleId,
+  siteId: state.selectedSiteId,
   unitId: state.selectedUnitId,
 });
 (window as any).__own = () => {
   const myId = state.players[myPlayerSlot]?.id;
   return {
-    temples: state.temples.filter(t => t.ownerId === myId).map(t => ({ id: t.id, ...renderer.projectHex(t.pos) })),
+    structures: getOwnedStructures(state, myId ?? -1).map(s => ({ id: s.id, ...renderer.projectHex(s.pos) })),
     units: state.units.filter(u => u.playerId === myId).map(u => ({ id: u.id, ...renderer.projectHex(u.pos) })),
   };
 };
@@ -136,7 +194,7 @@ renderer.init(state.mapRadius);
 renderer.setHudButtons([
   { id: 'endTurn', label: 'End Turn', icon: 'endturn' },
   { id: 'research', label: 'Research', icon: 'flask' },
-  { id: 'temple', label: 'Level Up Temple', icon: 'temple', price: true },
+  { id: 'found', label: 'Found', icon: 'temple', price: true },
   // Contextual: shown only when a living own unit is selected on your turn. The
   // 'price' strip doubles as the two-tap "Sure?" confirm label.
   { id: 'destroy', label: 'Destroy', icon: 'skull', price: true },
@@ -144,7 +202,6 @@ renderer.setHudButtons([
 
 // ── UI elements ──
 const menuOverlay = document.getElementById('menuOverlay')!;
-const menuVsAI = document.getElementById('menuVsAI')!;
 const menu2P = document.getElementById('menu2P')!;
 const menuBtn = document.getElementById('menuBtn')!;
 const menuContinueBtn = document.getElementById('menuContinue') as HTMLButtonElement;
@@ -160,13 +217,34 @@ const spawnBar = document.getElementById('spawnBar')!;
 const spawnBarWrap = document.getElementById('spawnBarWrap')!;
 const spawnArrowLeft = document.getElementById('spawnArrowLeft') as HTMLButtonElement;
 const spawnArrowRight = document.getElementById('spawnArrowRight') as HTMLButtonElement;
-const captureBtn = document.getElementById('captureBtn')!;
+const captureBtn = document.getElementById('captureBtn') as HTMLButtonElement;
 const buildTeleportBtn = document.getElementById('teleportBtn')!;
+const economyBtn = document.getElementById('economyBtn') as HTMLButtonElement;
+const placementCancelBtn = document.getElementById('placementCancelBtn') as HTMLButtonElement;
+const placementLegendEl = document.getElementById('placementLegend')!;
 
 // Two-tap confirm guard for the destroy/disband HUD slab. Holds the unit id the
 // slab is currently "armed" for; re-armed only when the SAME unit is tapped
 // twice. Any selection change / re-render for a different unit resets it.
 let destroyArmedUnitId: string | null = null;
+
+// End-round notification (§21-23). `endTurnArmed` is the two-tap confirm
+// guard for ending the round while units remain unacted (mirrors
+// destroyArmedUnitId's pattern) — reset the instant the turn actually ends.
+// `announcedAllActedThisTurn` gates the one-time "All units have acted"
+// toast so it fires once per turn, not on every re-render.
+let endTurnArmed = false;
+let announcedAllActedThisTurn = false;
+
+// A unit "has an action left" until BOTH hasMoved and hasAttacked are spent.
+// Move/attack order is agnostic (see game.ts) — a unit that has attacked but
+// not yet moved (or vice versa) still has a legal action available, so only
+// having spent both truly means done for the round (§22). Builder-only
+// actions (found, build-farm, build-road) always set both flags together,
+// since those fully consume the activation regardless of order.
+function unactedUnitCount(state: GameState, playerId: number): number {
+  return state.units.filter(u => u.hp > 0 && u.playerId === playerId && !(u.hasMoved && u.hasAttacked)).length;
+}
 
 // Show the contextual destroy slab for `unitId`, reflecting the current armed
 // state (red tint + "Sure?" strip when armed).
@@ -197,6 +275,12 @@ const opponentTurnNameEl = document.getElementById('opponentTurnName')!;
 const waitingIndicator = document.getElementById('waitingIndicator')!;
 const waitingIndicatorName = document.getElementById('waitingIndicatorName')!;
 const toastStack = document.getElementById('toastStack')!;
+const factionChoiceOverlay = document.getElementById('factionChoiceOverlay')!;
+const fcTitle = document.getElementById('fcTitle')!;
+const fcAgrarCard = document.getElementById('fcAgrarCard')!;
+const fcTempleCard = document.getElementById('fcTempleCard')!;
+const fcLockedNote = document.getElementById('fcLockedNote')!;
+const trainingQueueBanner = document.getElementById('trainingQueueBanner')!;
 
 // ── Toast notifications (carved-stone chips, auto-dismiss, stack) ──
 function showToast(msg: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): void {
@@ -212,39 +296,41 @@ function showToast(msg: string, kind: 'good' | 'bad' | 'neutral' = 'neutral'): v
   }, 3500);
 }
 
-// Temple ownership snapshot, diffed each render() so a capture (which can happen
-// silently on auto-capture, on any player's turn, locally or via a server state
-// update) always raises a toast from the local viewer's perspective.
-let prevTempleOwners = new Map<string, number | null>();
-function snapshotTempleOwners(): void {
-  prevTempleOwners = new Map(state.temples.map(t => [t.id, t.ownerId]));
+// Strategic-site state snapshot, diffed each render() so founding completion/
+// failure/destruction (which can happen silently — resolved at the start of
+// the founding player's round, or via combat, on any player's turn, locally
+// or via a server state update) always raises a toast from the local
+// viewer's perspective. Replaces the old instant-capture toast (§7-11).
+let prevSiteStates = new Map<string, string>();
+function snapshotSiteStates(): void {
+  prevSiteStates = new Map(state.strategicSites.map(s => [s.id, s.state]));
 }
 function checkTempleCaptureToasts(): void {
-  // Treat a changed temple set (new game / first render) as a silent (re)init.
-  const sameBoard = prevTempleOwners.size === state.temples.length
-    && state.temples.every(t => prevTempleOwners.has(t.id));
-  if (!sameBoard) { snapshotTempleOwners(); return; }
+  // Treat a changed site set (new game / first render) as a silent (re)init.
+  const sameBoard = prevSiteStates.size === state.strategicSites.length
+    && state.strategicSites.every(s => prevSiteStates.has(s.id));
+  if (!sameBoard) { snapshotSiteStates(); return; }
 
   const viewer = viewerPlayerSlot();
   const nameOf = (id: number | null): string =>
     id === null ? 'Neutral' : (state.players[id]?.name ?? `Player ${id + 1}`);
 
-  for (const t of state.temples) {
-    const prev = prevTempleOwners.get(t.id)!;
-    if (prev === t.ownerId) continue;
-    const now = t.ownerId;
-    const wasNeutral = prev === null;
-    if (viewer !== null && now === viewer) {
-      showToast(wasNeutral ? 'You captured a neutral temple' : 'You captured a temple', 'good');
-    } else if (viewer !== null && prev === viewer) {
-      showToast(now === null ? 'Your temple was neutralized' : 'An opponent captured your temple', 'bad');
-    } else if (now === null) {
-      showToast(`${nameOf(prev)}'s temple went neutral`);
-    } else {
-      showToast(`${nameOf(now)} captured ${wasNeutral ? 'a neutral temple' : 'a temple'}`);
+  for (const s of state.strategicSites) {
+    const prev = prevSiteStates.get(s.id)!;
+    if (prev === s.state) continue;
+    if (s.state === 'temple' && prev === 'foundingTemple') {
+      const isMine = viewer !== null && s.ownerId === viewer;
+      showToast(isMine ? `You founded a Temple I` : `${nameOf(s.ownerId)} founded a Temple I`, isMine ? 'good' : undefined);
+    } else if (s.state === 'temple' && prev === 'upgradingTemple') {
+      const isMine = viewer !== null && s.ownerId === viewer;
+      showToast(isMine ? `Your Temple reached Temple II` : `${nameOf(s.ownerId)}'s Temple reached Temple II`, isMine ? 'good' : undefined);
+    } else if (s.state === 'ruins' && (prev === 'temple' || prev === 'upgradingTemple')) {
+      showToast('A Temple was reduced to Ruins');
+    } else if ((s.state === 'neutral' || s.state === 'ruins') && prev === 'foundingTemple') {
+      showToast('A founding attempt failed', 'bad');
     }
   }
-  snapshotTempleOwners();
+  snapshotSiteStates();
 }
 const myPlayerBadge = document.getElementById('myPlayerBadge')!;
 const settingsBtn = document.getElementById('settingsBtn')!;
@@ -287,41 +373,57 @@ const spectatorBanner = document.getElementById('spectatorBanner')!;
 const spectatorInfo = document.getElementById('spectatorInfo')!;
 const lobbySetup = document.getElementById('lobbySetup')!;
 const playerListEl = document.getElementById('playerList')!;
+const lobbyDifficulty = document.getElementById('lobbyDifficulty')!;
+const difficultyBack = document.getElementById('difficultyBack')!;
 
-function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup'): void {
+function showLobbyPanel(panel: 'main' | 'login' | 'rooms' | 'waiting' | 'setup' | 'difficulty'): void {
   lobbyMain.classList.toggle('hidden', panel !== 'main');
   lobbyLogin.classList.toggle('hidden', panel !== 'login');
   lobbyRoomListPanel.classList.toggle('hidden', panel !== 'rooms');
   lobbyWaiting.classList.toggle('hidden', panel !== 'waiting');
   lobbySetup.classList.toggle('hidden', panel !== 'setup');
-  if (panel === 'main') updateContinueButton(); // reflect any saved local game
+  lobbyDifficulty.classList.toggle('hidden', panel !== 'difficulty');
+  if (panel === 'main') { updateContinueButton(); showMenuSheet('main'); } // reflect any saved local game, back to the main stack
+  if (panel === 'difficulty') fillOpponentPortraits();
   if (panel === 'setup') renderSetupSlots();
+}
+
+// Opponent cards carry a rendered 3D portrait (same thumbnails as the unit
+// cards), tinted to the card's colour. Rendered once, on first open.
+let opponentPortraitsDone = false;
+function fillOpponentPortraits(): void {
+  if (opponentPortraitsDone) return;
+  opponentPortraitsDone = true;
+  for (const card of Array.from(document.querySelectorAll<HTMLElement>('#lobbyDifficulty .opp-card'))) {
+    const [type, faction] = (card.dataset.art ?? 'warrior:temple').split(':') as [UnitType, FactionId];
+    const tint = getComputedStyle(card).getPropertyValue('--tint').trim() || '#f5c451';
+    const img = card.querySelector<HTMLImageElement>('.opp-art');
+    if (img) img.src = getUnitThumbnail(type, tint, faction);
+  }
 }
 
 // ── sendOrCall: in multiplayer mode send action to server; locally call fn ──
 
+function isSelectionAction(action: object): boolean {
+  const t = (action as { type?: string }).type;
+  return t === 'action_select_unit' || t === 'action_select_temple' || t === 'action_deselect';
+}
+
 function sendOrCall(action: object, localFn: () => void): void {
   if (multiplayerMode && mpClient) {
+    // Selection changes only UI state, so apply it locally at once instead of
+    // waiting a round-trip for the server's echo (which used to make every tap
+    // lag on a slow connection). The server's reply then confirms it.
+    if (isSelectionAction(action) && !spectatorMode) {
+      try { localFn(); } catch { /* the server's reply will correct it */ }
+      if (mpClient.sendAction(action as Parameters<MultiplayerClient['sendAction']>[0])) pendingLocalSelection = localFn;
+      render();
+      return;
+    }
     mpClient.sendAction(action as Parameters<MultiplayerClient['sendAction']>[0]);
   } else {
     localFn();
     render();
-  }
-}
-
-// After a MP spawn, select the unit the server placed on the flagged temple so
-// its movement range shows immediately — matching the local spawn→select flow.
-// Also nudges the server's selection so a follow-up move validates against it.
-function maybeAutoSelectSpawned(): void {
-  if (!pendingSpawnSelectTempleId || !multiplayerMode || spectatorMode) { pendingSpawnSelectTempleId = null; return; }
-  const templeId = pendingSpawnSelectTempleId;
-  pendingSpawnSelectTempleId = null;
-  if (state.currentPlayerIndex !== myPlayerSlot) return;   // not my turn anymore
-  const temple = state.temples.find(t => t.id === templeId);
-  const unit = temple ? getUnitAt(state, temple.pos) : null;
-  if (unit && unit.playerId === myPlayerSlot && state.selectedUnitId !== unit.id) {
-    selectUnit(state, unit.id);                                     // local: instant range
-    mpClient?.sendAction({ type: 'action_select_unit', unitId: unit.id }); // keep server in sync
   }
 }
 
@@ -336,16 +438,17 @@ function maybeAutoSelectSpawned(): void {
 // never draw a slide out of a hidden origin, so no hidden disposition leaks.
 function applyStateWithAnimation(newState: GameState): void {
   const viewer = renderViewerSlot();
-  if (gameStarted && !spectatorMode && multiplayerMode && viewer !== undefined) {
+  // Spectators see every unit, so every move animates for them.
+  if (gameStarted && multiplayerMode && (spectatorMode || viewer !== undefined)) {
     const prev = state;
-    const prevVisible = getPlayerVisible(prev, viewer);
+    const prevVisible = spectatorMode || viewer === undefined ? null : getPlayerVisible(prev, viewer);
     const prevById = new Map(prev.units.map(u => [u.id, u]));
     for (const u of newState.units) {
       if (u.hp <= 0) continue;
       const old = prevById.get(u.id);
       if (!old || old.hp <= 0 || hexEqual(old.pos, u.pos)) continue;
       const mine = u.playerId === viewer;
-      if (mine || prevVisible.has(hexKey(old.pos))) {
+      if (!prevVisible || mine || prevVisible.has(hexKey(old.pos))) {
         renderer.startMoveAnimation(u.id, old.pos);
       }
     }
@@ -356,8 +459,24 @@ function applyStateWithAnimation(newState: GameState): void {
 // ── Multiplayer event handler ──
 
 function handleMultiplayerEvent(event: ServerMessage): void {
+  try {
+    handleMultiplayerEventInner(event);
+  } catch (err) {
+    if (err instanceof IncompatibleRulesVersionError) {
+      // The server was updated to a new ruleset mid-session (stale tab). Fail
+      // cleanly instead of leaving the UI in a half-deserialized, broken state.
+      logCombat('This game used an older ruleset and can no longer be displayed. Please reload the page.');
+      alert('This game used an older, incompatible ruleset. Please reload the page.');
+      return;
+    }
+    throw err;
+  }
+}
+
+function handleMultiplayerEventInner(event: ServerMessage): void {
   switch (event.type) {
     case 'logged_in': {
+      if (mpReconnecting) { finishReconnect(); break; }
       lobbyLoginStatus.textContent = '';
       lobbyWelcomeMsg.textContent = `Logged in as ${event.username}`;
       showLobbyPanel('rooms');
@@ -366,11 +485,15 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       break;
     }
     case 'error': {
+      // During a reconnect the server may still hold our old session for a
+      // moment ("Username already taken") — just try again shortly.
+      if (mpReconnecting && mpClient) { mpReconnecting = false; mpClient.disconnect(); scheduleReconnect(); break; }
       lobbyLoginStatus.textContent = event.message;
       lobbyLoginStatus.className = 'lobby-status err';
       break;
     }
     case 'room_created': {
+      mpRoomId = event.roomId;
       lobbyRoomCode.textContent = event.roomId;
       lobbyWaitingStatus.textContent = event.expectedPlayers > 2
         ? `Waiting for players… 1/${event.expectedPlayers} joined`
@@ -379,6 +502,7 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       break;
     }
     case 'room_waiting': {
+      mpRoomId = event.roomId;
       lobbyRoomCode.textContent = event.roomId;
       lobbyWaitingStatus.textContent = `Waiting for players… ${event.joined}/${event.expected} joined`;
       showLobbyPanel('waiting');
@@ -396,10 +520,13 @@ function handleMultiplayerEvent(event: ServerMessage): void {
         const size = room.expectedPlayers > 2
           ? ` <span style="color:#89a">[${room.joinedPlayers}/${room.expectedPlayers}]</span>`
           : '';
-        item.innerHTML = `<span>${room.id} — ${room.player1Name}${size}</span>`;
+        // Names come from other players: escape them (a name like
+        // <img onerror=…> used to run script in everyone's lobby).
+        item.innerHTML = `<span>${escapeHtml(room.id)} — ${escapeHtml(room.player1Name)}${size}</span>`;
         const btn = document.createElement('button');
         btn.textContent = 'Join';
         btn.addEventListener('click', () => {
+          mpRoomId = room.id;
           mpClient!.joinRoom(room.id);
         });
         item.appendChild(btn);
@@ -411,16 +538,26 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       cancelAITurn();
       myPlayerSlot = event.playerSlot;
       multiplayerMode = true;
+      researchRollback = null;
+      pendingLocalSelection = null;
+      hideOpponentCountdown();
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
-      snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+      snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
+      buildingFarm = null;
+      buildingRoad = null;
   handoffPending = false;
       hideMenu();
       closeTechTree();
       combatLog.innerHTML = '';
+      // Open on our own Capital, as local games do. The default board-centre
+      // framing showed only fog online, and on a phone the home area was
+      // entirely off-screen.
+      const homeCapital = getPlayerCapital(state, state.players[myPlayerSlot]?.id ?? myPlayerSlot);
+      if (homeCapital) renderer.focusOnHex(homeCapital.pos);
       const myPlayer = state.players[myPlayerSlot];
       console.log(`[MP] game_start: slot=${myPlayerSlot} name="${myPlayer?.name}" color=${myPlayer?.color} currentPlayerIndex=${state.currentPlayerIndex}`);
       logCombat(`--- Online Game started (you are Player ${myPlayerSlot + 1}) ---`);
@@ -430,15 +567,32 @@ function handleMultiplayerEvent(event: ServerMessage): void {
     case 'state_update': {
       researchRollback = null;   // authoritative state supersedes any optimistic research
       applyStateWithAnimation(deserialize(event.state)); // tween visible moves, don't teleport
-      maybeAutoSelectSpawned();  // auto-select a freshly-spawned unit (task: instant range)
+      // A reply to an older action still carries the older selection; keep the
+      // newer one the player already sees until every action is answered.
+      mpClient?.actionAnswered();
+      if (pendingLocalSelection && mpClient && mpClient.inflight > 0) {
+        try { pendingLocalSelection(); } catch { /* server state wins */ }
+      } else {
+        pendingLocalSelection = null;
+      }
+      if (state.phase === 'gameOver' && opponentCountdown) {
+        const won = state.winner?.id === state.players[myPlayerSlot]?.id;
+        hideOpponentCountdown();
+        if (won) showToast('Your opponent left — you win!', 'good');
+      }
       // If the tech tree is open (view-only browsing during the opponent's turn),
       // re-render it so node clickability tracks whose turn it now is.
       if (!techOverlay.classList.contains('hidden')) renderTechTree();
       render();
-      logCombat(event.lastAction);
+      // The server drops log lines about hexes we can't see, which can leave
+      // this empty.
+      if (event.lastAction) logCombat(event.lastAction);
       break;
     }
     case 'action_error': {
+      mpClient?.actionAnswered();
+      if (!mpClient || mpClient.inflight === 0) pendingLocalSelection = null;
+      showToast(event.message, 'bad');
       // If an optimistic research purchase was rejected, roll it back so the UI
       // matches the server. (Card gating makes this path rare — a desync only.)
       if (researchRollback) {
@@ -451,11 +605,16 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       break;
     }
     case 'opponent_disconnected': {
-      logCombat('Opponent disconnected. Waiting for reconnect…');
+      const name = event.playerName ?? 'Opponent';
+      logCombat(`${name} disconnected. Waiting for them to reconnect…`);
+      if (gameStarted && !spectatorMode && state.phase !== 'gameOver') {
+        showOpponentCountdown(name, event.graceMs ?? 30000);
+      }
       break;
     }
     case 'opponent_reconnected': {
-      logCombat('Opponent reconnected.');
+      logCombat(`${event.playerName ?? 'Opponent'} reconnected.`);
+      hideOpponentCountdown();
       break;
     }
     case 'game_list': {
@@ -469,10 +628,11 @@ function handleMultiplayerEvent(event: ServerMessage): void {
         item.className = 'lobby-room-item';
         const statusLabel = game.status === 'done' ? ' (finished)' : '';
         const specLabel = game.spectatorCount > 0 ? ` [${game.spectatorCount} watching]` : '';
-        item.innerHTML = `<span>${game.player1Name} vs ${game.player2Name}${statusLabel}${specLabel}</span>`;
+        item.innerHTML = `<span>${escapeHtml(game.player1Name)} vs ${escapeHtml(game.player2Name)}${statusLabel}${specLabel}</span>`;
         const btn = document.createElement('button');
         btn.textContent = 'Watch';
         btn.addEventListener('click', () => {
+          mpSpectatingGameId = game.gameId;
           mpClient!.spectateGame(game.gameId);
         });
         item.appendChild(btn);
@@ -486,10 +646,12 @@ function handleMultiplayerEvent(event: ServerMessage): void {
       multiplayerMode = true;
       controllers = [];  // online: server-authoritative, no local AI
       state = deserialize(event.state);
-      snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+      snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
       renderer.init(state.mapRadius);
       gameStarted = true;
       buildingTeleport = null;
+      buildingFarm = null;
+      buildingRoad = null;
   handoffPending = false;
       hideMenu();
       closeTechTree();
@@ -503,6 +665,173 @@ function handleMultiplayerEvent(event: ServerMessage): void {
   }
 }
 
+// ── HTML escaping for player-provided text ──
+
+function escapeHtml(text: unknown): string {
+  return String(text ?? '').replace(/[&<>"'`]/g, c => `&#${c.charCodeAt(0)};`);
+}
+
+// Player colours come from the server; only allow plain colour syntax inside style="".
+function safeCssColor(color: unknown): string {
+  const c = String(color ?? '');
+  return /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{1,20}|(rgb|hsl)a?\([0-9.,%\s]+\))$/.test(c) ? c : '#888';
+}
+
+// ── Connection loss: banner + automatic reconnect ──
+
+const RECONNECT_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 15000];
+let connBanner: HTMLDivElement | null = null;
+
+function showConnBanner(text: string, buttons: [string, () => void][]): void {
+  if (!connBanner) {
+    connBanner = document.createElement('div');
+    connBanner.id = 'mpConnBanner';
+    connBanner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;background:#3a1210;color:#fff4dc;border:1px solid #c0503c;border-radius:10px;padding:8px 14px;font:600 14px Nunito,system-ui,sans-serif;display:flex;gap:10px;align-items:center;box-shadow:0 4px 16px rgba(0,0,0,.4);max-width:calc(100vw - 32px)';
+    document.body.appendChild(connBanner);
+  }
+  connBanner.replaceChildren();
+  const label = document.createElement('span');
+  label.textContent = text;
+  connBanner.appendChild(label);
+  for (const [name, onClick] of buttons) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.style.cssText = 'font:inherit;padding:3px 10px;border-radius:6px;border:0;cursor:pointer';
+    b.addEventListener('click', onClick);
+    connBanner.appendChild(b);
+  }
+}
+
+function hideConnBanner(): void {
+  connBanner?.remove();
+  connBanner = null;
+}
+
+function stopReconnect(): void {
+  if (mpRetryTimer !== null) { clearTimeout(mpRetryTimer); mpRetryTimer = null; }
+  mpReconnecting = false;
+  hideConnBanner();
+}
+
+function leaveAfterConnectionLoss(): void {
+  leaveActiveGame();
+  spectatorBanner.style.display = 'none';
+  gameStarted = false;
+  showMenu();
+}
+
+function onConnectionDropped(): void {
+  if (!mpClient) return;
+  if (gameStarted && multiplayerMode) logCombat('Connection to the server lost. Reconnecting…');
+  lobbyLoginStatus.textContent = 'Connection lost. Reconnecting…';
+  lobbyLoginStatus.className = 'lobby-status err';
+  mpReconnecting = false;
+  mpRetryCount = 0;
+  scheduleReconnect();
+}
+
+function scheduleReconnect(): void {
+  const client = mpClient;
+  if (!client) return;
+  if (mpRetryCount >= RECONNECT_DELAYS_MS.length) {
+    showConnBanner('Could not reconnect to the server.', [
+      ['Retry', () => { mpRetryCount = 0; scheduleReconnect(); }],
+      ['Leave', leaveAfterConnectionLoss],
+    ]);
+    lobbyLoginStatus.textContent = 'Could not reconnect to the server';
+    return;
+  }
+  const delay = RECONNECT_DELAYS_MS[mpRetryCount++]!;
+  showConnBanner(mpRetryCount > 1 ? `Connection lost. Reconnecting (attempt ${mpRetryCount})…` : 'Connection lost. Reconnecting…',
+    [['Leave', leaveAfterConnectionLoss]]);
+  mpRetryTimer = window.setTimeout(async () => {
+    mpRetryTimer = null;
+    if (mpClient !== client) return;
+    try {
+      await client.connect();
+      if (mpClient !== client) { client.disconnect(); return; }
+      if (!client.username) { finishReconnect(); return; }
+      mpReconnecting = true;
+      client.login(client.username); // → logged_in → finishReconnect()
+    } catch {
+      if (mpClient === client) scheduleReconnect();
+    }
+  }, delay);
+}
+
+// Logged in again: get back into the room / game we were in.
+function finishReconnect(): void {
+  mpReconnecting = false;
+  hideConnBanner();
+  lobbyLoginStatus.textContent = '';
+  lobbyLoginStatus.className = 'lobby-status';
+  if (!mpClient) return;
+  if (spectatorMode && mpSpectatingGameId) mpClient.spectateGame(mpSpectatingGameId);
+  else if (mpRoomId) mpClient.rejoinRoom(mpRoomId); // server answers with game_start (or room_waiting)
+  else { mpClient.listRooms(); mpClient.listGames(); }
+  if (gameStarted && multiplayerMode) logCombat('Reconnected to the server.');
+  showToast('Reconnected', 'good');
+}
+
+// ── Opponent disconnected: 30-second countdown ──
+// The server owns the timeout: if the opponent hasn't rejoined when it runs
+// out, the server resigns them and a game-over state_update follows. This card
+// just shows the wait.
+
+let opponentCountdown: { el: HTMLDivElement; until: number; timer: number; last: number } | null = null;
+
+function showOpponentCountdown(name: string, graceMs: number): void {
+  hideOpponentCountdown();
+  const el = document.createElement('div');
+  el.id = 'mpOppOverlay';
+  el.style.cssText = 'position:fixed;inset:0;z-index:9998;display:flex;align-items:center;justify-content:center;background:rgba(6,14,10,.55);padding:16px';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#14241b;color:#fff4dc;border:1px solid #f5c451;border-radius:14px;padding:20px 24px;width:min(340px,100%);text-align:center;font-family:Nunito,system-ui,sans-serif;box-shadow:0 10px 40px rgba(0,0,0,.5)';
+  const title = document.createElement('div');
+  title.style.cssText = "font:400 22px 'Lilita One',Nunito,sans-serif;margin-bottom:6px";
+  title.textContent = `${name} disconnected`;
+  const sub = document.createElement('div');
+  sub.style.cssText = 'font-size:14px;opacity:.85;margin-bottom:12px';
+  const time = document.createElement('div');
+  time.style.cssText = "font:400 40px 'Lilita One',Nunito,sans-serif;color:#f5c451";
+  const track = document.createElement('div');
+  track.style.cssText = 'height:6px;background:#0a1510;border-radius:3px;overflow:hidden;margin-top:10px';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'height:100%;background:#f5c451;width:100%';
+  track.appendChild(bar);
+  const foot = document.createElement('div');
+  foot.style.cssText = 'font-size:12px;opacity:.65;margin-top:10px';
+  foot.textContent = "If they don't return, you win.";
+  card.append(title, sub, time, track, foot);
+  el.appendChild(card);
+  document.body.appendChild(el);
+
+  const now = performance.now();
+  const cd = { el, until: now + graceMs, timer: 0, last: now };
+  const tick = (): void => {
+    const t = performance.now();
+    // Paused while we're offline ourselves; the server keeps its own clock.
+    if (!mpClient?.isOpen()) cd.until += t - cd.last;
+    cd.last = t;
+    const left = Math.max(0, cd.until - t);
+    const secs = Math.ceil(left / 1000);
+    time.textContent = `0:${String(secs).padStart(2, '0')}`;
+    bar.style.width = `${(left / graceMs) * 100}%`;
+    sub.textContent = !mpClient?.isOpen() ? 'You are offline too — timer paused'
+      : left > 0 ? 'Waiting for them to reconnect…' : 'Confirming with the server…';
+  };
+  tick();
+  cd.timer = window.setInterval(tick, 250);
+  opponentCountdown = cd;
+}
+
+function hideOpponentCountdown(): void {
+  if (!opponentCountdown) return;
+  clearInterval(opponentCountdown.timer);
+  opponentCountdown.el.remove();
+  opponentCountdown = null;
+}
+
 // ── Lobby button wiring ──
 
 menuOnline.addEventListener('click', () => {
@@ -512,6 +841,11 @@ menuOnline.addEventListener('click', () => {
 lobbyLoginBack.addEventListener('click', () => showLobbyPanel('main'));
 lobbyRoomBack.addEventListener('click', () => showLobbyPanel('main'));
 lobbyWaitingBack.addEventListener('click', () => {
+  // Tell the server we're leaving so the room doesn't linger in everyone's list.
+  // A message queued before close() is still delivered.
+  if (mpClient?.isOpen() && mpRoomId) mpClient.leaveRoom(mpRoomId);
+  mpRoomId = null;
+  stopReconnect();
   mpClient?.disconnect();
   mpClient = null;
   multiplayerMode = false;
@@ -533,8 +867,11 @@ lobbyLoginBtn.addEventListener('click', async () => {
   const wsUrl = (import.meta.env.VITE_WS_URL as string | undefined) ??
     `${wsScheme}://${window.location.host}${import.meta.env.BASE_URL}ws`;
 
+  stopReconnect();
   if (!mpClient) {
     mpClient = new MultiplayerClient(wsUrl, handleMultiplayerEvent);
+    mpClient.onDrop = onConnectionDropped;
+    mpClient.onSendFail = () => showToast(mpRetryTimer !== null || mpReconnecting ? 'Not connected — reconnecting…' : 'Not connected to the server', 'bad');
   }
   try {
     await mpClient.connect();
@@ -551,17 +888,9 @@ lobbyUsernameInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') lobbyLoginBtn.click();
 });
 
-// Online room-size selector (2..MAX_PLAYERS).
-const lobbyPlayersCountEl = document.getElementById('lobbyPlayersCount')!;
-const lobbyPlayersDec = document.getElementById('lobbyPlayersDec')!;
-const lobbyPlayersInc = document.getElementById('lobbyPlayersInc')!;
-let lobbyRoomSize = 2;
-function updateLobbyRoomSize(): void { lobbyPlayersCountEl.textContent = String(lobbyRoomSize); }
-lobbyPlayersDec.addEventListener('click', () => { if (lobbyRoomSize > 2) { lobbyRoomSize--; updateLobbyRoomSize(); } });
-lobbyPlayersInc.addEventListener('click', () => { if (lobbyRoomSize < MAX_PLAYERS) { lobbyRoomSize++; updateLobbyRoomSize(); } });
-
+// Online rooms are 1v1 only (the Asymmetric Tribes redesign is a 2-player game).
 lobbyCreateRoomBtn.addEventListener('click', () => {
-  mpClient!.createRoom(lobbyRoomSize);
+  mpClient!.createRoom(2);
 });
 
 lobbyRefreshBtn.addEventListener('click', () => {
@@ -579,6 +908,7 @@ lobbyJoinCodeBtn.addEventListener('click', () => {
   if (code.length < 1) return;
   lobbyRoomStatus.textContent = 'Joining…';
   lobbyRoomStatus.className = 'lobby-status';
+  mpRoomId = code;
   mpClient!.joinRoom(code);
 });
 
@@ -591,10 +921,15 @@ lobbyJoinCodeInput.addEventListener('keydown', (e) => {
 // Disconnect from any live multiplayer game (player or spectator) and reset the
 // multiplayer flags. Safe to call when not in a multiplayer game (no-op).
 function leaveActiveGame(): void {
+  stopReconnect();
+  hideOpponentCountdown();
   if (mpClient) {
     mpClient.disconnect();
     mpClient = null;
   }
+  mpRoomId = null;
+  mpSpectatingGameId = null;
+  pendingLocalSelection = null;
   multiplayerMode = false;
   spectatorMode = false;
 }
@@ -609,6 +944,8 @@ function showMenu(): void {
   cancelAITurn();
   saveGame(); // snapshot the local game before leaving to the menu (no-op online)
   menuOverlay.classList.remove('hidden');
+  ensureMenuScene();
+  factionChoiceOverlay.classList.add('hidden'); // sits above the menu (z 210) — hide it while the menu is up; hideMenu restores it
   // Clear any turn indicators so they don't linger over the menu.
   handoffPending = false;
   opponentTurnOverlay.classList.add('hidden');
@@ -623,11 +960,11 @@ function showMenu(): void {
     endTurnBtn.style.display = '';
     techTreeBtn.style.display = '';
     if (DEBUG) settingsBtn.style.display = 'inline-flex';
-  } else if (multiplayerMode) {
-    // Leaving a live multiplayer PLAYER game — disconnect the socket so its
-    // state_update can't clobber a subsequent local game.
-    leaveActiveGame();
   }
+  // An online PLAYER game stays connected while the menu is up: the menu is a
+  // pause screen, not a forfeit. (Closing the socket here used to drop players
+  // out of their match the moment they pressed Esc.) Starting or resuming a
+  // local game from the menu still disconnects, via leaveActiveGame().
   if (!gameStarted) showLobbyPanel('main');
   // Refresh the Continue CTA every time the menu opens — including mid-game,
   // where showLobbyPanel('main') is skipped (gameStarted is true) but the main
@@ -637,6 +974,8 @@ function showMenu(): void {
 
 function hideMenu(): void {
   menuOverlay.classList.add('hidden');
+  disposeMenuScene();
+  if (gameStarted) updateFactionOverlay(); // bring the faction pick back if it was mid-flight
 }
 
 // ── Save / resume (LOCAL modes only) ──────────────────────────────────────
@@ -685,6 +1024,9 @@ function loadSavedGame(): SavedGame | null {
     if (!save || save.v !== 1 || !save.state) return null;
     if (!save.controllers && save.aiEnabled === undefined) return null;
     if (save.state.phase === 'gameOver') return null; // don't resume a finished game
+    // A save from an older, incompatible ruleset (missing/mismatched
+    // rulesVersion) — treat as if there's no save rather than crash on resume.
+    if (save.state.rulesVersion !== RULES_VERSION) { localStorage.removeItem(SAVE_KEY); return null; }
     return save;
   } catch { return null; }
 }
@@ -704,9 +1046,11 @@ function restoreGame(): void {
   spectatorBanner.style.display = 'none';
   controllers = controllersFromSave(save);
   buildingTeleport = null;
+  buildingFarm = null;
+  buildingRoad = null;
   handoffPending = false;
   state = deserialize(save.state);
-  snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+  snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
@@ -715,19 +1059,74 @@ function restoreGame(): void {
   logCombat('--- Resumed saved game ---');
   // Preselect the human's temple unless it's the AI's move to resume.
   if (!isAISlot(state.currentPlayerIndex)) autoSelectTemple();
+  // Open on the local human's Capital, as a new game does (the default
+  // board-centre framing can show nothing but fog, especially on a phone).
+  const humanSeat = controllers.findIndex(k => k === 'human');
+  const homeCapital = humanSeat >= 0 ? getPlayerCapital(state, humanSeat) : undefined;
+  if (homeCapital) renderer.focusOnHex(homeCapital.pos);
   render();
   maybeRunAITurn();              // if it was the AI's turn, let it continue
 }
 
-// Show the "Continue game" CTA only when a valid local save exists.
+// Show the "Continue" card only when a valid local save exists, and describe
+// the save (round, who you're playing) so resuming is an informed tap.
 function updateContinueButton(): void {
-  menuContinueBtn.style.display = hasValidLocalSave() ? 'block' : 'none';
+  if (gameStarted && multiplayerMode && !spectatorMode) {
+    menuContinueBtn.style.display = '';
+    document.getElementById('menuContinueTitle')!.textContent = 'Resume online game';
+    document.getElementById('menuContinueSub')!.textContent = mpClient?.isOpen() ? 'Your match is still running' : 'Reconnecting to the server…';
+    return;
+  }
+  const save = loadSavedGame();
+  menuContinueBtn.style.display = save ? '' : 'none';
+  if (!save) return;
+  const st = save.state;
+  const kinds = controllersFromSave(save);
+  const humans = kinds.filter(k => k === 'human').length;
+  const ais = kinds.filter(k => k !== 'human');
+  const who = ais.length === 0 ? `${humans} players, one device`
+    : humans === 1 && ais.length === 1 ? `vs ${ais[0]} AI`
+    : `${humans} human${humans === 1 ? '' : 's'} · ${ais.length} AI`;
+  const me = st.players.find(p => kinds[st.players.indexOf(p)] === 'human');
+  const faction = me?.faction === 'temple' ? 'Temple' : me?.faction === 'agrar' ? 'Agrar' : null;
+  document.getElementById('menuContinueTitle')!.textContent = `Continue · Round ${st.turnNumber}`;
+  document.getElementById('menuContinueSub')!.textContent = [faction, who].filter(Boolean).join(' · ');
 }
+
+// ── Living-board menu scene: created whenever the menu is up, torn down when a
+// game starts so it never holds a second WebGL context behind the board. ──
+let menuScene: MenuScene | null = null;
+function ensureMenuScene(): void {
+  if (menuScene) return;
+  // A canvas whose WebGL context was force-lost on dispose can't host a new
+  // renderer, so every open gets a fresh canvas element in the same slot.
+  const old = document.getElementById('menuScene') as HTMLCanvasElement;
+  const canvas = document.createElement('canvas');
+  canvas.id = 'menuScene';
+  old.replaceWith(canvas);
+  try {
+    menuScene = createMenuScene(canvas, menuOverlay);
+  } catch (e) { console.warn('[menu] living board unavailable', e); }
+}
+function disposeMenuScene(): void {
+  menuScene?.dispose();
+  menuScene = null;
+}
+// Every entry flies the camera to its scene; the sub-panel then opens over it.
+for (const el of Array.from(document.querySelectorAll<HTMLElement>('#lobbyMain [data-cam]'))) {
+  const fly = (): void => menuScene?.goTo(el.dataset.cam as MenuPlace);
+  el.addEventListener('pointerenter', fly);
+  el.addEventListener('click', fly);
+}
+for (const id of ['setupBack', 'difficultyBack', 'lobbyLoginBack', 'lobbyRoomBack', 'lobbyWaitingBack']) {
+  document.getElementById(id)?.addEventListener('click', () => menuScene?.goTo('home'));
+}
+document.getElementById('menuRules')!.textContent = `Rules v${RULES_VERSION}`;
 
 // Build a human-readable name for a local seat.
 function seatName(kind: ControllerKind, idx: number): string {
   if (kind === 'human') return `Player ${idx + 1}`;
-  return kind === 'hard' ? `Hard AI ${idx + 1}` : `AI ${idx + 1}`;
+  return `${difficultyLabel(kind)} ${idx + 1}`;
 }
 
 // Start a LOCAL game with an arbitrary per-slot controller layout (N players,
@@ -741,13 +1140,15 @@ function startLocalGame(kinds: ControllerKind[]): void {
   spectatorBanner.style.display = 'none';
   controllers = [...kinds];
   buildingTeleport = null;
+  buildingFarm = null;
+  buildingRoad = null;
   handoffPending = false;
   const players = kinds.map((kind, i) => ({
     name: seatName(kind, i),
     color: PLAYER_COLORS[i % PLAYER_COLORS.length]!,
   }));
   state = createGameState(players);
-  snapshotTempleOwners();   // fresh baseline so no stale capture toasts fire
+  snapshotSiteStates();   // fresh baseline so no stale capture toasts fire
   renderer.init(state.mapRadius);
   gameStarted = true;
   hideMenu();
@@ -762,23 +1163,67 @@ function startLocalGame(kinds: ControllerKind[]): void {
   // zoom-in, instead of the default board-center framing.
   const humanSeat = controllers.findIndex(k => k === 'human');
   if (humanSeat >= 0) {
-    const homeTemple = state.temples.find(t => t.id === state.players[humanSeat]?.startTempleId);
-    if (homeTemple) renderer.focusOnHex(homeTemple.pos);
+    const homeCapital = getPlayerCapital(state, humanSeat);
+    if (homeCapital) renderer.focusOnHex(homeCapital.pos);
   }
   render();
   maybeRunAITurn();     // if an AI won the coin flip, let it take its first turn
 }
 
 // Back-compat wrapper for the classic 2-player quick-start buttons.
-function startGame(vsAI: boolean, difficulty: 'normal' | 'hard' = 'normal'): void {
+function startGame(vsAI: boolean, difficulty: AiDifficulty = 'normal'): void {
   startLocalGame(vsAI ? ['human', difficulty] : ['human', 'human']);
 }
 
-menuContinueBtn.addEventListener('click', () => restoreGame());
-menuVsAI.addEventListener('click', () => startGame(true, 'normal'));
+menuContinueBtn.addEventListener('click', () => {
+  if (gameStarted && multiplayerMode && !spectatorMode) { hideMenu(); render(); return; }
+  restoreGame();
+});
 menu2P.addEventListener('click', () => startGame(false));
-(document.getElementById('menuVsHardAI') as HTMLButtonElement).addEventListener('click', () => startGame(true, 'hard'));
+for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('.difficulty-btn'))) {
+  btn.addEventListener('click', () => startGame(true, btn.dataset.difficulty as AiDifficulty));
+}
+difficultyBack.addEventListener('click', () => showLobbyPanel('main'));
 menuBtn.addEventListener('click', () => showMenu());
+
+// ── Main-menu sheets (Polytopia-style menu, /menu-proposals-2 option A) ──
+// The main stack is New game / Multiplayer / Continue / Replays. New game opens
+// one sheet: tribe, then opponent (a friend on this device or an AI level),
+// then Start — the chosen tribe is submitted as the human's faction pick the
+// moment the game starts, so the in-game picker only shows for a second human.
+const menuStack = document.getElementById('menuStack')!;
+const menuNewSheet = document.getElementById('menuNewSheet')!;
+const menuMpSheet = document.getElementById('menuMpSheet')!;
+let menuTribe: FactionId = 'agrar';
+let menuOpp: 'friend' | AiDifficulty = 'normal';
+function showMenuSheet(which: 'main' | 'new' | 'mp'): void {
+  menuStack.classList.toggle('hidden', which !== 'main');
+  menuNewSheet.classList.toggle('hidden', which !== 'new');
+  menuMpSheet.classList.toggle('hidden', which !== 'mp');
+  menuOverlay.classList.toggle('sheet-open', which !== 'main');
+}
+document.getElementById('menuNew')!.addEventListener('click', () => showMenuSheet('new'));
+document.getElementById('menuMultiplayer')!.addEventListener('click', () => showMenuSheet('mp'));
+for (const el of Array.from(document.querySelectorAll<HTMLElement>('[data-menu-back]'))) el.addEventListener('click', () => showMenuSheet('main'));
+for (const el of Array.from(document.querySelectorAll<HTMLButtonElement>('#menuNewSheet .mtribe'))) {
+  el.addEventListener('click', () => {
+    menuTribe = el.dataset.tribe as FactionId;
+    document.querySelectorAll('#menuNewSheet .mtribe').forEach(x => x.classList.toggle('on', x === el));
+  });
+}
+for (const el of Array.from(document.querySelectorAll<HTMLButtonElement>('#menuOppPills .mpill'))) {
+  el.addEventListener('click', () => {
+    menuOpp = el.dataset.opp as 'friend' | AiDifficulty;
+    document.querySelectorAll('#menuOppPills .mpill').forEach(x => x.classList.toggle('on', x === el));
+  });
+}
+document.getElementById('menuStart')!.addEventListener('click', () => {
+  const tribe = menuTribe;
+  if (menuOpp === 'friend') startGame(false); else startGame(true, menuOpp);
+  // Pre-pick the tribe for the first human seat (a second human still picks in-game).
+  if (pendingFactionSlot() !== null) submitFactionChoice(tribe);
+  showMenuSheet('main');
+});
 
 // ── Custom game setup (N players, human/AI mix) ──
 const menuCustom = document.getElementById('menuCustom')!;
@@ -798,7 +1243,7 @@ function renderSetupSlots(): void {
   setupPlayersCountEl.textContent = String(setupKinds.length);
   setupSlotsEl.innerHTML = '';
   const KIND_LABELS: [ControllerKind, string][] = [
-    ['human', 'Human'], ['normal', 'AI — Normal'], ['hard', 'AI — Hard'],
+    ['human', 'Human'], ['easy', 'AI — Easy'], ['normal', 'AI — Normal'], ['hard', 'AI — Hard'], ['expert', 'AI — Expert'],
   ];
   setupKinds.forEach((kind, i) => {
     const row = document.createElement('div');
@@ -833,17 +1278,238 @@ function updateSetupInfo(): void {
 
 menuCustom.addEventListener('click', () => showLobbyPanel('setup'));
 setupBack.addEventListener('click', () => showLobbyPanel('main'));
-setupPlayersDec.addEventListener('click', () => {
-  if (setupKinds.length > 2) { setupKinds = setupKinds.slice(0, -1); renderSetupSlots(); }
-});
-setupPlayersInc.addEventListener('click', () => {
-  if (setupKinds.length < MAX_PLAYERS) { setupKinds = [...setupKinds, 'normal']; renderSetupSlots(); }
-});
+// The Asymmetric Tribes redesign is 1v1 only — seat count is fixed at 2
+// (still pick human/AI per seat), so the +/- steppers are inert now.
+setupPlayersDec.addEventListener('click', () => {});
+setupPlayersInc.addEventListener('click', () => {});
 setupStartBtn.addEventListener('click', () => startLocalGame(setupKinds));
+
+// ── Faction choice (immediate, before Round 1 — phase 11 §1-3) ──
+//
+// Local (hotseat/vs-AI) faction secrecy is honor-system only: unlike online
+// play (server-authoritative hiding — see gameManager.ts stripHiddenFaction),
+// a second local human seat CAN see the first seat's overlay if they look at
+// the same screen at the wrong moment. Full hotseat-curtain secrecy for this
+// step is a deliberate simplification, not an oversight.
+
+// AI-controlled local seats auto-pick the instant the pause begins — a coin
+// flip is fine; this is not a fairness-sensitive decision to model deeply yet.
+function maybeAutoChooseFactionForAI(): void {
+  if (multiplayerMode || spectatorMode) return;
+  if (!isAwaitingFactionReveal(state)) return;
+  let changed = false;
+  for (let i = 0; i < state.players.length; i++) {
+    if (controllers[i] && controllers[i] !== 'human' && state.players[i]?.faction === null) {
+      chooseFaction(state, i, Math.random() < 0.5 ? 'agrar' : 'temple');
+      changed = true;
+    }
+  }
+  if (changed) render();
+}
+
+// Which local seat (if any) should see the picker right now: in multiplayer,
+// only the local viewer's own slot; locally, the first human seat that still
+// needs to choose (sequential — see the honor-system note above).
+function pendingFactionSlot(): number | null {
+  if (!isAwaitingFactionReveal(state)) return null;
+  if (multiplayerMode) {
+    if (spectatorMode) return null;
+    return state.players[myPlayerSlot]?.faction === null ? myPlayerSlot : null;
+  }
+  for (let i = 0; i < state.players.length; i++) {
+    if (controllers[i] === 'human' && state.players[i]?.faction === null) return i;
+  }
+  return null;
+}
+
+function submitFactionChoice(faction: FactionId): void {
+  const slot = pendingFactionSlot();
+  if (slot === null) return;
+  if (multiplayerMode) {
+    mpClient?.sendAction({ type: 'action', action: 'choose-faction', params: { faction } });
+    return;
+  }
+  chooseFaction(state, slot, faction);
+  render();
+  maybeAutoChooseFactionForAI();
+  maybeRunAITurn(); // in case the reveal just completed and it's actually an AI's move
+}
+
+fcAgrarCard.addEventListener('click', () => submitFactionChoice('agrar'));
+fcTempleCard.addEventListener('click', () => submitFactionChoice('temple'));
+
+let factionPortraitsDone = false;
+function fillFactionPortraits(): void {
+  if (factionPortraitsDone) return;
+  factionPortraitsDone = true;
+  for (const card of [fcAgrarCard, fcTempleCard]) {
+    const [type, faction] = (card.dataset.art ?? 'warrior:temple').split(':') as [UnitType, FactionId];
+    const tint = getComputedStyle(card).getPropertyValue('--tint').trim() || '#f5c451';
+    const img = card.querySelector<HTMLImageElement>('.fc-art');
+    if (img) img.src = getUnitThumbnail(type, tint, faction);
+  }
+}
+
+function updateFactionOverlay(): void {
+  const slot = pendingFactionSlot();
+  if (slot !== null) fillFactionPortraits();
+  if (slot === null) {
+    // Still show a brief "locked in, waiting" note for the online player who
+    // already chose but the opponent hasn't revealed yet.
+    if (!spectatorMode && isAwaitingFactionReveal(state) && multiplayerMode && state.players[myPlayerSlot]?.faction !== null) {
+      factionChoiceOverlay.classList.remove('hidden');
+      fcTitle.textContent = 'Faction locked in';
+      fcAgrarCard.classList.add('hidden');
+      fcTempleCard.classList.add('hidden');
+      fcLockedNote.classList.remove('hidden');
+    } else {
+      factionChoiceOverlay.classList.add('hidden');
+    }
+    return;
+  }
+  factionChoiceOverlay.classList.remove('hidden');
+  fcAgrarCard.classList.remove('hidden');
+  fcTempleCard.classList.remove('hidden');
+  fcLockedNote.classList.add('hidden');
+  fcTitle.textContent = multiplayerMode
+    ? 'Choose your civilization'
+    : `${state.players[slot]?.name ?? `Player ${slot + 1}`} — choose your civilization`;
+}
+
+// §40-42 (phase 11 correction) — human-readable reasons an Agrar Builder's
+// Build Farm/Build Road button is disabled right now, mirroring the
+// preconditions of canStartFarm/canBuildRoad in game.ts. Returns null when
+// the action is currently available. Checked in priority order: energy,
+// per-action cap/occupancy, activation, then placement.
+function farmBlockReason(state: GameState, unit: Unit): string | null {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return 'not your unit';
+  if (player.aura < AGRAR_FARM_COST) return `not enough Energy (need ⚡${AGRAR_FARM_COST})`;
+  const activeFarms = state.farms.filter(f => f.ownerId === player.id).length;
+  if (activeFarms >= MAX_ACTIVE_FARMS) return `maximum Farms reached (${MAX_ACTIVE_FARMS}/${MAX_ACTIVE_FARMS})`;
+  if (unit.hasAttacked) return 'Builder has already used its action this round';
+  if (getValidFarmHexes(state, unit).length === 0) return 'no valid Farm location adjacent to this Builder';
+  return null;
+}
+
+// Farm-placement UX pass — WHY a specific tapped/clicked hex can't take a
+// Farm, read straight from the engine's own canonical getFarmPlacementResult
+// (game.ts) rather than re-deriving the rules here — the UI can never show a
+// reason (or a legal/illegal verdict) that disagrees with actual
+// construction. Returns every applicable reason, comma-joined, or null if
+// the hex is actually legal.
+function farmHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord): string | null {
+  const { legal, reasons } = getFarmPlacementResult(state, unit, hex);
+  return legal ? null : reasons.join(', ');
+}
+
+function roadBlockReason(state: GameState, unit: Unit): string | null {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return 'not your unit';
+  if (player.aura < ROAD_COST_PER_HEX) return `not enough Energy (need ⚡${ROAD_COST_PER_HEX})`;
+  if (unit.hasAttacked) return 'Builder has already used its action this round';
+  if (getValidRoadHexes(state, unit).length === 0) return 'no valid Road location next to this Builder and its network';
+  return null;
+}
+
+// Road-placement UX pass — WHY a specific tapped/clicked Road tile is
+// illegal, read straight from the engine's own canonical
+// getRoadPlacementResult (game.ts), same principle as farmHexIllegalReason
+// above — `selected` is whatever's already been picked this activation, so
+// the SAME function reports the right reason for both the first tile and any
+// continuation tile. Returns every applicable reason, comma-joined, or null
+// if the hex is actually legal.
+function roadHexIllegalReason(state: GameState, unit: Unit, hex: HexCoord, selected: HexCoord[]): string | null {
+  const { legal, reasons } = getRoadPlacementResult(state, unit, hex, selected);
+  return legal ? null : reasons.join(', ');
+}
+
+// WHY a Temple unit can't found/reconsecrate right now, mirroring
+// farmBlockReason/roadBlockReason: the Found button used to just vanish
+// with zero explanation whenever canStartFounding returned null, which is
+// exactly what made "can't conquer a Temple" look broken (an active enemy
+// Temple must be destroyed to Ruins FIRST — standing on it never works).
+// Founding only needs the unit's action slot unused (move/action order is
+// agnostic — § agnostic activation order), so a unit CAN move onto a valid
+// Ruins/neutral site and found it the very same turn. Any Temple unit may
+// found — there's no dedicated founder-type unit anymore.
+function foundBlockReason(state: GameState, unit: Unit): string | null {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return 'not your unit';
+  const site = getStrategicSiteAt(state, unit.pos);
+  if (!site) return 'not standing on a sacred site';
+  if (site.state === 'temple' || site.state === 'upgradingTemple') {
+    return site.ownerId === player.id ? 'you already own this Temple' : 'destroy it first — attack it down to Ruins, then reconsecrate';
+  }
+  if (site.state === 'foundingTemple' || site.founding) return 'already being founded/reconstructed';
+  if (unit.hasAttacked) return 'this unit has already used its action — wait until your next round';
+  const enemyOnSite = state.units.some(u => u.hp > 0 && u.id !== unit.id && u.playerId !== unit.playerId && hexEqual(u.pos, site.pos));
+  if (enemyOnSite) return 'an enemy unit is on this site';
+  if (player.aura < SITE_ESTABLISH_COST) return `not enough Energy (need ⚡${SITE_ESTABLISH_COST})`;
+  if (isSiteCultivationBlocked(state, site.pos, player.id)) return 'blocked by Agrar cultivation';
+  return null;
+}
+
+// v14 — WHY a unit standing on an enemy-owned Road can't pillage it right
+// now. Only shown at all while actually standing on one (see the caller) —
+// this isn't a general-purpose action like Found/Build Farm.
+function pillageRoadBlockReason(state: GameState, unit: Unit): string | null {
+  if (unit.hasAttacked) return 'already acted this round';
+  return null;
+}
+
+// v14 — WHY an Agrar unit standing on a Fertile Site can't claim it right
+// now (1v1 Agrar-mirror only — fertileSites is empty in every other
+// matchup, so this never shows there). Only shown while actually standing
+// on one — see the caller.
+function fertileSiteBlockReason(state: GameState, unit: Unit): string | null {
+  const site = state.fertileSites.find(f => hexEqual(f.pos, unit.pos));
+  if (!site) return null; // caller already checked this — defensive only
+  if (site.ownerId === unit.playerId) return 'you already control this site';
+  if (unit.hasAttacked) return 'already used its action this round';
+  return null;
+}
+
+// WHY the "Upgrade to Temple II" button is disabled — mirroring farmBlock
+// Reason/roadBlockReason/foundBlockReason: it used to just disable with the
+// same static label regardless of cause (not enough Energy, an enemy's
+// Temple you're merely viewing, already mid-upgrade elsewhere), giving no
+// clue why a seemingly-affordable-looking upgrade wasn't starting.
+function templeUpgradeBlockReason(state: GameState, siteId: string): string | null {
+  const player = getCurrentPlayer(state);
+  const site = state.strategicSites.find(s => s.id === siteId);
+  if (!site) return 'site not found';
+  if (site.ownerId !== player.id) return 'not your Temple';
+  if (site.upgrade) return 'already upgrading';
+  if (player.aura < TEMPLE_UPGRADE_COST) return `not enough Energy (need ⚡${TEMPLE_UPGRADE_COST})`;
+  return null;
+}
 
 // ── Render & UI ──
 
 function render(): void {
+  maybeAutoChooseFactionForAI();
+  updateFactionOverlay();
+  // §5 (phase 11 correction) — recruits no longer appear instantly, so make
+  // the wait visible: a small banner listing what's currently queued for the
+  // local viewer's own player, deploying at the start of their next round.
+  // Grouped by unit type with a ×N count (population/queue clarity pass) —
+  // recruiting several of the same type used to just repeat its name once
+  // per order ("Warrior, Warrior, Warrior"), which is exactly the "not clear
+  // how many are waiting" complaint this pass is fixing.
+  const vSlotForBanner = gameStarted && !spectatorMode ? viewerPlayerSlot() : null;
+  const queuedForViewer = vSlotForBanner !== null ? state.trainingQueue.filter(o => o.playerId === vSlotForBanner) : [];
+  if (queuedForViewer.length > 0) {
+    const viewerFaction = state.players[vSlotForBanner!]?.faction;
+    const counts = new Map<UnitType, number>();
+    for (const o of queuedForViewer) counts.set(o.unitType, (counts.get(o.unitType) ?? 0) + 1);
+    const parts = [...counts.entries()].map(([type, n]) =>
+      n > 1 ? `${unitDisplayName(type, viewerFaction)} ×${n}` : unitDisplayName(type, viewerFaction));
+    trainingQueueBanner.textContent = `🏭 Training: ${parts.join(', ')} — deploys next round`;
+    trainingQueueBanner.classList.remove('hidden');
+  } else {
+    trainingQueueBanner.classList.add('hidden');
+  }
   checkTempleCaptureToasts(); // raise a toast for any temple that changed hands
   if (spectatorMode) {
     // Spectators always see the full board (no fog, no player-specific view)
@@ -880,10 +1546,13 @@ function setTurnTitle(text: string, color: string): void {
     `linear-gradient(180deg, #ffe0bd 0%, ${color} 55%, ${color} 100%)`;
 }
 
-// True while a player still has at least one unit or temple.
+// True while a player's Capital still stands (§11 — permanent until
+// destroyed, and destruction already ends the match), so this is always true
+// pre-gameOver. Kept as a real check rather than a hardcoded `true` in case a
+// future mechanic changes that.
 function isPlayerAlive(p: Player): boolean {
-  return state.units.some(u => u.playerId === p.id && u.hp > 0)
-    || state.temples.some(t => t.ownerId === p.id);
+  const capital = getPlayerCapital(state, p.id);
+  return !!capital && capital.hp > 0;
 }
 
 // Dev/testing switch: reveal EVERY player's economy in the HUD (aura · pop/cap).
@@ -957,8 +1626,8 @@ function updatePlayerList(): void {
       ? `<span class="chip-stat">⚡${p.aura} · ${getPopulationCount(state, p.id)}/${getPopulationCap(state, p.id)}</span>`
       : '';
     chip.innerHTML =
-      `<span class="chip-dot" style="background:${p.color}"></span>` +
-      `<span>${p.name}${you}</span>` +
+      `<span class="chip-dot" style="background:${safeCssColor(p.color)}"></span>` +
+      `<span>${escapeHtml(p.name)}${you}</span>` +
       statHtml;
     playerListEl.appendChild(chip);
   }
@@ -986,20 +1655,51 @@ function updateUI(): void {
   renderer.setHudVisible(gameStarted && !spectatorMode);
   renderer.updateHudButton('endTurn', myTurn);
   renderer.updateHudButton('research', gameStarted && !spectatorMode && state.phase !== 'gameOver');
-  // The 3rd slab levels up the selected temple. It is INVISIBLE unless one of my
-  // own temples is selected and can still be levelled up; when shown it displays
-  // the aura price (gold). Enabled/clickable only when I can afford it, greyed
-  // (but still visible, so the price stays readable) when I can't.
-  const selTempleId = state.selectionMode === 'temple' ? state.selectedTempleId : null;
-  const selTemple = selTempleId ? state.temples.find(t => t.id === selTempleId) : null;
-  const myTemple = !!selTemple && myTurn && selTemple.ownerId === getCurrentPlayer(state).id;
-  const upgradeCost = myTemple ? templeUpgradeCost(selTemple!.level) : null; // null when maxed
-  if (upgradeCost !== null) {
-    renderer.updateHudButton('temple', canUpgradeTemple(state, selTempleId!) !== null); // affordable?
-    renderer.setHudButtonPrice('temple', `⚡${upgradeCost}`);
-    renderer.setHudButtonVisible('temple', true);
+  // End-round notification (§21-23) — only while it's genuinely the local
+  // player's turn and no ring-pick placement mode is left dangling; a unit
+  // still counts as "has an action left" until BOTH its move and its action
+  // slot are spent (order-agnostic — see unactedUnitCount above).
+  if (myTurn && !spectatorMode && state.phase === 'playing' && !buildingFarm && !buildingRoad && !buildingTeleport) {
+    const remaining = unactedUnitCount(state, player.id);
+    if (remaining === 0) {
+      // Auto-clear a stale "N left — Sure?" confirm arm once the player
+      // finishes acting on their own — nothing left to confirm past.
+      if (endTurnArmed) { endTurnArmed = false; renderer.setHudButtonArmed('endTurn', false); }
+      renderer.setHudButtonPrice('endTurn', 'All Acted!');
+      if (!announcedAllActedThisTurn) {
+        announcedAllActedThisTurn = true;
+        showToast('All units have acted — End Round', 'good');
+      }
+    } else if (!endTurnArmed) {
+      renderer.setHudButtonPrice('endTurn', '');
+    }
+  } else if (!endTurnArmed) {
+    renderer.setHudButtonPrice('endTurn', '');
+  }
+  syncPlacementCancelAndLegend();
+  // The 3rd slab starts founding/reconstruction for the selected unit (a
+  // Temple Acolyte standing on a neutral/ruined site — §7-10, v13), OR
+  // builds a road (Agrar only, §23-25) if founding isn't available but a
+  // road is — mutually exclusive per-tile states, see doFound(). INVISIBLE
+  // unless one of the two is currently legal;
+  // when shown it displays the relevant aura cost.
+  const selUnitForFound = state.selectionMode === 'unit' && state.selectedUnitId
+    ? state.units.find(u => u.id === state.selectedUnitId)
+    : null;
+  const foundCheck = selUnitForFound && myTurn ? canStartFounding(state, selUnitForFound) : null;
+  const roadCheck = !foundCheck && selUnitForFound && myTurn
+    ? getValidRoadHexes(state, selUnitForFound).some(h => canBuildRoad(state, selUnitForFound, h))
+    : false;
+  if (foundCheck) {
+    renderer.updateHudButton('found', true);
+    renderer.setHudButtonPrice('found', `⚡${SITE_ESTABLISH_COST}`);
+    renderer.setHudButtonVisible('found', true);
+  } else if (roadCheck) {
+    renderer.updateHudButton('found', true);
+    renderer.setHudButtonPrice('found', `⚡${ROAD_COST_PER_HEX}`);
+    renderer.setHudButtonVisible('found', true);
   } else {
-    renderer.setHudButtonVisible('temple', false); // no temple selected (or maxed / not mine)
+    renderer.setHudButtonVisible('found', false); // no founder selected (or nothing to do here)
   }
 
   // In spectator mode, hide all action controls
@@ -1037,11 +1737,6 @@ function updateUI(): void {
     restartBtn.style.display = 'none';
   }
 
-  // The selected temple (if any) — looked up once and reused below.
-  const selectedTemple = state.selectionMode === 'temple' && state.selectedTempleId
-    ? state.temples.find(t => t.id === state.selectedTempleId)
-    : undefined;
-
   // Selected unit info
   if (state.selectionMode === 'unit' && state.selectedUnitId) {
     const unit = state.units.find(u => u.id === state.selectedUnitId);
@@ -1050,28 +1745,137 @@ function updateUI(): void {
         damageBooster: 'Dmg Booster',
         rangeBooster: 'Rng Booster',
       };
-      const typeName = TYPE_NAMES[unit.type] ?? (unit.type.charAt(0).toUpperCase() + unit.type.slice(1));
+      const typeName = unit.type === 'founder'
+        ? founderDisplayName(state.players.find(p => p.id === unit.playerId)?.faction)
+        : (TYPE_NAMES[unit.type] ?? (unit.type.charAt(0).toUpperCase() + unit.type.slice(1)));
       const enc = calculateEncirclement(state, unit);
       const encStr = enc.attackMultiplier > 1 ? ` | Enc x${enc.attackMultiplier.toFixed(1)}` : '';
       const effDef = getEffectiveDefense(state, unit);
       const effAtk = getEffectiveAttack(state, unit);
       const effRng = getEffectiveRange(state, unit);
-      const defStr = effDef > unit.stats.defense ? `${effDef}(⛰+2)` : `${effDef}`;
+      // Two independent, stackable DEF sources: hill terrain (any faction),
+      // and Agrar's own Home Ground (+1 DEF within 1 hex of the Capital or
+      // an active Farm — see isOnAgrarHomeGround/getEffectiveDefense; never
+      // stacks with itself even if Capital/Farm coverage overlaps).
+      const onHillNow = state.hills.has(hexKey(unit.pos));
+      const onHomeGroundNow = isOnAgrarHomeGround(state, unit);
+      const defBonusNotes: string[] = [];
+      if (onHillNow) defBonusNotes.push(`⛰+${HILL_DEFENSE_BONUS}`);
+      if (onHomeGroundNow) defBonusNotes.push(`🏠+${HOME_GROUND_DEFENSE_BONUS}`);
+      const defStr = defBonusNotes.length > 0 ? `${effDef}(${defBonusNotes.join(' ')})` : `${effDef}`;
       const atkStr = effAtk > unit.stats.attack ? `${effAtk}(🔥+${effAtk - unit.stats.attack})` : `${effAtk}`;
       const rngStr = effRng > unit.stats.range ? `${effRng}(+${effRng - unit.stats.range})` : `${effRng}`;
-      const bonusNote = unit.stats.attackBonusAgainst || unit.stats.defenseBonusAgainst ? ' [spear bonus]' : '';
       let supportNote = '';
       if (unit.type === 'healer') supportNote = ` | ✚${HEALER_HEAL_AMOUNT}HP/t (r1 full·r2 half)`;
       if (unit.type === 'damageBooster') supportNote = ` | +${DAMAGE_BOOST_AMOUNT}ATK (r1 full·r2 half)`;
       if (unit.type === 'rangeBooster') supportNote = ` | +${RANGE_BOOST_AMOUNT}RNG (r1)`;
-      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${bonusNote}${supportNote}`;
+      unitInfoEl.textContent = `${typeName} HP:${unit.hp}/${unit.stats.maxHp} ATK:${atkStr} DEF:${defStr} RNG:${rngStr}${encStr}${supportNote}`;
 
-      const capturable = canCaptureTemple(state, unit);
-      if (capturable) {
+      const foundable = canStartFounding(state, unit);
+      const isAgrarBuilder = unit.type === 'founder' && player.faction === 'agrar';
+      if (foundable) {
+        // v13 §17 — an Acolyte on Ruins this player previously owned sees
+        // "Restore Temple <level>" (returns directly to that level); Ruins
+        // with no memory, or memory belonging to someone else, always show
+        // "Consecrate Temple I" (a fresh site always starts at level 1).
+        const isOwnRuins = foundable.site.state === 'ruins' && foundable.site.previousOwnerId === player.id;
+        const label = isOwnRuins ? `Restore Temple ${foundable.site.previousTempleLevel === 2 ? 'II' : 'I'}`
+          : foundable.site.state === 'ruins' ? 'Consecrate Temple I'
+          : 'Consecrate Temple I';
         captureBtn.style.display = 'block';
-        captureBtn.textContent = `⚔ Capture Temple`;
+        captureBtn.disabled = false;
+        captureBtn.title = '';
+        captureBtn.textContent = `⚒ ${label} (⚡${SITE_ESTABLISH_COST}) — 1 round`;
+      } else if (player.faction === 'temple' && getStrategicSiteAt(state, unit.pos)) {
+        // The Acolyte is gone — ANY Temple unit standing on a Temple/Ruins/
+        // neutral site can see this. Always shown while standing on one
+        // (matches the Fertile Site/Pillage Road pattern below), never
+        // silently hidden — a disabled button with a clear reason beats a
+        // vanished button with none (that gap is exactly what made "can't
+        // conquer a Temple" look broken — see foundBlockReason).
+        const reason = foundBlockReason(state, unit);
+        captureBtn.style.display = 'block';
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.classList.remove('active');
+        captureBtn.textContent = reason ? `⚒ Consecrate/Restore — ${reason}` : `⚒ Consecrate Temple I (⚡${SITE_ESTABLISH_COST})`;
+      } else if (player.faction === 'agrar' && state.fertileSites.some(f => hexEqual(f.pos, unit.pos))) {
+        // v14 — Claim Fertile Site takes priority over Build Road for a
+        // Builder standing exactly on one (1v1 Agrar mirror only — any
+        // Agrar unit, not just the Builder, can claim). Always shown while
+        // standing on one, disabled-with-reason rather than hidden.
+        const reason = fertileSiteBlockReason(state, unit);
+        captureBtn.style.display = 'block';
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.classList.remove('active');
+        captureBtn.textContent = reason ? `🌾 Claim Fertile Site — ${reason}` : '🌾 Claim Fertile Site (consumes full activation)';
+      } else if (getRoadAt(state, unit.pos) && getRoadAt(state, unit.pos)!.ownerId !== unit.playerId) {
+        // v14 — Pillage Road: ANY unit (not just Agrar/Builder) standing on
+        // an enemy-owned Road. Always shown while standing on one.
+        const reason = pillageRoadBlockReason(state, unit);
+        captureBtn.style.display = 'block';
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.classList.remove('active');
+        captureBtn.textContent = reason ? `⛏ Pillage Road — ${reason}` : '⛏ Pillage Road (destroys it)';
+      } else if (isAgrarBuilder) {
+        // §39-40 (phase 11 correction) — Build Road is ALWAYS shown for an
+        // Agrar Builder, never hidden behind a hidden precondition; disabled
+        // states carry a human-readable reason (title + on-button text).
+        // Ring-pick hex mode, same pattern as Build Farm — see roadBlockReason.
+        const picking = buildingRoad?.unitId === unit.id;
+        const reason = picking ? null : roadBlockReason(state, unit);
+        captureBtn.style.display = 'block';
+        captureBtn.disabled = !!reason;
+        captureBtn.title = reason ?? '';
+        captureBtn.classList.toggle('active', picking);
+        captureBtn.textContent = picking
+          ? (buildingRoad!.selected.length > 0
+            ? `🛤 Confirm ${buildingRoad!.selected.length}/${ROAD_SEGMENTS_PER_ACTIVATION} Road${buildingRoad!.selected.length > 1 ? 's' : ''} (⚡${roadSelectionTotalCost(buildingRoad!.selected)})`
+            : `🛤 Pick a hex for the Road… (up to ${ROAD_SEGMENTS_PER_ACTIVATION})`)
+          : reason ? `🛤 Build Road — ${reason}` : `🛤 Build Road (⚡${ROAD_COST_PER_HEX})`;
       } else {
         captureBtn.style.display = 'none';
+        if (buildingRoad?.unitId === unit.id) clearBuildRoad();
+      }
+
+      // Build Farm button (§6-9, phase 10; always-visible §39-40, phase 11) —
+      // a separate action from Found/Road above so the Builder can have both
+      // available at once. ALWAYS shown for a selected Agrar Builder, with an
+      // explicit disabled-state reason rather than being hidden — see
+      // farmBlockReason. Ring-pick hex mode, keyed off the Builder unit.
+      const ownUpgradeableSite = player.faction === 'temple' ? getStrategicSiteAt(state, unit.pos) : null;
+      const unitOnOwnTempleI = !!ownUpgradeableSite && ownUpgradeableSite.state === 'temple'
+        && ownUpgradeableSite.templeLevel === 1 && ownUpgradeableSite.ownerId === player.id;
+      if (myTurn && isAgrarBuilder) {
+        const picking = buildingFarm?.unitId === unit.id;
+        const reason = picking ? null : farmBlockReason(state, unit);
+        economyBtn.style.display = 'block';
+        economyBtn.disabled = !!reason;
+        economyBtn.title = reason ?? '';
+        economyBtn.classList.toggle('active', picking);
+        economyBtn.textContent = picking
+          ? (buildingFarm!.selected ? `⚑ Confirm Farm (⚡${AGRAR_FARM_COST})` : '⚑ Tap a highlighted hex for the Farm…')
+          : reason ? `⚑ Build Farm — ${reason}` : `⚑ Build Farm (${AGRAR_FARM_COST}⚡)`;
+      } else if (myTurn && unitOnOwnTempleI) {
+        // Temple-UX fix — the Upgrade action used to live ONLY on the site
+        // selection (below), so a friendly unit standing on your own Temple
+        // (spawned there, garrisoning it, etc.) hid the button behind an
+        // extra tap to switch selection from the unit to the site — easy to
+        // read as "can't upgrade while a unit is standing on it". Now shown
+        // directly from the unit's own selection too, same as Build Farm.
+        const reason = templeUpgradeBlockReason(state, ownUpgradeableSite!.id);
+        economyBtn.style.display = 'block';
+        economyBtn.classList.remove('active');
+        economyBtn.disabled = !!reason;
+        economyBtn.title = reason ?? '';
+        economyBtn.textContent = reason
+          ? `⛩ Upgrade to Temple II — ${reason}`
+          : `⛩ Upgrade to Temple II (${TEMPLE_UPGRADE_COST}⚡) — 1 round`;
+      } else {
+        economyBtn.style.display = 'none';
+        if (buildingFarm) clearBuildFarm();
       }
 
       // Destroy/disband slab — only for the local player's own unit on their turn.
@@ -1086,54 +1890,83 @@ function updateUI(): void {
 
       buildTeleportBtn.style.display = 'none';
     }
-  } else if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    const temple = selectedTemple;
-    if (temple) {
-      const unitOnTemple = getUnitAt(state, temple.pos);
-      const income = temple.level * TEMPLE_AURA_PER_LEVEL;
-      // Count existing portals for this temple
-      const existingPortals = state.teleportBuildings.filter(t => t.templeId === temple.id).length;
-      const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
-      // Temple level-up is now driven by the 3rd HUD slab button. Surface the
-      // cost / max-level state here so the player still sees what it takes.
-      const upgradeCost = templeUpgradeCost(temple.level);
-      const upgradeNote = upgradeCost === null
-        ? ` | ⛩ Max level`
-        : ` | ⛩ Level up: ⚡${upgradeCost}`;
-      if (unitOnTemple) {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} (occupied — clear tile to spawn) — ⚡${income}/turn${portalNote}${upgradeNote}`;
-      } else {
-        unitInfoEl.textContent = `Temple Lv.${temple.level} — ⚡${income}/turn — Spawn unit${portalNote}${upgradeNote}`;
+  } else if (state.selectionMode === 'site' && state.selectedSiteId) {
+    const siteId = state.selectedSiteId;
+    const capital = state.capitals.find(c => c.id === siteId);
+    const site = capital ? undefined : state.strategicSites.find(s => s.id === siteId);
+    const structurePos = capital?.pos ?? site?.pos;
+    if (structurePos) {
+      // §5 (phase 11) — recruiting always queues regardless of tile
+      // occupancy; occupancy only matters later, at deployment.
+      const unitOnStructure = getUnitAt(state, structurePos);
+      // v11 — Temple I/II/upgrading economy readout (§21-23).
+      let economyNote = '';
+      if (site && site.state === 'temple' && site.templeLevel === 1) {
+        economyNote = ' | Temple I — Income +1⚡ | Production +0';
+      } else if (site && site.state === 'temple' && site.templeLevel === 2) {
+        economyNote = ' | Temple II — Income +2⚡ | Production +1 (fully upgraded)';
+      } else if (site && site.state === 'upgradingTemple') {
+        economyNote = ' | Upgrading to Temple II — Income +1⚡ | Production +0 | completes next round';
       }
+      const label = capital
+        ? `Capital HP ${capital.hp}/${capital.maxHp}`
+        : `Temple HP ${site!.hp}/${site!.maxHp}${economyNote}`;
+      const existingPortals = state.teleportBuildings.filter(t => t.templeId === siteId).length;
+      const portalNote = existingPortals > 0 ? ` | ⬡ Portal: ${existingPortals}/1` : '';
+      unitInfoEl.textContent = unitOnStructure
+        ? `${label} (occupied — deploys once the tile is clear)${portalNote}`
+        : `${label} — Recruit here${portalNote}`;
 
       // Build teleport button
-      if (canBuildTeleportPair(state, temple.id)) {
+      if (canBuildTeleportPair(state, siteId)) {
         buildTeleportBtn.style.display = 'block';
-        buildTeleportBtn.classList.toggle('active', buildingTeleport?.templeId === temple.id);
-        buildTeleportBtn.textContent = buildingTeleport?.templeId === temple.id
-          ? (buildingTeleport.phase === 1 ? '⬡ Pick hex near this temple…' : '⬡ Pick hex near another temple…')
+        buildTeleportBtn.classList.toggle('active', buildingTeleport?.templeId === siteId);
+        buildTeleportBtn.textContent = buildingTeleport?.templeId === siteId
+          ? (buildingTeleport.phase === 1 ? '⬡ Pick hex near this structure…' : '⬡ Pick hex near another structure…')
           : `⬡ Build Portal Pair (${TELEPORT_BUILD_COST}⚡)`;
       } else {
         buildTeleportBtn.style.display = 'none';
-        if (buildingTeleport?.templeId === temple.id) clearBuildTeleport();
+        if (buildingTeleport?.templeId === siteId) clearBuildTeleport();
+      }
+
+      // Upgrade to Temple II button — Temple only (Agrar's Farm-building
+      // lives on the Builder unit selection instead, see above). Only
+      // shown for a Temple I site (§21-22 — Temple II shows no upgrade,
+      // an in-progress upgrade shows no button either, see economyNote).
+      if (myTurn && site && site.state === 'temple' && site.templeLevel === 1) {
+        const reason = templeUpgradeBlockReason(state, siteId);
+        economyBtn.style.display = 'block';
+        economyBtn.classList.remove('active');
+        economyBtn.disabled = !!reason;
+        economyBtn.title = reason ?? '';
+        economyBtn.textContent = reason
+          ? `⛩ Upgrade to Temple II — ${reason}`
+          : `⛩ Upgrade to Temple II (${TEMPLE_UPGRADE_COST}⚡) — 1 round`;
+      } else {
+        economyBtn.style.display = 'none';
+        if (buildingFarm) clearBuildFarm();
       }
     }
     captureBtn.style.display = 'none';
+    if (buildingRoad) clearBuildRoad();
     destroyArmedUnitId = null;
     hideDestroySlab();
   } else {
     unitInfoEl.textContent = '';
     captureBtn.style.display = 'none';
+    if (buildingRoad) clearBuildRoad();
     destroyArmedUnitId = null;
     hideDestroySlab();
     buildTeleportBtn.style.display = 'none';
     if (buildingTeleport) clearBuildTeleport();
+    economyBtn.style.display = 'none';
+    if (buildingFarm) clearBuildFarm();
   }
 
   // Spawn bar — shown whenever an owned temple is selected. When a unit occupies
   // the temple tile the cards are greyed/disabled (spawn is blocked until the
   // tile is cleared) rather than hidden, so the player sees why they can't spawn.
-  if (state.selectionMode === 'temple' && state.selectedTempleId) {
+  if (state.selectionMode === 'site' && state.selectedSiteId) {
     setSpawnBarVisible(true);
     updateUnitCards();
   } else {
@@ -1144,20 +1977,17 @@ function updateUI(): void {
   updateMyPlayerBadge();
 }
 
-// True once the LOCAL online player has been eliminated (no units, no temples)
-// while the game is still running. In an N-player (>2) online game the turn
-// rotation skips this player forever, so `currentPlayerIndex` never equals their
-// slot again — without this guard they'd be stuck behind the opponent-turn
-// curtain indefinitely. Instead they should watch the rest of the game like a
-// spectator. (2-player games can't hit this: losing all units/temples there ends
-// the game, so phase is already 'gameOver'.)
+// §11 — a player's Capital is permanent and can't be captured, only
+// destroyed, and destruction already ends the match (checkWinCondition). So
+// there's no more "eliminated but game continues" state to detect here —
+// this is now always false pre-gameOver. Kept as a real check (rather than a
+// hardcoded false) in case a future mechanic changes that.
 function localPlayerEliminated(): boolean {
   if (!multiplayerMode || spectatorMode || !gameStarted || state.phase !== 'playing') return false;
   const me = state.players[myPlayerSlot];
   if (!me) return false;
-  const hasUnits = state.units.some(u => u.playerId === me.id && u.hp > 0);
-  const hasTemples = state.temples.some(t => t.ownerId === me.id);
-  return !hasUnits && !hasTemples;
+  const capital = getPlayerCapital(state, me.id);
+  return !capital || capital.hp <= 0;
 }
 
 // True while the active turn belongs to someone other than the local human:
@@ -1181,9 +2011,9 @@ function updateOpponentTurnOverlay(): void {
   //    "Waiting for {name} to move…" pill so play never feels hidden.
   if (handoffPending) {
     opponentTurnCardEl.innerHTML =
-      `<div class="spinner">🎮</div>` +
+      `<div class="spinner"><svg viewBox="0 0 24 24"><path d="M12 2l8.7 5v10L12 22l-8.7-5V7z"/><path d="M12 7v10M7.7 9.5l4.3 2.5 4.3-2.5M7.7 14.5l4.3-2.5 4.3 2.5"/></svg></div>` +
       `<div class="label">Pass the device to</div>` +
-      `<div class="opp-name">${getCurrentPlayer(state).name}</div>` +
+      `<div class="hand-name">${escapeHtml(getCurrentPlayer(state).name)}</div>` +
       `<div class="sublabel">Tap anywhere to start their turn</div>`;
     opponentTurnOverlay.classList.remove('hidden');
     waitingIndicator.classList.add('hidden');
@@ -1223,8 +2053,7 @@ function updateMyPlayerBadge(): void {
 
 // ── Stat pills (aura income + population) ──
 function updateStatPills(player: Player): void {
-  const ownedTemples = state.temples.filter(t => t.ownerId === player.id);
-  const income = ownedTemples.reduce((sum, t) => sum + t.level * TEMPLE_AURA_PER_LEVEL, 0);
+  const income = getPlayerIncome(state, player.id);
   auraInfoEl.innerHTML =
     `<span class="pill-icon gem-icon"></span>` +
     `<span class="pill-value">${player.aura}</span>` +
@@ -1232,10 +2061,13 @@ function updateStatPills(player: Player): void {
 
   const popCap = getPopulationCap(state, player.id);
   const popCount = getPopulationCount(state, player.id);
+  const slots = getProductionSlots(state, player.id);
+  const busySlots = getBusyProductionSlotCount(state, player.id);
   popInfoEl.innerHTML =
     `<span class="pill-icon">👥</span>` +
-    `<span class="pill-value">${popCount}/${popCap}</span>`;
-  popInfoEl.classList.toggle('pop-full', popCount >= popCap);
+    `<span class="pill-value">${popCount}/${popCap}</span>` +
+    `<span class="pill-sub">(🏭${slots - busySlots}/${slots})</span>`;
+  popInfoEl.classList.toggle('pop-full', popCount >= popCap || busySlots >= slots);
 }
 
 // ── Unit build cards ──
@@ -1249,10 +2081,14 @@ const UNIT_CARD_NAMES: Record<UnitType, string> = {
   healer:       'Healer',
   damageBooster: 'Dmg Boost',
   rangeBooster:  'Rng Boost',
+  founder:      'Founder', // faction-flavored name (Builder/Acolyte) comes from unitDisplayName below
 };
 
-// Order matches the original spawn bar.
+// §5 (phase 11 correction) — the Builder/Acolyte leads the bar: it's usually
+// the first thing either faction needs to recruit, since nothing else can be
+// built or founded without it.
 const UNIT_CARD_ORDER: UnitType[] = [
+  'founder',
   'warrior', 'archer', 'catapult', 'horserider', 'heavyknight',
   'spearsman', 'healer', 'damageBooster', 'rangeBooster',
 ];
@@ -1266,6 +2102,13 @@ function buildUnitCards(): void {
     const card = document.createElement('div');
     card.className = 'unit-card disabled';
 
+    // Queued-count badge (§ population/queue clarity pass) — how many of
+    // THIS type are already waiting in the training queue at the currently
+    // selected structure. Hidden (via updateUnitCards) whenever that count
+    // is 0, so it never clutters a card with nothing pending.
+    const queuedBadge = document.createElement('div');
+    queuedBadge.className = 'unit-card-queued hidden';
+
     const thumb = document.createElement('img');
     thumb.className = 'unit-card-thumb';
     thumb.src = UNIT_ART[type];
@@ -1276,14 +2119,23 @@ function buildUnitCards(): void {
     name.className = 'unit-card-name';
     name.textContent = UNIT_CARD_NAMES[type];
 
+    const stats = document.createElement('div');
+    stats.className = 'unit-card-stats';
+
     const cost = document.createElement('div');
     cost.className = 'unit-card-cost';
     // cost value gets refreshed in updateUnitCards (settings can change it)
 
-    card.append(thumb, name, cost);
+    const pop = document.createElement('div');
+    pop.className = 'unit-card-pop';
+    // population/command-cost value gets refreshed in updateUnitCards too —
+    // this is the "what population size does this unit take up" indicator.
+
+    stats.append(cost, pop);
+    card.append(queuedBadge, thumb, name, stats);
     card.addEventListener('click', () => {
       if (card.classList.contains('disabled')) return;
-      handleSpawnBtn(type);
+      handleSpawnBtn(type, card);
     });
 
     unitCards.set(type, card);
@@ -1325,13 +2177,24 @@ window.addEventListener('resize', () => {
 
 function updateUnitCards(): void {
   const player = getCurrentPlayer(state);
-  const unlocked = getUnlockedUnits(state.playerTech[player.id]!);
-  // A unit standing on the selected temple's tile blocks spawning (can't stack
-  // onto an occupied spawn tile) — grey every card while occupied.
-  const selTemple = state.selectionMode === 'temple' && state.selectedTempleId
-    ? state.temples.find(t => t.id === state.selectedTempleId)
-    : undefined;
-  const templeOccupied = selTemple ? !!getUnitAt(state, selTemple.pos) : false;
+  const unlocked = getUnlockedUnits(state.playerTech[player.id]!, player.faction);
+  // §5 (phase 11) — recruiting only QUEUES a TrainingOrder now; tile
+  // occupancy at the structure is checked at DEPLOYMENT time (start of the
+  // recruiting player's next round), not here, so a structure with a unit
+  // standing on it is still a legal recruit target — no card should grey out
+  // for that reason.
+  //
+  // Population/queue clarity pass — each card now shows its own population
+  // (Command) cost up front, not just its Energy cost, and each of the two
+  // gates is tinted independently so a disabled card actually explains WHY
+  // (can't afford it vs. would bust the population cap vs. every production
+  // slot is currently busy), instead of collapsing every reason into one
+  // generic greyed-out look.
+  const popCap = getPopulationCap(state, player.id);
+  const popCount = getPopulationCount(state, player.id);
+  const slots = getProductionSlots(state, player.id);
+  const busySlots = getBusyProductionSlotCount(state, player.id);
+  const slotsFree = busySlots < slots;
   for (const type of UNIT_CARD_ORDER) {
     const card = unitCards.get(type)!;
     // Match the old build menu: locked units are hidden entirely.
@@ -1340,20 +2203,59 @@ function updateUnitCards(): void {
       continue;
     }
     card.style.display = '';
-    const affordable = canAfford(state, type) && !templeOccupied;
+
+    const auraCost = getUnitCost(type, player.faction);
+    const popCost = getUnitCommandCost(type, player.faction);
+    const auraOk = player.aura >= auraCost;
+    const popOk = popCount + popCost <= popCap;
+    const affordable = auraOk && popOk && slotsFree;
     card.classList.toggle('disabled', !affordable);
 
+    const reasons: string[] = [];
+    if (!auraOk) reasons.push(`not enough Energy (need ⚡${auraCost})`);
+    if (!popOk) reasons.push(`would exceed your population cap (👥${popCount + popCost}/${popCap})`);
+    if (!slotsFree) reasons.push(`every production slot is busy (🏭${busySlots}/${slots})`);
+    card.title = reasons.join(' · ');
+
     // Card art = a 3D render of the unit model, team-tinted to the current
-    // player. Regenerated only when the player colour changes (cached otherwise).
+    // player. Regenerated when the player colour OR faction changes (faction
+    // matters since reveal — e.g. the 'horserider' slot renders a completely
+    // different model for Farmer vs Raider — cached otherwise).
     const thumb = card.querySelector('.unit-card-thumb') as HTMLImageElement;
-    if (thumb && thumb.dataset.thumbColor !== player.color) {
-      try { thumb.src = getUnitThumbnail(type, player.color); thumb.dataset.thumbColor = player.color; }
+    const thumbKey = `${player.color}:${player.faction ?? ''}`;
+    if (thumb && thumb.dataset.thumbKey !== thumbKey) {
+      try { thumb.src = getUnitThumbnail(type, player.color, player.faction); thumb.dataset.thumbKey = thumbKey; }
       catch { /* keep the PNG fallback set in buildUnitCards */ }
     }
 
-    // Refresh cost (editable via the settings panel).
+    // Faction-flavored name (§37/§38 — e.g. Pikeman vs Spearsman for the same slot).
+    const name = card.querySelector('.unit-card-name')!;
+    name.textContent = unitDisplayName(type, player.faction);
+
+    // Refresh cost (faction-flavored; base UNIT_COSTS is still editable via
+    // the settings panel and used as the fallback pre-reveal).
     const cost = card.querySelector('.unit-card-cost')!;
-    cost.innerHTML = `<span class="cost-icon">⚡</span>${UNIT_COSTS[type]}`;
+    cost.innerHTML = `<span class="cost-icon">⚡</span>${auraCost}`;
+    cost.classList.toggle('chip-bad', !auraOk);
+
+    // Population (Command) cost this unit will take up once recruited —
+    // the missing piece that made "what population size does this take up"
+    // unclear before.
+    const pop = card.querySelector('.unit-card-pop')!;
+    pop.innerHTML = `<span class="pop-icon">👥</span>${popCost}`;
+    pop.classList.toggle('chip-bad', !popOk);
+
+    // Queued-count badge — how many of THIS type are already waiting in the
+    // training queue at the currently selected recruiting structure (§ the
+    // "which units are waiting to be created" indicator). Only meaningful
+    // while a structure is actually selected (recruiting is only possible
+    // from the site-selection view in the first place).
+    const queuedBadge = card.querySelector('.unit-card-queued')!;
+    const queuedHere = state.selectionMode === 'site' && state.selectedSiteId
+      ? state.trainingQueue.filter(o => o.playerId === player.id && o.structureId === state.selectedSiteId && o.unitType === type).length
+      : 0;
+    queuedBadge.textContent = `×${queuedHere}`;
+    queuedBadge.classList.toggle('hidden', queuedHere === 0);
   }
   // Visible card count can change as units unlock → recheck overflow/arrows.
   updateSpawnArrows();
@@ -1381,6 +2283,7 @@ let buildingTeleport: BuildTeleportState | null = null;
 function enterBuildTeleport(templeId: string): void {
   buildingTeleport = { templeId, phase: 1, firstPos: null };
   state.buildHexes = getValidTeleportHexes(state, templeId);
+  state.buildKind = 'teleport';
   render();
 }
 
@@ -1389,6 +2292,7 @@ function enterBuildTeleport(templeId: string): void {
 function clearBuildTeleport(): void {
   buildingTeleport = null;
   state.buildHexes = [];
+  state.buildKind = null;
 }
 
 // User-initiated cancel: clear state and re-render.
@@ -1400,12 +2304,222 @@ function cancelBuildTeleport(): void {
 buildTeleportBtn.addEventListener('click', () => {
   if (buildingTeleport) {
     cancelBuildTeleport();
-  } else if (state.selectionMode === 'temple' && state.selectedTempleId) {
-    if (canBuildTeleportPair(state, state.selectedTempleId)) {
-      enterBuildTeleport(state.selectedTempleId);
+  } else if (state.selectionMode === 'site' && state.selectedSiteId) {
+    if (canBuildTeleportPair(state, state.selectedSiteId)) {
+      enterBuildTeleport(state.selectedSiteId);
     }
   }
 });
+
+// ── Build Farm (Builder-driven, §6-9) / Buy Devotion (site-driven, §15) ──
+//
+// Farm-placement UX pass — Farm placement is now select-then-confirm (like
+// Road below), not instant-on-click: tapping a legal hex selects it (ghost
+// Farm model + a much stronger highlight — see renderer.setFarmSelectionPreview),
+// tapping a different legal hex just moves the selection, and either
+// pressing Confirm or tapping the already-selected hex again actually builds.
+// Tapping an illegal hex always explains why (farmHexIllegalReason) and
+// stays in placement mode — only Cancel/deselect/turn-change/another-mode
+// actually exits it.
+
+interface BuildFarmState {
+  unitId: string;
+  selected: HexCoord | null;
+}
+
+let buildingFarm: BuildFarmState | null = null;
+
+function enterBuildFarm(unitId: string): void {
+  const unit = state.units.find(u => u.id === unitId);
+  buildingFarm = { unitId, selected: null };
+  state.buildHexes = unit ? getValidFarmHexes(state, unit) : [];
+  state.buildKind = 'farm';
+  renderer.setFarmSelectionPreview(null);
+  render();
+}
+
+// Clear farm-build state WITHOUT triggering a render — safe from inside render().
+function clearBuildFarm(): void {
+  buildingFarm = null;
+  state.buildHexes = [];
+  state.buildKind = null;
+  renderer.setFarmSelectionPreview(null);
+}
+
+function cancelBuildFarm(): void {
+  clearBuildFarm();
+  render();
+}
+
+// Confirms the tentatively-selected Farm tile as one Builder activation.
+// Pressing Confirm (or the Build Farm slab itself, mirroring Road's own
+// press-again-to-confirm) with nothing selected yet is just a cancel.
+function confirmBuildFarm(): void {
+  if (!buildingFarm || !buildingFarm.selected) { cancelBuildFarm(); return; }
+  const { unitId, selected } = buildingFarm;
+  clearBuildFarm();
+  sendOrCall({ type: 'action', action: 'build-farm', params: { unitId, pos: selected } }, () => {
+    const started = startFarm(state, unitId, selected);
+    if (started) {
+      logCombat(`Began building a Farm at (${selected.q},${selected.r}) for ${AGRAR_FARM_COST}⚡`);
+      // Refresh move/attack highlights — the Builder just spent its activation,
+      // but nothing else re-derives state.moveHexes/attackHexes on its own, so
+      // without this the OLD (pre-build) move range would keep rendering and
+      // visually mask the new Farm/Road tile wherever the two happen to overlap.
+      selectUnit(state, unitId);
+    }
+  });
+  render();
+}
+
+economyBtn.addEventListener('click', () => {
+  if (buildingFarm) {
+    if (buildingFarm.selected) confirmBuildFarm(); else cancelBuildFarm();
+    return;
+  }
+  // Agrar: Build Farm — triggered from the Builder's own unit selection.
+  if (state.selectionMode === 'unit' && state.selectedUnitId) {
+    const unit = state.units.find(u => u.id === state.selectedUnitId);
+    if (unit && getValidFarmHexes(state, unit).some(h => canStartFarm(state, unit, h))) {
+      enterBuildFarm(unit.id);
+      return;
+    }
+    // Temple: Upgrade to Temple II — triggered from a friendly unit standing
+    // on your own Temple I (mirrors the site-selection path below, so
+    // standing a unit on the Temple never blocks upgrading it).
+    const player = state.players.find(p => p.id === unit?.playerId);
+    const site = unit ? getStrategicSiteAt(state, unit.pos) : undefined;
+    if (unit && player?.faction === 'temple' && site && site.state === 'temple'
+      && site.templeLevel === 1 && site.ownerId === player.id) {
+      const siteId = site.id;
+      sendOrCall({ type: 'action', action: 'upgrade-temple', params: { templeId: siteId } }, () => {
+        if (startTempleUpgrade(state, siteId)) logCombat(`Started upgrading Temple to Temple II (${TEMPLE_UPGRADE_COST}⚡)`);
+      });
+    }
+    return;
+  }
+  // Temple: Upgrade to Temple II — triggered from the Temple site selection.
+  if (state.selectionMode === 'site' && state.selectedSiteId) {
+    const siteId = state.selectedSiteId;
+    const site = state.strategicSites.find(s => s.id === siteId);
+    if (!site || site.state !== 'temple') return;
+    sendOrCall({ type: 'action', action: 'upgrade-temple', params: { templeId: siteId } }, () => {
+      if (startTempleUpgrade(state, siteId)) logCombat(`Started upgrading Temple to Temple II (${TEMPLE_UPGRADE_COST}⚡)`);
+    });
+  }
+});
+
+// ── Build Road (Builder-driven, adjacency + network-connectivity §23-25) ──
+//
+// Balance pass (ROAD_SEGMENTS_PER_ACTIVATION 3->2) — a Road hex must be
+// adjacent to the Builder AND itself adjacent to the Capital/a Farm/an
+// existing Road for the FIRST tile (see getValidRoadHexes); every later
+// tile (up to ROAD_SEGMENTS_PER_ACTIVATION total) must chain directly off
+// the one just picked and stay legal/affordable — mirrors buildRoadPath's
+// own per-segment rules exactly (roadCandidatesFor below), so nothing the
+// preview offers can ever be rejected at confirm time. This used to
+// resolve instantly on the first click; it's now a genuine multi-select
+// (pick 1 or 2 tiles, then confirm) so a human's Road build goes through
+// the exact same buildRoadPath the AI/headless play already use, not a
+// separate single-hex-only path.
+
+interface BuildRoadState {
+  unitId: string;
+  selected: HexCoord[];
+}
+
+let buildingRoad: BuildRoadState | null = null;
+
+function roadHexCost(hex: HexCoord): number {
+  return state.pillagedRoadHexes.has(hexKey(hex)) ? ROAD_PILLAGE_REBUILD_COST : ROAD_COST_PER_HEX;
+}
+
+function roadSelectionTotalCost(selected: HexCoord[]): number {
+  return selected.reduce((sum, h) => sum + roadHexCost(h), 0);
+}
+
+// Legal candidates for the NEXT tile given what's already selected.
+function roadCandidatesFor(unit: Unit, selected: HexCoord[]): HexCoord[] {
+  const player = state.players.find(p => p.id === unit.playerId);
+  if (!player) return [];
+  if (selected.length === 0) {
+    return getValidRoadHexes(state, unit).filter(h => canBuildRoad(state, unit, h));
+  }
+  if (selected.length >= ROAD_SEGMENTS_PER_ACTIVATION) return [];
+  const remaining = player.aura - roadSelectionTotalCost(selected);
+  const last = selected[selected.length - 1]!;
+  return hexNeighbors(last).filter(h =>
+    hexDistance({ q: 0, r: 0 }, h) <= state.mapRadius
+    && !selected.some(s => hexEqual(s, h))
+    && isLegalRoadTile(state, h, player.id)
+    && remaining >= roadHexCost(h));
+}
+
+function enterBuildRoad(unitId: string): void {
+  const unit = state.units.find(u => u.id === unitId);
+  buildingRoad = { unitId, selected: [] };
+  state.buildHexes = unit ? roadCandidatesFor(unit, []) : [];
+  state.buildKind = 'road';
+  renderer.setRoadSelectionPreview([]);
+  render();
+}
+
+// Clear road-build state WITHOUT triggering a render — safe from inside render().
+function clearBuildRoad(): void {
+  buildingRoad = null;
+  state.buildHexes = [];
+  state.buildKind = null;
+  renderer.setRoadSelectionPreview([]);
+}
+
+function cancelBuildRoad(): void {
+  clearBuildRoad();
+  render();
+}
+
+// Confirms whatever's currently selected (1 or up to ROAD_SEGMENTS_PER_
+// ACTIVATION tiles) as one Builder activation, through the exact same
+// buildRoadPath mutator the AI/headless play already use.
+function confirmBuildRoad(): void {
+  if (!buildingRoad || buildingRoad.selected.length === 0) { cancelBuildRoad(); return; }
+  const { unitId, selected } = buildingRoad;
+  const totalCost = roadSelectionTotalCost(selected);
+  clearBuildRoad();
+  sendOrCall({ type: 'action', action: 'build-road', params: { unitId, path: selected } }, () => {
+    const built = buildRoadPath(state, unitId, selected);
+    if (built.length > 0) {
+      logCombat(`Built ${built.length} road segment${built.length > 1 ? 's' : ''} for ${totalCost}⚡`);
+      // Refresh move/attack highlights — see the identical note in confirmBuildFarm.
+      selectUnit(state, unitId);
+    }
+  });
+  render();
+}
+
+// Farm/Road placement UX pass — a visible Cancel button (works with no
+// hover, so touch always has a way out of placement mode) plus a compact,
+// unobtrusive legend explaining the highlight colors — kept in sync every
+// render, independent of whatever else is selected.
+function syncPlacementCancelAndLegend(): void {
+  if (buildingFarm) {
+    placementCancelBtn.style.display = 'block';
+    placementCancelBtn.onclick = () => cancelBuildFarm();
+    placementLegendEl.style.display = 'block';
+    placementLegendEl.textContent = buildingFarm.selected
+      ? 'Ghost + bright pulse = your selected Farm tile · tap it again or press Confirm to build'
+      : 'Pulsing green hex = legal Farm site · tap one to preview it · tap any other tile to see why it\'s invalid';
+  } else if (buildingRoad) {
+    placementCancelBtn.style.display = 'block';
+    placementCancelBtn.onclick = () => cancelBuildRoad();
+    placementLegendEl.style.display = 'block';
+    placementLegendEl.textContent = buildingRoad.selected.length === 0
+      ? 'Pulsing cyan hex = legal Road start · tap one to select (up to 2 tiles this activation)'
+      : 'Gold hex = selected Road · pulsing cyan = legal next tile · press Confirm when done';
+  } else {
+    placementCancelBtn.style.display = 'none';
+    placementLegendEl.style.display = 'none';
+  }
+}
 
 // ── Settings UI ──
 
@@ -1419,6 +2533,7 @@ const UNIT_DISPLAY: Record<UnitType, string> = {
   healer:       '✚ Healer',
   damageBooster:'🔥 Dmg Booster',
   rangeBooster: '↔ Rng Booster',
+  founder:      '🔨 Founder',
 };
 
 const STAT_FIELDS: Array<{ key: keyof UnitStats; label: string; min: number; step: number }> = [
@@ -1523,159 +2638,246 @@ settingsResetBtn.addEventListener('click', () => {
 
 // ── Tech tree UI ──
 
-const BRANCH_META: Record<string, { title: string }> = {
-  movement:        { title: 'Branch: Movement — Pick ONE' },
-  stat_bonus:      { title: 'Branch: Stat Bonus — Pick ONE' },
-  support:         { title: 'Branch: Support Unit — Pick ONE' },
+// ── Research panel (lane × tier graph) ───────────────────────────────────────
+//
+// Lanes: Siege, Heavy Unit, Command (linear), Stat Bonus + Support (pick-one
+// branches). Tiers by prerequisite count: 0 = Foundation, 1 = Advanced,
+// 2 = Elite. Prerequisites are drawn as connectors in an SVG overlay; nodes
+// are compact medallions and the ONE detail pane pinned to the bottom of the
+// panel carries the description, prerequisite checklist and the Research
+// button — the node itself is never the buy button any more.
 
+type TechStatus = 'researching' | 'researched' | 'slot' | 'locked' | 'branch' | 'command2' | 'poor' | 'available';
+interface TechLane { title: string; branch?: string; nodes: typeof TECH_NODES; }
+
+// Mirrors game.ts's COMMAND_2_MIN_OTHER_TECHS (not exported — canResearch is
+// the source of truth for the actual gate), purely for the disabled-reason
+// text and the prerequisite checklist.
+const COMMAND_2_MIN_OTHER_TECHS_UI = 2;
+
+// Glyphs for techs that don't unlock a unit (no thumbnail to show).
+const TECH_GLYPH: Partial<Record<TechId, string>> = {
+  command_1: '⚑', command_2: '⚑', agrar_heavy_armor: '🛡', temple_warrior_rite: '🔥',
+  agrar_siegecraft_splash: '💥', temple_mobile_siege_splash: '💥', longrange_hp: '🏹', horse_sight: '👁',
 };
+
+let selectedTechId: TechId | null = null;
+let techStatusMap: Map<TechId, TechStatus> = new Map();
+
+function techLanes(faction: FactionId | null): TechLane[] {
+  const own = (n: typeof TECH_NODES[number]) => !n.faction || n.faction === faction;
+  const pick = (...ids: string[]) => TECH_NODES.filter(n => own(n) && ids.includes(n.id));
+  return [
+    { title: 'Siege', nodes: pick('agrar_siegecraft', 'agrar_siegecraft_splash', 'temple_mobile_siege_tech', 'temple_mobile_siege_splash') },
+    { title: 'Heavy Unit', nodes: pick('agrar_heavy_armor', 'agrar_heavy_knight_tech', 'temple_warrior_rite', 'temple_champion_rite') },
+    { title: 'Command', nodes: pick('command_1', 'command_2') },
+    { title: 'Stat bonus', branch: 'stat_bonus', nodes: TECH_NODES.filter(n => n.branch === 'stat_bonus') },
+    { title: 'Support', branch: 'support', nodes: TECH_NODES.filter(n => n.branch === 'support') },
+  ];
+}
+
+function techStatus(node: typeof TECH_NODES[number], tech: PlayerTech, aura: number, lane: typeof TECH_NODES): TechStatus {
+  if (tech.researching?.techId === node.id) return 'researching';
+  if (tech.researched.has(node.id)) return 'researched';
+  if (tech.researching) return 'slot';
+  const prereqsMet = node.prereqs.every(p => tech.researched.has(p));
+  const branchBlocked = !!node.branch && lane.some(n => n.id !== node.id && tech.researched.has(n.id));
+  const command2Blocked = node.id === 'command_2' && prereqsMet &&
+    [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length < COMMAND_2_MIN_OTHER_TECHS_UI;
+  if (branchBlocked) return 'branch';
+  if (command2Blocked) return 'command2';
+  if (!prereqsMet) return 'locked';
+  if (aura < node.cost) return 'poor';
+  return 'available';
+}
+
+// The art a tech card "stands for": the unlocked unit, or the Catapult/Mobile
+// Siege model for its splash sub-upgrade. Rendered (team-coloured) the same
+// way as the build-card thumbnails, so the tech tree shows the actual model.
+function techNodeArt(node: typeof TECH_NODES[number], color: string): string | null {
+  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color, node.faction);
+  if (node.id === 'agrar_siegecraft_splash' || node.id === 'temple_mobile_siege_splash') return getUnitThumbnail('catapult', color, node.faction);
+  return null;
+}
+
+function techMedallion(node: typeof TECH_NODES[number], color: string): string {
+  const art = techNodeArt(node, color);
+  return art ? `<img src="${art}" alt="" draggable="false">` : `<span>${TECH_GLYPH[node.id] ?? '✦'}</span>`;
+}
+
+const techName = (id: TechId): string => TECH_NODES.find(n => n.id === id)?.name ?? id;
 
 function renderTechTree(): void {
   const player = getCurrentPlayer(state);
   const tech = state.playerTech[player.id]!;
   techAuraInfo.textContent = `⚡ ${player.aura} aura`;
 
-  techBody.innerHTML = '';
-
-  // Section 1: Unit unlocks (no branch)
-  const unitUnlockNodes = TECH_NODES.filter(n => n.unitUnlock && !n.branch && n.prereqs.length === 0);
-  appendSection(techBody, 'Unit Unlocks', undefined, unitUnlockNodes, tech, player.aura, player.color);
-
-  // Section 2: Catapult sub-upgrade
-  const catapultUpgrade = TECH_NODES.filter(n => n.id === 'catapult_splash');
-  appendSection(techBody, 'Catapult Upgrade', undefined, catapultUpgrade, tech, player.aura, player.color);
-
-  // Section 3+: Branches
-  const branches = ['movement', 'stat_bonus', 'support'];
-  for (const branch of branches) {
-    const nodes = TECH_NODES.filter(n => n.branch === branch);
-    const meta = BRANCH_META[branch]!;
-    appendSection(techBody, meta.title, branch, nodes, tech, player.aura, player.color);
+  const lanes = techLanes(player.faction);
+  techStatusMap = new Map();
+  for (const lane of lanes) for (const n of lane.nodes) techStatusMap.set(n.id, techStatus(n, tech, player.aura, lane.nodes));
+  if (!selectedTechId || !techStatusMap.has(selectedTechId)) {
+    selectedTechId = tech.researching?.techId
+      ?? [...techStatusMap.entries()].find(([, st]) => st === 'available')?.[0]
+      ?? lanes[0]!.nodes[0]!.id;
   }
-}
+  const remaining = tech.researching ? Math.max(1, tech.researching.completesRound - state.turnNumber) : 0;
 
-// The art a tech card "stands for": the unlocked unit, the teleport portal, or
-// the catapult for its splash sub-upgrade. Rendered (team-coloured) the same way
-// as the build-card thumbnails, so the tech tree shows the actual game model.
-function techNodeArt(node: typeof TECH_NODES[number], color: string): string | null {
-  if (node.unitUnlock) return getUnitThumbnail(node.unitUnlock, color);
-  if (node.id === 'teleports') return getPortalThumbnail(color);
-  if (node.id === 'catapult_splash') return getUnitThumbnail('catapult', color);
-  return null;
-}
-
-function appendSection(
-  container: HTMLElement,
-  title: string,
-  branch: string | undefined,
-  nodes: typeof TECH_NODES,
-  tech: { researched: Set<TechId> },
-  aura: number,
-  playerColor: string,
-): void {
-  if (nodes.length === 0) return;
-
-  const section = document.createElement('div');
-  section.className = 'tech-section';
-
-  const titleEl = document.createElement('div');
-  titleEl.className = 'tech-section-title';
-  titleEl.textContent = title;
-  section.appendChild(titleEl);
-
-  if (branch) {
-    const branchHasPick = nodes.some(n => tech.researched.has(n.id));
-    if (branchHasPick) {
-      const label = document.createElement('div');
-      label.className = 'tech-branch-label';
-      label.textContent = '✓ Choice made — branch locked';
-      section.appendChild(label);
-    }
+  // one research slot — status bar up top
+  let slot: string;
+  if (tech.researching) {
+    const n = TECH_NODES.find(x => x.id === tech.researching!.techId)!;
+    const pct = Math.round(((n.researchTime - remaining) / n.researchTime) * 100);
+    slot = `<div class="tt-slot">Research slot: <b>${n.name}</b> · ${remaining} round${remaining === 1 ? '' : 's'} left <div class="bar"><i style="width:${Math.max(8, pct)}%"></i></div></div>`;
+  } else {
+    slot = `<div class="tt-slot idle">Research slot: <b>idle</b> — pick a glowing node <div class="bar"><i style="width:100%"></i></div></div>`;
   }
 
-  const nodesRow = document.createElement('div');
-  nodesRow.className = 'tech-nodes';
-
-  for (const node of nodes) {
-    const prereqsMet = node.prereqs.every(p => tech.researched.has(p));
-    const branchBlocked = !!node.branch && nodes.some(n => n.id !== node.id && tech.researched.has(n.id));
-    const isResearched = tech.researched.has(node.id);
-    const canAffordIt = aura >= node.cost;
-
-    let stateClass = '';
-    let statusText = '';
-    let statusClass = '';
-    if (isResearched) {
-      stateClass = 'tech-node--researched';
-      statusText = '✓ Researched';
-      statusClass = 'status-researched';
-    } else if (!prereqsMet || branchBlocked) {
-      stateClass = 'tech-node--locked';
-      statusText = branchBlocked ? '✗ Branch taken' : '✗ Requires prerequisite';
-      statusClass = 'status-locked';
-    } else if (!canAffordIt) {
-      stateClass = 'tech-node--poor';
-      statusText = `Need ${node.cost} ⚡`;
-      statusClass = 'status-poor';
-    } else {
-      statusText = `Available`;
-      statusClass = 'status-available';
+  // lane × tier grid
+  let grid = `<div class="tt-tiers"><div></div><div class="tt-tier">Foundation</div><div class="tt-tier">Advanced</div><div class="tt-tier">Elite</div></div>`;
+  for (const lane of lanes) {
+    grid += `<div class="tt-lane"><div class="tt-lane-label">${lane.title}${lane.branch ? '<small>pick one</small>' : ''}</div>`;
+    for (let tier = 0; tier < 3; tier++) {
+      const cell = lane.nodes.filter(n => n.prereqs.length === tier);
+      const isPick = !!lane.branch && tier === 0;
+      const made = isPick && lane.nodes.some(n => tech.researched.has(n.id));
+      grid += `<div class="tt-cell${isPick ? ' pick' : ''}${made ? ' locked-branch' : ''}">`;
+      for (const n of cell) {
+        const st = techStatusMap.get(n.id)!;
+        const cls = st === 'researching' || st === 'researched' || st === 'available' || st === 'poor' ? st : 'locked';
+        const badge = st === 'researched' ? '✓' : st === 'researching' ? String(remaining) : cls === 'locked' ? '🔒' : '';
+        const prog = st === 'researching' ? ` style="--p:${Math.round(((n.researchTime - remaining) / n.researchTime) * 100)}%"` : '';
+        grid += `<div class="tt-node ${cls}${selectedTechId === n.id ? ' sel' : ''}" data-id="${n.id}" role="button" tabindex="0">
+          <div class="tt-med">${techMedallion(n, player.color)}<div class="tt-ring"${prog}></div>${badge ? `<div class="tt-badge">${badge}</div>` : ''}</div>
+          <div class="tt-txt"><div class="tt-name">${n.name}</div><div class="tt-meta"><span class="tt-cost">${n.cost} ⚡</span><span class="tt-time">${n.researchTime} rd</span></div></div>
+        </div>`;
+      }
+      grid += `</div>`;
     }
+    grid += `</div>`;
+  }
 
-    const artUrl = techNodeArt(node, playerColor);
-    const artHtml = artUrl
-      ? `<img class="tech-node-art" src="${artUrl}" alt="${node.name}" draggable="false">`
-      : '';
+  // detail pane (pinned to the panel bottom — always visible, never scrolls away)
+  const sel = TECH_NODES.find(n => n.id === selectedTechId)!;
+  const selStatus = techStatusMap.get(sel.id)!;
+  const reqs = sel.prereqs.map(p => `${tech.researched.has(p) ? '<b>✓</b>' : '<s>✗</s>'} ${techName(p)}`);
+  if (sel.id === 'command_2') {
+    const others = [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length;
+    reqs.push(`${others >= COMMAND_2_MIN_OTHER_TECHS_UI ? '<b>✓</b>' : '<s>✗</s>'} any ${COMMAND_2_MIN_OTHER_TECHS_UI} other techs`);
+  }
+  const researchable = selStatus === 'available' && canResearch(state, sel.id);
+  const myTurn = localHasTurn();
+  const btnText =
+    selStatus === 'researched' ? '✓ Researched'
+    : selStatus === 'researching' ? `⏳ ${remaining} round${remaining === 1 ? '' : 's'} left`
+    : selStatus === 'slot' ? 'Research slot busy'
+    : selStatus === 'poor' ? `Need ${sel.cost} ⚡`
+    : selStatus === 'branch' ? 'Branch already chosen'
+    : selStatus === 'command2' ? `Needs ${COMMAND_2_MIN_OTHER_TECHS_UI} other techs`
+    : selStatus === 'locked' ? 'Prerequisite missing'
+    : !myTurn ? 'Not your turn'
+    : `Research · ${sel.cost} ⚡`;
+  const detail = `<div class="tt-detail">
+    <div class="tt-med">${techMedallion(sel, player.color)}</div>
+    <div class="tt-detail-txt"><h4>${sel.name} <span>· ${sel.cost} ⚡ · ${sel.researchTime} round${sel.researchTime === 1 ? '' : 's'}</span></h4>
+      <p>${escapeHtml(sel.description)}</p>${reqs.length ? `<div class="req">Requires: ${reqs.join(' &nbsp;·&nbsp; ')}</div>` : ''}</div>
+    <button class="tt-btn" id="techResearchBtn" ${researchable && myTurn ? '' : 'disabled'}>${btnText}</button>
+  </div>`;
 
-    const card = document.createElement('div');
-    card.className = `tech-node ${stateClass}`;
-    card.innerHTML = `
-      ${artHtml}
-      <div class="tech-node-name">${node.name}</div>
-      <div class="tech-node-cost">Cost: ${node.cost} ⚡</div>
-      <div class="tech-node-desc">${node.description}</div>
-      <div class="tech-node-status ${statusClass}">${statusText}</div>
-    `;
+  techBody.innerHTML = `<div class="tt-scroll">${slot}<div class="tt-graph"><svg class="tt-svg"></svg>${grid}</div></div>${detail}`;
 
-    if (!isResearched && prereqsMet && !branchBlocked && canAffordIt && localHasTurn()) {
-      card.addEventListener('click', () => {
-        if (!localHasTurn()) return; // view-only on an opponent's turn (server rejects too)
-        const applyLocal = (): void => {
-          if (researchTech(state, node.id)) {
-            logCombat(`Researched: ${node.name} (−${node.cost} ⚡)`);
-            renderTechTree();
-          }
-        };
-        if (multiplayerMode && mpClient) {
-          // Optimistic: apply the purchase locally for instant feedback (aura
-          // pill drops, unit unlocks appear) instead of waiting for the server
-          // round-trip. Snapshot first so a (rare) server rejection can roll it
-          // back; the authoritative state_update otherwise reconciles it.
-          researchRollback = serialize(state);
-          applyLocal();
-          render();                       // reflect deducted aura / unlocks now
-          mpClient.sendAction({ type: 'action_research', techId: node.id });
-        } else {
-          applyLocal();
-          render();
+  techBody.querySelectorAll<HTMLElement>('.tt-node').forEach(el => {
+    const pickIt = (): void => { selectedTechId = el.dataset.id as TechId; renderTechTree(); };
+    el.addEventListener('click', pickIt);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickIt(); } });
+  });
+
+  const btn = document.getElementById('techResearchBtn') as HTMLButtonElement | null;
+  if (btn && researchable && myTurn) {
+    btn.addEventListener('click', () => {
+      if (!localHasTurn()) return; // view-only on an opponent's turn (server rejects too)
+      const node = sel;
+      const applyLocal = (): void => {
+        if (researchTech(state, node.id)) {
+          logCombat(`Started research: ${node.name} (−${node.cost} ⚡, ${node.researchTime} round${node.researchTime === 1 ? '' : 's'})`);
+          renderTechTree();
         }
-      });
-    }
-
-    nodesRow.appendChild(card);
+      };
+      if (multiplayerMode && mpClient) {
+        // Optimistic: apply the purchase locally for instant feedback (aura
+        // pill drops, unit unlocks appear) instead of waiting for the server
+        // round-trip. Snapshot first so a (rare) server rejection can roll it
+        // back; the authoritative state_update otherwise reconciles it.
+        // Deep copy: serialize() shares the player objects with the live state,
+        // so a shallow snapshot already contained the deducted aura and a
+        // rejection never refunded it. Keep the oldest snapshot while a
+        // purchase is still unanswered.
+        researchRollback ??= structuredClone(serialize(state));
+        applyLocal();
+        render();                       // reflect deducted aura / unlocks now
+        mpClient.sendAction({ type: 'action_research', techId: node.id });
+      } else {
+        applyLocal();
+        render();
+      }
+    });
   }
 
-  section.appendChild(nodesRow);
-  container.appendChild(section);
+  requestAnimationFrame(drawTechLinks);
 }
+
+// Prerequisite connectors. Orthogonal routing: leave the prereq's right edge,
+// run to the gutter between its column and the next, climb/drop vertically in
+// that gutter, then run horizontally into the target's left edge. Vertical
+// travel only ever happens in a gutter, so a line never crosses another node.
+function drawTechLinks(): void {
+  const graph = techBody.querySelector<HTMLElement>('.tt-graph');
+  const svg = graph?.querySelector<SVGSVGElement>('.tt-svg');
+  if (!graph || !svg || techOverlay.classList.contains('hidden')) return;
+  const gb = graph.getBoundingClientRect();
+  if (gb.width === 0) return;
+  const nodeEl = (id: string) => graph.querySelector<HTMLElement>(`[data-id="${id}"]`);
+  const tiers = Array.from(graph.querySelectorAll<HTMLElement>('.tt-tier')).map(t => t.getBoundingClientRect());
+  const gutterAfter = (colRight: number): number => {
+    const next = tiers.find(t => t.left - gb.left > colRight + 1);
+    return next ? (colRight + (next.left - gb.left)) / 2 : colRight + 10;
+  };
+  const r = 6;
+  let d = '';
+  for (const [id] of techStatusMap) {
+    const n = TECH_NODES.find(x => x.id === id)!;
+    const to = nodeEl(id)?.getBoundingClientRect(); if (!to) continue;
+    n.prereqs.forEach((p, i) => {
+      const from = nodeEl(p)?.getBoundingClientRect(); if (!from) return;
+      const x1 = from.right - gb.left, y1 = from.top + from.height / 2 - gb.top;
+      const x2 = to.left - gb.left, y2 = to.top + to.height / 2 - gb.top;
+      const done = techStatusMap.get(p) === 'researched';
+      const col = done ? '#33e0a0' : '#4a5670';
+      const straight = Math.abs(y1 - y2) < 2;
+      const yIn = straight || n.prereqs.length < 2 ? y2 : y2 + (i - (n.prereqs.length - 1) / 2) * 8;
+      let path: string;
+      if (straight) path = `M${x1},${y1} L${x2},${yIn}`;
+      else {
+        const gx = gutterAfter(from.right - gb.left);
+        const dir = yIn > y1 ? 1 : -1;
+        path = `M${x1},${y1} L${gx - r},${y1} Q${gx},${y1} ${gx},${y1 + dir * r} L${gx},${yIn - dir * r} Q${gx},${yIn} ${gx + r},${yIn} L${x2},${yIn}`;
+      }
+      d += `<path d="${path}" fill="none" stroke="${col}" stroke-width="2" ${done ? '' : 'stroke-dasharray="5 4"'} stroke-linecap="round" opacity=".95"/>`;
+      d += `<circle cx="${x1}" cy="${y1}" r="3" fill="${col}"/><circle cx="${x2}" cy="${yIn}" r="3" fill="${col}"/>`;
+    });
+  }
+  svg.innerHTML = d;
+}
+// Connectors are position-derived, so redraw whenever the panel reflows
+// (orientation change, keyboard, column collapse on phones).
+new ResizeObserver(() => drawTechLinks()).observe(techBody);
 
 function openTechTree(): void {
   if (!gameStarted) return;
   if (spectatorMode) return;
   // The tech tree stays openable and browsable even when it's NOT your turn
   // (view-only) — buying a tech is gated to your own turn in renderTechTree.
+  techOverlay.classList.remove('hidden'); // unhide first — connector geometry needs real layout
   renderTechTree();
-  techOverlay.classList.remove('hidden');
   renderer.clearCameraKeys();
 }
 
@@ -1689,21 +2891,59 @@ techOverlay.addEventListener('click', (e) => {
   if (e.target === techOverlay) closeTechTree();
 });
 
-// ── Temple level-up (3rd HUD slab) ──
-// Upgrades the currently-selected temple — same action as the old upgrade
-// button. The slab is greyed out by updateUI() unless the upgrade is valid.
-function doUpgradeTemple(): void {
-  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
-  const templeId = state.selectedTempleId;
-  const temple = state.temples.find(t => t.id === templeId);
-  if (!temple) return;
-  if (canUpgradeTemple(state, templeId) === null) return;
-  const prevLevel = temple.level;
-  sendOrCall({ type: 'action_upgrade_temple', templeId }, () => {
-    if (upgradeTemple(state, templeId)) {
-      logCombat(`Temple upgraded Lv.${prevLevel}→${temple.level}!`);
-    }
-  });
+// ── Found/reconstruct (3rd HUD slab) ──
+// Starts founding/reconstruction at the neutral or ruined site the selected
+// Acolyte is standing on (§7-10, v13 — an active enemy Temple must be
+// destroyed first; standing on it never changes ownership).
+// The same slab does double duty for the Builder: found a site if it's
+// standing on a neutral/ruined one, otherwise enter Build Road ring-pick
+// mode if that's available (Agrar only, §23-25) — mutually exclusive
+// per-selection states, so there's no ambiguity about which one fires.
+function doFound(): void {
+  // Pressing the same slab again while mid-selection confirms whatever's
+  // picked so far (1 tile is a completely valid, deliberate choice — see
+  // §3's "allow building only one Road if the player chooses only one");
+  // with nothing selected yet it's still a plain cancel.
+  if (buildingRoad) {
+    if (buildingRoad.selected.length > 0) confirmBuildRoad(); else cancelBuildRoad();
+    return;
+  }
+  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
+  const unit = state.units.find(u => u.id === state.selectedUnitId);
+  if (!unit) return;
+  const check = canStartFounding(state, unit);
+  if (check) {
+    sendOrCall({ type: 'action', action: 'found', params: { unitId: unit.id } }, () => {
+      if (startFounding(state, unit.id)) {
+        logCombat(`Began founding a ${check.targetState} at (${unit.pos.q},${unit.pos.r})`);
+        selectUnit(state, unit.id); // refresh move/attack highlights — the unit just spent its activation
+      }
+    });
+    return;
+  }
+  // v14 — same priority order as the button's own display logic: Claim
+  // Fertile Site (if standing on one) beats Build Road for a Builder.
+  if (canClaimFertileSite(state, unit)) {
+    sendOrCall({ type: 'action', action: 'claim-fertile-site', params: { unitId: unit.id } }, () => {
+      if (claimFertileSite(state, unit.id)) {
+        logCombat(`Claimed a Fertile Site at (${unit.pos.q},${unit.pos.r})`);
+        selectUnit(state, unit.id);
+      }
+    });
+    return;
+  }
+  if (canPillageRoad(state, unit)) {
+    sendOrCall({ type: 'action', action: 'pillage-road', params: { unitId: unit.id } }, () => {
+      if (pillageRoad(state, unit.id)) {
+        logCombat(`Pillaged a Road at (${unit.pos.q},${unit.pos.r})`);
+        selectUnit(state, unit.id);
+      }
+    });
+    return;
+  }
+  if (getValidRoadHexes(state, unit).some(h => canBuildRoad(state, unit, h))) {
+    enterBuildRoad(unit.id);
+  }
 }
 
 // ── Canvas click/tap -> game coordinates (raycast onto the 3D board) ──
@@ -1749,6 +2989,20 @@ function handleHexClick(clientX: number, clientY: number): void {
     return;
   }
 
+  // ── Unit mode: try structure attack (Capital/City/Temple) ──
+  if (state.selectionMode === 'unit' && state.structureAttackHexes.some(h => hexEqual(h, hex))) {
+    const attackerId = state.selectedUnitId;
+    if (attackerId) renderer.faceUnitToward(attackerId, hex);
+    sendOrCall({ type: 'action', action: 'attack-structure', params: { unitId: attackerId, targetPos: hex } }, () => {
+      const result = attackStructure(state, hex);
+      if (result) {
+        logCombat(`Struck a structure! Dealt ${result.damageDealt} dmg${result.destroyed ? ' (DESTROYED!)' : ''}${result.gameOver ? ' — CAPITAL DOWN, GAME OVER!' : ''}`);
+      }
+      render();
+    });
+    return;
+  }
+
   // ── Build teleport mode: place portals (UI is always local, only final action is sent) ──
   if (buildingTeleport) {
     const bt = buildingTeleport;
@@ -1776,6 +3030,68 @@ function handleHexClick(clientX: number, clientY: number): void {
     }
   }
 
+  // ── Build Farm mode: select a Farm hex, then Confirm (UI is always local,
+  // only the final confirmed action is sent). Tapping the tile already
+  // selected confirms immediately — a tap-tap gesture works with no hover,
+  // no separate Confirm press required, on both desktop and touch. Tapping
+  // any OTHER illegal tile always explains why and stays in placement mode
+  // (see farmHexIllegalReason — reads the same canonical engine result
+  // actual construction uses, never a UI-only re-derivation of the rules). ──
+  if (buildingFarm) {
+    const bf = buildingFarm;
+    const builder = state.units.find(u => u.id === bf.unitId);
+    if (builder && state.buildHexes.some(h => hexEqual(h, hex))) {
+      if (bf.selected && hexEqual(bf.selected, hex)) {
+        confirmBuildFarm();
+        return;
+      }
+      bf.selected = hex;
+      renderer.setFarmSelectionPreview(hex, state.players.find(p => p.id === builder.playerId)?.color, state);
+      showToast(`Farm selected at (${hex.q},${hex.r}) — tap it again or press Confirm to build (⚡${AGRAR_FARM_COST})`, 'neutral');
+      render();
+      return;
+    } else {
+      const reason = builder ? farmHexIllegalReason(state, builder, hex) : null;
+      if (reason) { showToast(`Can't build a Farm here — ${reason}`, 'bad'); return; }
+      cancelBuildFarm();
+      render();
+      return;
+    }
+  }
+
+  // ── Build Road mode: accumulate up to ROAD_SEGMENTS_PER_ACTIVATION Road
+  // tiles, then confirm as one Builder activation (UI is always local, only
+  // the final confirmed action is sent). Tapping an illegal tile always
+  // explains why and stays in placement mode — same principle as Farm above,
+  // via roadHexIllegalReason (the same canonical engine result). ──
+  if (buildingRoad) {
+    const br = buildingRoad;
+    const unit = state.units.find(u => u.id === br.unitId);
+    if (unit && state.buildHexes.some(h => hexEqual(h, hex))) {
+      br.selected.push(hex);
+      const nextCandidates = roadCandidatesFor(unit, br.selected);
+      state.buildHexes = nextCandidates;
+      renderer.setRoadSelectionPreview([...br.selected], state);
+      if (br.selected.length >= ROAD_SEGMENTS_PER_ACTIVATION || nextCandidates.length === 0) {
+        // Maxed out, or nothing legal/affordable left to extend with.
+        confirmBuildRoad();
+        return;
+      }
+      showToast(
+        `Road ${br.selected.length}/${ROAD_SEGMENTS_PER_ACTIVATION} selected (${roadSelectionTotalCost(br.selected)}⚡ so far) — pick another tile or press Confirm`,
+        'neutral',
+      );
+      render();
+      return;
+    } else {
+      const reason = unit ? roadHexIllegalReason(state, unit, hex, br.selected) : null;
+      if (reason) { showToast(`Can't lay a Road here — ${reason}`, 'bad'); return; }
+      cancelBuildRoad();
+      render();
+      return;
+    }
+  }
+
   // ── Unit mode: try move ──
   if (state.selectionMode === 'unit' && state.moveHexes.some(h => hexEqual(h, hex))) {
     sendOrCall({ type: 'action_move', dest: hex }, () => {
@@ -1783,32 +3099,47 @@ function handleHexClick(clientX: number, clientY: number): void {
       if (movingUnit) renderer.startMoveAnimation(movingUnit.id, movingUnit.pos);
       const moveResult = moveUnit(state, hex);
       if (moveResult.moved) {
-        const temple = getTempleAt(state, hex);
-        if (temple && temple.ownerId !== currentPlayer.id) {
-          logCombat(`Moved onto temple at (${hex.q},${hex.r}) — capture next turn!`);
+        const site = getStrategicSiteAt(state, hex);
+        const fertileSite = state.fertileSites.find(f => hexEqual(f.pos, hex));
+        const movingPlayer = movingUnit ? state.players.find(p => p.id === movingUnit.playerId) : undefined;
+        if (movingPlayer?.faction === 'temple' && site && (site.state === 'neutral' || site.state === 'ruins')) {
+          logCombat(`Moved onto a foundable site at (${hex.q},${hex.r}) — Found available!`);
+        } else if (fertileSite && movingUnit && fertileSite.ownerId !== movingUnit.playerId) {
+          logCombat(`Moved onto a Fertile Site at (${hex.q},${hex.r}) — Claim available!`);
         } else {
           logCombat(`Moved to (${hex.q}, ${hex.r})`);
         }
+      } else if (moveResult.blocked) {
+        showToast('Something blocks the way — an unseen unit stands there.', 'bad');
       }
     });
     return;
   }
 
-  // ── Select unit or temple ──
+  // ── Select unit or structure ──
   const unit = getUnitAt(state, hex);
-  const temple = getTempleAt(state, hex);
+  const structureRef = getStructureAt(state, hex);
+  const structureId = structureRef
+    ? (structureRef.kind === 'capital' ? structureRef.capital.id : structureRef.kind === 'farm' ? structureRef.farm.id : structureRef.site.id)
+    : undefined;
+  const structureOwner = structureRef
+    ? (structureRef.kind === 'capital' ? structureRef.capital.playerId : structureRef.kind === 'farm' ? structureRef.farm.ownerId : structureRef.site.ownerId)
+    : null;
   const myUnitHere = unit && unit.playerId === currentPlayer.id;
-  const myTempleHere = temple && temple.ownerId === currentPlayer.id;
+  const myStructureHere = !!structureId && structureOwner === currentPlayer.id;
 
-  // Own temple with a friendly unit standing on it: tapping toggles temple ⇄ unit
-  // so the temple's Level-Up stays reachable even while occupied. First tap
-  // surfaces the temple (Level-Up / status); tap again to control the unit.
-  if (myTempleHere && myUnitHere) {
-    const templeSelected = state.selectionMode === 'temple' && state.selectedTempleId === temple!.id;
-    if (templeSelected) {
-      sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
+  // Own structure with a friendly unit standing on it: tapping toggles
+  // structure ⇄ unit so the structure's recruit tray stays reachable even
+  // while occupied. First tap controls the unit (moving/attacking is by far
+  // the more common action, and a unit that looks selected but shows no move
+  // highlights reads as "stuck"/broken); tap again surfaces the structure's
+  // recruit tray.
+  if (myStructureHere && myUnitHere) {
+    const unitSelected = state.selectionMode === 'unit' && state.selectedUnitId === unit!.id;
+    if (unitSelected) {
+      sendOrCall({ type: 'action_select_temple', templeId: structureId! }, () => selectSite(state, structureId!));
     } else {
-      sendOrCall({ type: 'action_select_temple', templeId: temple!.id }, () => selectTemple(state, temple!.id));
+      sendOrCall({ type: 'action_select_unit', unitId: unit!.id }, () => selectUnit(state, unit!.id));
     }
     return;
   }
@@ -1818,43 +3149,57 @@ function handleHexClick(clientX: number, clientY: number): void {
     return;
   }
 
-  if (myTempleHere) {
-    sendOrCall({ type: 'action_select_temple', templeId: temple!.id }, () => selectTemple(state, temple!.id));
+  if (myStructureHere) {
+    sendOrCall({ type: 'action_select_temple', templeId: structureId! }, () => selectSite(state, structureId!));
     return;
+  }
+
+  // v14 §11 — Fertile Sites aren't a recruit-eligible "owned structure" (no
+  // selectSite support), so surface their status as a toast on click instead
+  // of silently falling through to deselect.
+  if (!unit && !structureRef) {
+    const fertileSite = state.fertileSites.find(f => hexEqual(f.pos, hex));
+    if (fertileSite) {
+      const owner = fertileSite.ownerId !== null ? state.players.find(p => p.id === fertileSite.ownerId)?.name : null;
+      const status = owner ? `Controlled by ${owner}` : 'Unclaimed';
+      showToast(`Fertile Site — ${status} — Income when controlled: +${FERTILE_SITE_INCOME}⚡/round`);
+    }
   }
 
   // Deselect
   if (buildingTeleport) cancelBuildTeleport();
+  if (buildingFarm) cancelBuildFarm();
+  if (buildingRoad) cancelBuildRoad();
   sendOrCall({ type: 'action_deselect' }, () => deselectAll(state));
 }
 
 // ── Spawn buttons ──
-function handleSpawnBtn(type: UnitType): void {
+// `card` is the exact DOM element clicked — used purely for the transient
+// "just queued this" flash (§ activation-indicator pass), never for logic.
+function handleSpawnBtn(type: UnitType, card?: HTMLElement): void {
   if (!localHasTurn()) return; // no recruiting on an opponent's turn (online)
-  if (state.selectionMode !== 'temple' || !state.selectedTempleId) return;
+  if (state.selectionMode !== 'site' || !state.selectedSiteId) return;
   if (!canAfford(state, type)) return;
-  const templeId = state.selectedTempleId;
-  // Block spawning onto an occupied temple tile, with feedback.
-  const selTemple = state.temples.find(t => t.id === templeId);
-  if (selTemple && getUnitAt(state, selTemple.pos)) {
-    logCombat('Cannot spawn: a unit is standing on the temple');
-    return;
-  }
-  // MP: no local mutation runs, so flag the temple for auto-select once the
-  // server echoes back the spawned unit (see the state_update handler).
-  if (multiplayerMode) pendingSpawnSelectTempleId = templeId;
-  sendOrCall({ type: 'action_spawn', templeId, unitType: type }, () => {
+  const structureId = state.selectedSiteId;
+  // §5 (phase 11) — recruiting only QUEUES a TrainingOrder now; it does NOT
+  // require (or create) a unit on the structure's tile immediately, so there
+  // is nothing to block here even if the tile is currently occupied.
+  sendOrCall({ type: 'action_spawn', templeId: structureId, unitType: type }, () => {
     try {
-      if (spawnUnit(state, templeId, type)) {
-        logCombat(`Spawned ${type} for ${UNIT_COSTS[type]} aura`);
-        const temple = state.temples.find(t => t.id === templeId);
-        if (temple) {
-          const newUnit = getUnitAt(state, temple.pos);
-          if (newUnit) selectUnit(state, newUnit.id);   // show its move range at once
+      if (spawnUnit(state, structureId, type)) {
+        const spawnPlayer = getCurrentPlayer(state);
+        logCombat(`Queued ${unitDisplayName(type, spawnPlayer.faction)} for ⚡${getUnitCost(type, spawnPlayer.faction)} + 👥${getUnitCommandCost(type, spawnPlayer.faction)} — deploys next round`);
+        // A brief flash on the card itself — immediate confirmation the click
+        // actually registered as "now training", separate from (and faster
+        // to notice than) the combat-log line or the queued-count badge.
+        if (card) {
+          card.classList.remove('unit-card-flash');
+          void card.offsetWidth; // restart the CSS animation even on rapid repeat clicks
+          card.classList.add('unit-card-flash');
         }
       }
     } catch (e: unknown) {
-      logCombat(e instanceof Error ? e.message : 'Cannot spawn unit');
+      logCombat(e instanceof Error ? e.message : 'Cannot recruit unit');
     }
   });
 }
@@ -1862,19 +3207,8 @@ function handleSpawnBtn(type: UnitType): void {
 // Build the unit-card tray once; clicks are wired per-card to handleSpawnBtn.
 buildUnitCards();
 
-// ── Capture button ──
-captureBtn.addEventListener('click', () => {
-  if (state.selectionMode !== 'unit' || !state.selectedUnitId) return;
-  const unit = state.units.find(u => u.id === state.selectedUnitId);
-  if (!unit) return;
-  const temple = canCaptureTemple(state, unit);
-  if (!temple) return;
-  const pos = temple.pos;
-  sendOrCall({ type: 'action_capture' }, () => {
-    captureTemple(state, unit, temple);
-    logCombat(`Captured temple at (${pos.q},${pos.r})!`);
-  });
-});
+// ── Found button (2D fallback for the 3D HUD "found" slab) ──
+captureBtn.addEventListener('click', () => doFound());
 
 
 // ── Tap-to-select ──
@@ -1915,7 +3249,7 @@ canvas.addEventListener('pointerup', (e) => {
 function handleHudClick(id: string): void {
   if (id === 'endTurn') { if (state.phase !== 'gameOver') doEndTurn(); }
   else if (id === 'research') openTechTree();
-  else if (id === 'temple') doUpgradeTemple();
+  else if (id === 'found') doFound();
   else if (id === 'destroy') doDestroyUnit();
 }
 
@@ -1957,7 +3291,12 @@ document.getElementById('zoomOutBtn')!.addEventListener('click', () => {
 });
 
 // ── Keyboard ──
+function isTypingTarget(e: KeyboardEvent): boolean {
+  const ae = e.target as HTMLElement | null;
+  return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+}
 document.addEventListener('keydown', (e) => {
+  if (isTypingTarget(e)) return;
   if (e.key === 'Escape') {
     if (menuOverlay.classList.contains('hidden')) {
       showMenu();
@@ -2051,9 +3390,9 @@ function autoSelectTemple(): void {
   if (state.phase === 'gameOver') return;
   if (isAISlot(state.currentPlayerIndex)) return;
   const me = getCurrentPlayer(state);
-  const owned = state.temples.filter(t => t.ownerId === me.id);
-  const target = owned.find(t => !getUnitAt(state, t.pos)) ?? owned[0];
-  if (target) selectTemple(state, target.id);
+  const owned = getOwnedStructures(state, me.id);
+  const target = owned.find(s => !getUnitAt(state, s.pos)) ?? owned[0];
+  if (target) selectSite(state, target.id);
 }
 
 // Schedule the AI's turn when it's the AI's move (also handles AI winning the
@@ -2075,7 +3414,24 @@ function doEndTurn(): void {
   if (handoffPending) return;   // curtain up — next player hasn't started their turn
   if (aiRunning) return;
   if (multiplayerMode && state.currentPlayerIndex !== myPlayerSlot) return;
+  // §23 — two-tap confirm (mirrors the destroy slab) when units remain
+  // unacted: first tap arms the button and names how many are left instead
+  // of ending the round; a second tap while still armed proceeds anyway.
+  if (!buildingFarm && !buildingRoad && !buildingTeleport) {
+    const remaining = unactedUnitCount(state, getCurrentPlayer(state).id);
+    if (remaining > 0 && !endTurnArmed) {
+      endTurnArmed = true;
+      renderer.setHudButtonArmed('endTurn', true);
+      renderer.setHudButtonPrice('endTurn', `${remaining} unit${remaining > 1 ? 's' : ''} left — Sure?`);
+      return;
+    }
+  }
+  endTurnArmed = false;
+  announcedAllActedThisTurn = false;
+  renderer.setHudButtonArmed('endTurn', false);
   if (buildingTeleport) cancelBuildTeleport();
+  if (buildingFarm) cancelBuildFarm();
+  if (buildingRoad) cancelBuildRoad();
   if (multiplayerMode && mpClient) {
     mpClient.endTurn();
     return;
@@ -2112,9 +3468,10 @@ function runAI(): void {
 
   const playerVisible = getCurrentPlayerVisible(state);
 
-  // Each AI seat runs at its own difficulty; runAITurn/runHardAITurn default the
-  // acting player to the current slot, so this drives any AI in an N-player game.
-  const actions = controllers[state.currentPlayerIndex] === 'hard' ? runHardAITurn(state) : runAITurn(state);
+  // Each AI seat runs at its own difficulty — runAiTurn defaults the acting
+  // player to the current slot, so this drives any AI in an N-player game.
+  const seatDifficulty = controllers[state.currentPlayerIndex] as AiDifficulty;
+  const actions = runAiTurn(state, seatDifficulty);
   for (const action of actions) {
     if (playerVisible.has(hexKey(action.pos))) {
       logCombat(action.description);
@@ -2137,3 +3494,6 @@ window.addEventListener('resize', () => {
 
 // ── Initial state: show menu ──
 showMenu();
+
+// The menu is up on first load — bring the living board with it.
+if (!menuOverlay.classList.contains('hidden')) ensureMenuScene();

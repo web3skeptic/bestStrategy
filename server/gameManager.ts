@@ -5,9 +5,10 @@ import {
   upsertPlayer, createRoom, joinRoom, setRoomStatus,
   getRoomById, saveGameState, loadGameState,
 } from './db';
-import { serialize, deserialize, SerializedGameState } from '../src/serializer';
-import { createGameState, selectUnit, selectTemple, deselectAll } from '../src/game';
-import { GameState, HexCoord, UnitType, TechId, PLAYER_COLORS, MAX_PLAYERS } from '../src/types';
+import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from '../src/serializer';
+import { createGameState, selectUnit, selectSite, deselectAll, resignGame, getPlayerVisible, isForestUnitRevealed } from '../src/game';
+import { hexKey } from '../src/hex';
+import { GameState, HexCoord, UnitType, TechId, PLAYER_COLORS } from '../src/types';
 import { headlessSessions, setHeadlessSpectatorPush } from './headlessApi';
 import { resyncCounters } from './stateUtils';
 import {
@@ -24,6 +25,19 @@ const sessions = new Map<WebSocket, ClientSession>();
 const rooms    = new Map<string, RoomState>();
 const hlSpectators = new Map<string, ClientSession[]>();
 
+// How long a seated player may be gone before the server acts: in a running
+// game they forfeit (resign) and the other player wins; in a room that hasn't
+// started, their seat is freed (and an empty room is removed from the list).
+export const RECONNECT_GRACE_MS = 30_000;
+// Pending grace timers, keyed "roomId:slot".
+const graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearGraceTimer(roomId: string, slot: number): void {
+  const key = `${roomId}:${slot}`;
+  const t = graceTimers.get(key);
+  if (t) { clearTimeout(t); graceTimers.delete(key); }
+}
+
 // ── Push state updates to headless spectators ──
 
 export function pushHeadlessStateUpdate(gameId: string): void {
@@ -32,7 +46,7 @@ export function pushHeadlessStateUpdate(gameId: string): void {
   const hl = headlessSessions.get(gameId);
   if (!hl) return;
   const serialized = serialize(hl.gameState);
-  const strippedState = stripSelectionState(serialized);
+  const strippedState = viewPayload(serialized, null, null);
   for (const spec of specs) {
     send(spec.ws, { type: 'state_update', state: strippedState, lastAction: '' });
   }
@@ -78,13 +92,77 @@ function stripSelectionState(s: ReturnType<typeof serialize>): ReturnType<typeof
   return {
     ...s,
     selectedUnitId: null,
-    selectedTempleId: null,
+    selectedSiteId: null,
     selectionMode: null,
     moveHexes: [],
     attackHexes: [],
+    structureAttackHexes: [],
     supportHexes: [],
     buildHexes: [],
   };
+}
+
+// The immediate, pre-Round-1 secret faction pick (§3, phase 11) is a real
+// information boundary, not just a UI nicety: until BOTH players have chosen, a viewer
+// may see their OWN pick (if they made one) but never the opponent's —
+// regardless of whether they're the acting player, the other seat, or a
+// spectator. `viewerSlot` is null for spectators (and anyone else with no
+// seat), who see neither pick until reveal. This is applied to every
+// broadcast payload below, independently of stripSelectionState.
+function stripHiddenFaction(s: ReturnType<typeof serialize>, viewerSlot: number | null): ReturnType<typeof serialize> {
+  const bothChosen = s.players.every(p => p.faction !== null);
+  if (bothChosen) return s;
+  return {
+    ...s,
+    players: s.players.map(p => (p.id === viewerSlot ? p : { ...p, faction: null })),
+  };
+}
+
+// Fog of war is an information boundary too: the client hides what a seat
+// can't see only while drawing, so anything sent is readable in DevTools.
+// Each seat therefore gets only:
+//   • enemy units it can currently see (same test the client renders with:
+//     in vision, and in a forest only with an adjacent friendly),
+//   • its own training queue and its own explored set.
+// Structures and roads stay (the client shows them as last seen in the fog).
+// Spectators (viewerSlot null) and finished games get the full state.
+function stripFogged(s: ReturnType<typeof serialize>, state: GameState | null, viewerSlot: number | null): ReturnType<typeof serialize> {
+  if (!state || viewerSlot === null || state.phase === 'gameOver') return s;
+  const viewer = state.players[viewerSlot]?.id ?? viewerSlot;
+  const visible = getPlayerVisible(state, viewer);
+  return {
+    ...s,
+    units: s.units.filter(u => u.playerId === viewer
+      || (u.hp > 0 && visible.has(hexKey(u.pos)) && isForestUnitRevealed(state, u.pos, viewer))),
+    trainingQueue: s.trainingQueue.filter(t => t.playerId === viewer),
+    explored: s.explored.map((e, i) => (i === viewer ? e : [])),
+  };
+}
+
+// Log lines name hex coordinates ("Unit unit_7 moved to (3,-2)"). For a seat
+// that didn't act, drop every segment that mentions a hex it can't see, so the
+// combat log can't reveal what the fog hides.
+function fogLogFor(lastAction: string, state: GameState | null, viewerSlot: number | null, actingSlot: number | null): string {
+  if (!state || viewerSlot === null || viewerSlot === actingSlot || state.phase === 'gameOver') return lastAction;
+  const viewer = state.players[viewerSlot]?.id ?? viewerSlot;
+  const visible = getPlayerVisible(state, viewer);
+  return lastAction.split('; ').filter(seg => {
+    for (const m of seg.matchAll(/\((-?\d+),\s*(-?\d+)\)/g)) {
+      if (!visible.has(`${m[1]},${m[2]}`)) return false;
+    }
+    return true;
+  }).join('; ');
+}
+
+// Build the exact payload a given seat (or spectator, slot=null) is allowed
+// to see: hidden-faction stripping always applies; selection-state stripping
+// applies to every seat except the one that just acted; fog-of-war stripping
+// applies to every seat.
+function viewPayload(serialized: ReturnType<typeof serialize>, viewerSlot: number | null, actingSlot: number | null, state: GameState | null = null): ReturnType<typeof serialize> {
+  let payload = stripHiddenFaction(serialized, viewerSlot);
+  if (viewerSlot !== actingSlot) payload = stripSelectionState(payload);
+  payload = stripFogged(payload, state, viewerSlot);
+  return payload;
 }
 
 function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: number, toAll: boolean): void {
@@ -92,24 +170,26 @@ function pushStateUpdate(room: RoomState, lastAction: string, actingSlot: number
   const gameOver = room.state!.phase === 'gameOver';
 
   if (toAll || gameOver) {
-    // Send each player their own view: acting player sees full state,
-    // opponent sees state with selection stripped.
-    const strippedForOpponent = stripSelectionState(serialized);
+    // Send each player their own view: acting player sees full state (minus
+    // any still-hidden opponent faction pick), opponent sees selection AND
+    // hidden-faction stripped.
     for (let slot = 0; slot < room.sessions.length; slot++) {
       const sess = room.sessions[slot];
       if (!sess) continue;
-      const payload = slot === actingSlot ? serialized : strippedForOpponent;
-      send(sess.ws, { type: 'state_update', state: payload, lastAction });
+      send(sess.ws, { type: 'state_update', state: viewPayload(serialized, slot, actingSlot, room.state), lastAction: fogLogFor(lastAction, room.state, slot, actingSlot) });
     }
   } else {
     const actingSess = room.sessions[actingSlot];
-    if (actingSess) send(actingSess.ws, { type: 'state_update', state: serialized, lastAction });
+    if (actingSess) send(actingSess.ws, { type: 'state_update', state: viewPayload(serialized, actingSlot, actingSlot, room.state), lastAction });
   }
 
-  // Always send full (stripped) state to spectators on any broadcast
-  const spectatorState = stripSelectionState(serialized);
+  // Spectators never see an unrevealed faction pick, from either seat.
+  const spectatorState = viewPayload(serialized, null, actingSlot);
   broadcastToSpectators(room, { type: 'state_update', state: spectatorState, lastAction });
 
+  // The DB always stores the true, authoritative, unstripped state — stripping
+  // only ever happens on the outbound broadcast payload (same precedent as
+  // selection state).
   saveGameState(room.id, JSON.stringify(serialized));
 
   if (gameOver) {
@@ -132,14 +212,19 @@ export function handleDisconnect(ws: WebSocket): void {
       if (sess.isSpectator) {
         // Remove spectator from room
         room.spectators = room.spectators.filter(s => s.ws !== ws);
-      } else {
+      } else if (sess.playerSlot !== null && room.sessions[sess.playerSlot] === sess) {
         // Notify every other seated player, then nullify this slot (kept in the
         // room for rejoin; playerNames retains the username→slot mapping).
+        const slot = sess.playerSlot;
+        const playing = room.status === 'active' && room.state?.phase === 'playing';
         for (let i = 0; i < room.sessions.length; i++) {
           const other = room.sessions[i];
-          if (other && i !== sess.playerSlot) send(other.ws, { type: 'opponent_disconnected' });
+          if (other && i !== slot) {
+            send(other.ws, { type: 'opponent_disconnected', playerSlot: slot, playerName: sess.username ?? undefined, graceMs: playing ? RECONNECT_GRACE_MS : undefined });
+          }
         }
-        if (sess.playerSlot !== null) room.sessions[sess.playerSlot] = null;
+        room.sessions[slot] = null;
+        startGraceTimer(room, slot, sess.username);
       }
     }
   }
@@ -165,6 +250,7 @@ export function handleMessage(ws: WebSocket, raw: string): void {
     case 'join_room': return handleJoinRoom(sess, msg.roomId);
     case 'list_rooms': return handleListRooms(sess);
     case 'rejoin_room': return handleRejoinRoom(sess, msg.roomId);
+    case 'leave_room': return handleLeaveRoom(sess, msg.roomId);
     case 'list_games': return handleListGames(sess);
     case 'spectate': return handleSpectate(sess, msg.gameId);
     case 'request_legal_moves': return handleLegalMovesQuery(sess, msg.unitId);
@@ -210,6 +296,54 @@ function handleRulesQuery(sess: ClientSession): void {
   send(sess.ws, { type: 'rules', rules: buildRulesPayload() });
 }
 
+// A seated player left: give them RECONNECT_GRACE_MS to rejoin (rejoin_room
+// clears the timer). Running game → they resign and the other player wins.
+// Room still waiting for players → their seat is freed; an empty room is removed.
+function startGraceTimer(room: RoomState, slot: number, username: string | null): void {
+  clearGraceTimer(room.id, slot);
+  const playing = room.status === 'active' && room.state?.phase === 'playing';
+  if (room.status === 'done') return;
+  graceTimers.set(`${room.id}:${slot}`, setTimeout(() => {
+    graceTimers.delete(`${room.id}:${slot}`);
+    if (rooms.get(room.id) !== room || room.sessions[slot]) return; // gone, or rejoined
+    if (playing && room.state && room.state.phase === 'playing') {
+      if (resignGame(room.state, slot)) {
+        pushStateUpdate(room, `${username ?? `Player ${slot + 1}`} did not reconnect in time and forfeits.`, slot, true);
+      }
+    } else if (room.status === 'open') {
+      freeOpenSeat(room, slot);
+    }
+  }, RECONNECT_GRACE_MS));
+}
+
+// Remove a player from a room that hasn't started. The room is dropped from the
+// lobby once nobody is left in it.
+function freeOpenSeat(room: RoomState, slot: number): void {
+  room.sessions[slot] = null;
+  room.playerNames[slot] = null;
+  if (room.sessions.every(s => s === null)) {
+    rooms.delete(room.id);
+    setRoomStatus(room.id, 'done');
+    for (let i = 0; i < room.expectedPlayers; i++) clearGraceTimer(room.id, i);
+  }
+}
+
+// The waiting screen's Back button. Only for rooms that haven't started — a
+// running game is left by resigning or by disconnecting (grace timer).
+function handleLeaveRoom(sess: ClientSession, roomId: string): void {
+  const room = rooms.get(roomId);
+  if (!room || sess.roomId !== roomId || sess.playerSlot === null) return;
+  if (room.status !== 'open') return;
+  clearGraceTimer(roomId, sess.playerSlot);
+  freeOpenSeat(room, sess.playerSlot);
+  sess.roomId = null;
+  sess.playerSlot = null;
+  const joined = room.sessions.filter(s => s !== null).length;
+  for (const s of room.sessions) {
+    if (s) send(s.ws, { type: 'room_waiting', roomId, joined, expected: room.expectedPlayers });
+  }
+}
+
 function handleLogin(sess: ClientSession, username: string): void {
   if (!username || username.length < 1 || username.length > 24) {
     send(sess.ws, { type: 'error', message: 'Invalid username (1-24 chars)' });
@@ -231,10 +365,13 @@ function handleLogin(sess: ClientSession, username: string): void {
   send(sess.ws, { type: 'logged_in', username });
 }
 
-// Clamp a requested player count into the supported range (2..MAX_PLAYERS).
-function normalizeExpectedPlayers(n: unknown): number {
-  const v = typeof n === 'number' && Number.isFinite(n) ? Math.floor(n) : 2;
-  return Math.max(2, Math.min(MAX_PLAYERS, v));
+// The Asymmetric Tribes redesign is 1v1 only. Room size is pinned to 2
+// server-side regardless of what a (possibly stale) client requests — the
+// old N-player room machinery below is left in place since it's harmless and
+// still generic/reusable, but nothing can actually create a room for more
+// than 2 seats any more.
+function normalizeExpectedPlayers(_n: unknown): number {
+  return 2;
 }
 
 // Once a room is full, build the N-player game state and broadcast game_start
@@ -252,7 +389,7 @@ function startGameInRoom(room: RoomState): void {
 
   for (let slot = 0; slot < room.sessions.length; slot++) {
     const s = room.sessions[slot];
-    if (s) send(s.ws, { type: 'game_start', playerSlot: slot, state: serialized });
+    if (s) send(s.ws, { type: 'game_start', playerSlot: slot, state: viewPayload(serialized, slot, slot, room.state) });
   }
 }
 
@@ -378,26 +515,50 @@ function handleRejoinRoom(sess: ClientSession, roomId: string): void {
     const savedJson = loadGameState(roomId);
     if (savedJson) {
       const parsed = JSON.parse(savedJson) as SerializedGameState;
-      room.state = deserialize(parsed);
-      resyncCounters(room.state);
+      try {
+        room.state = deserialize(parsed);
+        resyncCounters(room.state);
+      } catch (err) {
+        if (err instanceof IncompatibleRulesVersionError) {
+          send(sess.ws, { type: 'error', message: err.message });
+          return;
+        }
+        throw err;
+      }
     }
   }
 
+  clearGraceTimer(roomId, slot);
   room.sessions[slot] = sess;
   room.playerNames[slot] = sess.username;
   sess.roomId = roomId;
   sess.playerSlot = slot;
+
+  if (!room.state && room.status !== 'open') {
+    send(sess.ws, { type: 'error', message: 'That room is no longer open.' });
+    return;
+  }
+  if (!room.state && room.status === 'open') {
+    // Reconnected while still waiting for an opponent: put them back on the
+    // waiting screen.
+    const joined = room.sessions.filter(s => s !== null).length;
+    send(sess.ws, { type: 'room_waiting', roomId, joined, expected: room.expectedPlayers });
+    return;
+  }
 
   if (room.state) {
     const currentTurnSlot = room.state.currentPlayerIndex;
     const serialized = serialize(room.state);
     // If rejoining player is NOT the acting player, strip selections so they
     // cannot see the acting player's in-progress moves from the saved state.
-    const payload = slot === currentTurnSlot ? serialized : stripSelectionState(serialized);
+    // Either way, an unrevealed opponent faction pick stays hidden (§5-6) —
+    // this matters especially here: "reconnect before the opponent chooses"
+    // must show MY own locked pick but never theirs.
+    const payload = viewPayload(serialized, slot, currentTurnSlot, room.state);
     send(sess.ws, { type: 'game_start', playerSlot: slot, state: payload });
     for (let i = 0; i < room.sessions.length; i++) {
       const other = room.sessions[i];
-      if (other && i !== slot) send(other.ws, { type: 'opponent_reconnected' });
+      if (other && i !== slot) send(other.ws, { type: 'opponent_reconnected', playerSlot: slot, playerName: sess.username ?? undefined });
     }
   }
 }
@@ -475,7 +636,7 @@ function handleSpectate(sess: ClientSession, gameId: string): void {
     if (!hlList.includes(sess)) hlList.push(sess);
 
     const serialized = serialize(hl.gameState);
-    const strippedState = stripSelectionState(serialized);
+    const strippedState = viewPayload(serialized, null, null);
     send(sess.ws, {
       type: 'spectate_start',
       state: strippedState,
@@ -505,7 +666,7 @@ function handleSpectate(sess: ClientSession, gameId: string): void {
   if (!room.spectators.includes(sess)) room.spectators.push(sess);
 
   const serialized = serialize(room.state);
-  const strippedState = stripSelectionState(serialized);
+  const strippedState = viewPayload(serialized, null, null);
 
   send(sess.ws, {
     type: 'spectate_start',
@@ -551,16 +712,10 @@ function legacyToUnified(
       if (typeof msg.unitType !== 'string') return { error: 'Invalid spawn: missing unitType' };
       if (typeof msg.templeId !== 'string') return { error: 'Invalid spawn: missing templeId' };
       return { action: 'recruit', params: { unitType: msg.unitType, templeId: msg.templeId } };
-    case 'action_capture':
-      // Uses current selection; dispatcher will fall back to state.selectedUnitId.
-      return { action: 'capture', params: {} };
     case 'action_destroy':
       // Disband carries unitId explicitly (no selection fallback).
       if (typeof msg.unitId !== 'string') return { error: 'Invalid destroy: missing unitId' };
       return { action: 'destroy', params: { unitId: msg.unitId } };
-    case 'action_upgrade_temple':
-      if (typeof msg.templeId !== 'string') return { error: 'Invalid upgrade: missing templeId' };
-      return { action: 'upgrade-temple', params: { templeId: msg.templeId } };
     case 'action_research':
       if (typeof msg.techId !== 'string') return { error: 'Invalid research: missing techId' };
       return { action: 'research', params: { techId: msg.techId } };
@@ -609,7 +764,7 @@ function handleAction(sess: ClientSession, msg: ClientMessage): void {
       send(sess.ws, { type: 'action_error', message: 'Not your turn' });
       return;
     }
-    selectTemple(state, msg.templeId);
+    selectSite(state, msg.templeId);
     pushStateUpdate(room, msg.type, sess.playerSlot, false);
     return;
   }
