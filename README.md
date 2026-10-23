@@ -3,8 +3,8 @@
 A two-player, turn-based hex strategy game (formerly *Best Strategy*). Two asymmetric tribes, Farmers (Agrar)
 and Nomads (Temple), compete under fog of war. Every match is won by bringing down the enemy Capital.
 
-**Play:** <https://interslavic.space/game-upgradable/>. You can play against the AI (Easy to Expert), with a
-friend on the same device, or online.
+**Play:** <https://interslavic.space/game-upgradable/>. You can play against the AI (Easy, Medium or Hard),
+with a friend on the same device, or online.
 
 **Apps:** the same game runs as a native iPhone app and Android app. Both bundle the game for offline play and
 connect to the same server for online matches, so web, iPhone and Android players can play each other.
@@ -36,7 +36,15 @@ Set these environment variables for the game server:
 - `DB_PATH`: the SQLite database. The default is `data/game.db`.
 - `JWT_SECRET`: required in production.
 - `CHAT_PASSWORD`: the passphrase for the optional in-game agent chat (`server/chatAgent.ts`).
-  The server won't start without it.
+  Without it the chat is disabled.
+
+## AI
+
+The AI's strategy (army mix, research order, economy, when to attack, how it scores moves) is a set
+of about 110 numbers, its genome (`src/aiGenome.ts`). Hard's genome was evolved by self-play: a
+genetic algorithm over roughly 77,000 games. Medium and Easy are weaker genomes that also make more
+random second-best moves. Every level uses every unit type, tech and economic action. The tools, the
+method and the results are in [ai-evolve/README.md](ai-evolve/README.md).
 
 ## History
 
