@@ -46,11 +46,11 @@ console.log('\n=== search is disabled (returns null) on Easy/Normal ===');
   const unit = createUnit('warrior', 0, onMapChain(state, cap.pos, 2)[1]!, state.playerTech[0], 'agrar');
   state.units.push(unit);
   check('easy -> null', searchBestAction(state, unit, 0, 'easy') === null);
-  check('normal -> null', searchBestAction(state, unit, 0, 'normal') === null);
+  check('normal -> null', searchBestAction(state, unit, 0, 'medium') === null);
 }
 
 console.log('\n=== a guaranteed free kill is found on Hard/Expert ===');
-for (const difficulty of ['hard', 'expert'] as const) {
+for (const difficulty of ['hard'] as const) {
   const state = setup();
   const cap = getPlayerCapital(state, 0)!;
   const chain = onMapChain(state, cap.pos, 3);
@@ -69,7 +69,7 @@ for (const difficulty of ['hard', 'expert'] as const) {
 }
 
 console.log('\n=== search respects its own wall-clock time budget ===');
-for (const difficulty of ['hard', 'expert'] as const) {
+for (const difficulty of ['hard'] as const) {
   const state = setup();
   const cap = getPlayerCapital(state, 0)!;
   const chain = onMapChain(state, cap.pos, 5);
@@ -102,7 +102,7 @@ console.log('\n=== searchBestAction never mutates the live state ===');
   const posBefore = { ...attacker.pos };
   const hpBefore = target.hp;
   state.units.push(attacker, target);
-  searchBestAction(state, attacker, 0, 'expert');
+  searchBestAction(state, attacker, 0, 'hard');
   check('the live attacker never moved', hexEqual(attacker.pos, posBefore));
   check('the live target never took damage', target.hp === hpBefore);
 }
@@ -117,7 +117,7 @@ console.log('\n=== a unit with nothing legal to do at all still returns a sane f
   state.units.push(unit);
   let threw = false;
   let outcome = null;
-  try { outcome = searchBestAction(state, unit, 0, 'expert'); } catch { threw = true; }
+  try { outcome = searchBestAction(state, unit, 0, 'hard'); } catch { threw = true; }
   check('no throw', !threw);
   check('a spent unit resolves to just endActivation (or null)',
     outcome === null || outcome.action.kind === 'endActivation');

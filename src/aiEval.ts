@@ -66,6 +66,13 @@ export const AI_EVAL_WEIGHTS = {
   tempo: 0.8,
 };
 
+export type AiEvalWeights = typeof AI_EVAL_WEIGHTS;
+
+// The weights in effect for the turn being searched. aiGenome.ts swaps in a
+// genome's scaled copy for the duration of one AI turn (withGenome).
+let W: AiEvalWeights = AI_EVAL_WEIGHTS;
+export function setActiveEvalWeights(w: AiEvalWeights): void { W = w; }
+
 // ── Small, self-contained helpers (deliberately NOT imported from ai.ts —
 // this module must stay independent of it) ──────────────────────────────
 
@@ -130,7 +137,7 @@ function emptyBreakdown(): EvalBreakdown {
 // for perspective vs everyone else) ─────────────────────────────────────
 
 function materialScore(state: GameState, player: Player): { material: number; threatened: number } {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   let material = 0;
   let threatened = 0;
   const myUnits = state.units.filter(u => u.hp > 0 && u.playerId === player.id);
@@ -183,7 +190,7 @@ function materialScore(state: GameState, player: Player): { material: number; th
 // currently-credible lethal hit on the Capital itself (estimated total
 // damage from every revealed enemy in range >= remaining HP).
 function capitalSafetyScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const capital = getPlayerCapital(state, player.id);
   if (!capital) return 0;
   const frac = capital.hp / capital.maxHp;
@@ -208,7 +215,7 @@ function capitalSafetyScore(state: GameState, player: Player): number {
 }
 
 function incomeScore(state: GameState, player: Player): number {
-  return getPlayerIncome(state, player.id) * AI_EVAL_WEIGHTS.income;
+  return getPlayerIncome(state, player.id) * W.income;
 }
 
 // Diminishing beyond a soft cap (a stockpile stops being "more options" and
@@ -217,7 +224,7 @@ function incomeScore(state: GameState, player: Player): number {
 // Farm, a Temple upgrade/founding) — §11's own example: 11 Energy with
 // Command I at 12 is worth more than the raw number suggests.
 function energyScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const aura = player.aura;
   const linear = Math.min(aura, w.energySoftCap) * w.energyLinear;
   const excess = Math.max(0, aura - w.energySoftCap);
@@ -232,7 +239,7 @@ function energyScore(state: GameState, player: Player): number {
 // now (spare Energy AND spare Command headroom) — an unusable 4th slot is
 // much closer to worthless than a flat per-slot bonus would suggest.
 function productionScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const slots = getProductionSlots(state, player.id);
   const headroom = getPopulationCap(state, player.id) - getPopulationCount(state, player.id);
   const usable = player.aura >= 1 && headroom > 0;
@@ -254,7 +261,7 @@ function commandScore(state: GameState, player: Player): number {
   // value of the kill itself for a cheap/near-dead unit and made the
   // evaluator prefer leaving a free kill on the table over taking it.
   const slots = Math.max(1, getProductionSlots(state, player.id));
-  return Math.min(usableHeadroom, slots) * AI_EVAL_WEIGHTS.commandHeadroom;
+  return Math.min(usableHeadroom, slots) * W.commandHeadroom;
 }
 
 // Rough per-tech value — not "count of researched techs" (§14). A tech's
@@ -289,7 +296,7 @@ function techNodeValue(state: GameState, player: Player): Map<string, number> {
 }
 
 function techScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const tech = state.playerTech[player.id];
   if (!tech) return 0;
   const values = techNodeValue(state, player);
@@ -316,7 +323,7 @@ function techScore(state: GameState, player: Player): number {
 // Agrar's own Road network).
 function farmScore(state: GameState, player: Player): number {
   if (player.faction !== 'agrar') return 0;
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const myFarms = state.farms.filter((f: Farm) => f.ownerId === player.id);
   const activeFarms = myFarms.filter(f => f.state === 'farm');
   let score = 0;
@@ -345,7 +352,7 @@ function farmScore(state: GameState, player: Player): number {
 // captured by incomeScore) plus +1 production slot and a forward-position
 // asset. This term is the STRUCTURAL value on top of that income.
 function templeScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   let score = 0;
   for (const s of state.strategicSites as StrategicSite[]) {
     if (s.ownerId !== player.id) continue;
@@ -360,7 +367,7 @@ function templeScore(state: GameState, player: Player): number {
 
 function fertileSiteScore(state: GameState, player: Player): number {
   const owned = (state.fertileSites as FertileSite[]).filter(f => f.ownerId === player.id).length;
-  return owned * AI_EVAL_WEIGHTS.fertileSite;
+  return owned * W.fertileSite;
 }
 
 // Cheap connectivity approximation (§21 explicitly allows this instead of a
@@ -384,7 +391,7 @@ function roadScore(state: GameState, player: Player): number {
     if (nearCapital && nearFrontline) value += 0.5; // actively useful reinforcement route right now
     score += value;
   }
-  return score * AI_EVAL_WEIGHTS.roadConnectivity;
+  return score * W.roadConnectivity;
 }
 
 // Practical mobility: how much of my combat army is CURRENTLY enjoying a
@@ -396,7 +403,7 @@ function mobilityScore(state: GameState, player: Player): number {
   if (myUnits.length === 0) return 0;
   const avgEffectiveSpeed = myUnits.reduce((s, u) => s + getEffectiveSpeed(state, u), 0) / myUnits.length;
   const avgBaseSpeed = myUnits.reduce((s, u) => s + u.stats.speed, 0) / myUnits.length;
-  return (avgEffectiveSpeed - avgBaseSpeed) * myUnits.length * AI_EVAL_WEIGHTS.mobility * (1 / ROAD_MOVEMENT_BONUS);
+  return (avgEffectiveSpeed - avgBaseSpeed) * myUnits.length * W.mobility * (1 / ROAD_MOVEMENT_BONUS);
 }
 
 // Approximate influence: count of my combat units within reach-3 of each
@@ -417,14 +424,14 @@ function boardControlScore(state: GameState, player: Player): number {
     const nearMine = myUnits.filter(u => hexDistance(u.pos, z.pos) <= 3).length;
     control += Math.min(nearMine, 3) * z.weight;
   }
-  return control * AI_EVAL_WEIGHTS.boardControl;
+  return control * W.boardControl;
 }
 
 // Formation: reward a backline unit (archer/catapult/support) that has a
 // frontline ally standing between it and the nearest revealed enemy
 // (screened); penalize one with no ally within 2 hexes at all (isolated).
 function formationScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const enemies = revealedEnemiesOf(state, player.id);
   if (enemies.length === 0) return 0;
   const mine = state.units.filter(u => u.hp > 0 && u.playerId === player.id);
@@ -447,7 +454,7 @@ function formationScore(state: GameState, player: Player): number {
 // same "missing HP for healers, valuable-ally-count for boosters" idea the
 // per-unit heuristic already uses, evaluated at the state level.
 function supportScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const supports = state.units.filter(u => u.hp > 0 && u.playerId === player.id && isSupport(u.type));
   if (supports.length === 0) return 0;
   const combat = state.units.filter(u => u.hp > 0 && u.playerId === player.id && !isSupport(u.type) && u.type !== 'founder');
@@ -470,7 +477,7 @@ function supportScore(state: GameState, player: Player): number {
 // reimplementing it — positional pressure the moment it exists, before any
 // damage is actually dealt (§26).
 function encirclementScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const enemies = revealedEnemiesOf(state, player.id);
   if (enemies.length === 0) return 0;
   let score = 0;
@@ -495,7 +502,7 @@ function encirclementScore(state: GameState, player: Player): number {
 // spent its activation — otherwise the evaluator can't tell "I have 3
 // strong unactivated units" from "those 3 already went".
 function tempoScore(state: GameState, player: Player): number {
-  const w = AI_EVAL_WEIGHTS;
+  const w = W;
   const mine = state.units.filter(u => u.hp > 0 && u.playerId === player.id);
   let score = 0;
   for (const u of mine) {

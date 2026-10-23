@@ -8,6 +8,7 @@
 // Run with: npx tsx scripts/verify-ai-difficulty.ts
 import { createGameState, chooseFaction, endTurn, getCurrentPlayer, getPlayerCapital, createUnit } from '../src/game';
 import { runAiTurn, evaluateState, evaluateStateDetailed, anyEnemyHasLethalShot, AI_DIFFICULTY, AiDifficulty } from '../src/ai';
+import { cloneGenome, DEFAULT_GENOME } from '../src/aiGenome';
 import { serialize, deserialize } from '../src/serializer';
 import { hexDistance } from '../src/hex';
 import { MAX_ACTIVE_FARMS } from '../src/factions';
@@ -91,55 +92,65 @@ console.log('\n=== Difficulty config sanity ===');
   check('easy has no threat map', !AI_DIFFICULTY.easy.useThreatMap);
   check('easy has no strategic planning', !AI_DIFFICULTY.easy.useStrategicPlanning);
   check('easy has search depth 0', AI_DIFFICULTY.easy.searchDepth === 0);
-  check('normal has resource reservation', AI_DIFFICULTY.normal.useResourceReservation);
-  check('normal has a threat map', AI_DIFFICULTY.normal.useThreatMap);
-  check('normal has NO strategic planning (Hard+ only)', !AI_DIFFICULTY.normal.useStrategicPlanning);
-  check('hard has strategic planning', AI_DIFFICULTY.hard.useStrategicPlanning);
-  check('hard has shallow lookahead (search depth > 0)', AI_DIFFICULTY.hard.searchDepth > 0);
-  check('expert searches deeper than hard', AI_DIFFICULTY.expert.searchDepth > AI_DIFFICULTY.hard.searchDepth);
-  check('expert has the widest candidate pool', AI_DIFFICULTY.expert.candidateLimit >= AI_DIFFICULTY.hard.candidateLimit);
-  check('randomness strictly decreases easy > normal > hard >= expert',
-    AI_DIFFICULTY.easy.randomness > AI_DIFFICULTY.normal.randomness
-    && AI_DIFFICULTY.normal.randomness > AI_DIFFICULTY.hard.randomness
-    && AI_DIFFICULTY.hard.randomness >= AI_DIFFICULTY.expert.randomness);
+  check('medium has resource reservation', AI_DIFFICULTY.medium.useResourceReservation);
+  check('medium has a threat map', AI_DIFFICULTY.medium.useThreatMap);
+  check('medium searches no deeper than hard', AI_DIFFICULTY.medium.searchDepth <= AI_DIFFICULTY.hard.searchDepth);
+  check('hard has strategic planning available', AI_DIFFICULTY.hard.useStrategicPlanning);
+  check('hard has lookahead available (search depth > 0)', AI_DIFFICULTY.hard.searchDepth > 0);
+  check('randomness strictly decreases easy > medium > hard',
+    AI_DIFFICULTY.easy.randomness > AI_DIFFICULTY.medium.randomness
+    && AI_DIFFICULTY.medium.randomness > AI_DIFFICULTY.hard.randomness);
 }
 
 // ── Resource reservation (§9, "mandatory" test §46) ──
-console.log('\n=== Resource reservation: Normal+ saves instead of always spending ===');
+// The mechanism is tested with a known genome — the defaults: command_1 has
+// top research priority, 2 Builders while Farms are short — rather than with
+// whichever genome evolution last produced for each level. minArmyForTech is
+// 0 so saving isn't postponed until an army exists.
+const TEST_GENOME = cloneGenome(DEFAULT_GENOME);
+TEST_GENOME.agrar.minArmyForTech = 0;
+console.log('\n=== Resource reservation: Medium+ saves instead of always spending ===');
 {
   const state = setup('agrar', 'agrar');
   state.currentPlayerIndex = 0;
-  // command_1 (first on the plan, no prereqs — see HARD_RESEARCH_PLAN's own
-  // comment for why it leads) costs 12 — set aura just short of it. With
-  // zero Farms yet, BOTH the 1st (mandatory) and 2nd (parallelizes Farm-
-  // building — see chooseSpawnType) Builder recruits are exempt (cost 2
-  // each), leaving 11-2-2=7.
+  // command_1 costs 12 — set aura just short of it. With zero Farms yet,
+  // BOTH Builder recruits (genome: 2 while Farms are short) are exempt
+  // (cost 2 each), leaving 11-2-2=7.
   state.players[0]!.aura = 11;
-  runAiTurn(state, 'normal');
-  check('Normal AI does NOT blow past the reservation on a discretionary recruit',
+  runAiTurn(state, 'medium', 0, TEST_GENOME);
+  check('Medium AI does NOT blow past the reservation on a discretionary recruit',
     state.players[0]!.aura >= 7, `aura=${state.players[0]!.aura}`);
-  check('Normal AI did NOT prematurely research a cheaper, lower-priority tech',
+  check('Medium AI did NOT prematurely research a cheaper, lower-priority tech',
     !state.playerTech[0]!.researching);
-  check('Normal AI DID recruit its mandatory (exempt) Builders',
-    state.trainingQueue.filter(o => o.playerId === 0 && o.unitType === 'founder').length === 2);
+  check('Medium AI DID recruit its mandatory (exempt) Builders',
+    state.trainingQueue.filter(o => o.playerId === 0 && o.unitType === 'founder').length === TEST_GENOME.agrar.builders);
 
   const state2 = setup('agrar', 'agrar');
   state2.currentPlayerIndex = 0;
   state2.players[0]!.aura = 12; // now affordable
-  runAiTurn(state2, 'normal');
-  check('Normal AI starts the reserved-for tech once it IS affordable',
-    !!state2.playerTech[0]!.researching);
+  runAiTurn(state2, 'medium', 0, TEST_GENOME);
+  check('Medium AI starts the reserved-for tech once it IS affordable',
+    state2.playerTech[0]!.researching?.techId === 'command_1');
 }
 
-// ── Easy AI: no reservation, spends freely ──
-console.log('\n=== Easy AI does not reserve ===');
+// ── Easy AI: plays the whole game, but doesn't save ──
+console.log('\n=== Easy AI researches but does not reserve ===');
 {
+  const oneBuilder = cloneGenome(TEST_GENOME);
+  oneBuilder.agrar.builders = 1;
   const state = setup('agrar', 'agrar');
   state.currentPlayerIndex = 0;
-  state.players[0]!.aura = 15;
-  runAiTurn(state, 'easy');
-  check('Easy AI has no research plan / reservation concept (never starts research at all)',
-    !state.playerTech[0]!.researching);
+  state.players[0]!.aura = 11; // just short of command_1
+  runAiTurn(state, 'easy', 0, oneBuilder);
+  check('Easy AI spends Energy it could have saved for its next tech',
+    state.players[0]!.aura < 9 && state.trainingQueue.filter(o => o.playerId === 0).length >= 2,
+    `aura=${state.players[0]!.aura}`);
+
+  const state2 = setup('agrar', 'agrar');
+  state2.currentPlayerIndex = 0;
+  state2.players[0]!.aura = 15;
+  runAiTurn(state2, 'easy', 0, oneBuilder);
+  check('Easy AI still researches once a tech is affordable', !!state2.playerTech[0]!.researching);
 }
 
 // ── Evaluator sanity (§23-25) ──
@@ -470,7 +481,7 @@ console.log('\n=== Temple captures BOTH neutral sites promptly, not serially one
 // throws and never leaves impossible state behind.)
 console.log('\n=== Full turns across all difficulties never crash / never leave illegal state ===');
 {
-  const DIFFS: AiDifficulty[] = ['easy', 'normal', 'hard', 'expert'];
+  const DIFFS: AiDifficulty[] = ['easy', 'medium', 'hard'];
   let crashed = false;
   for (const d of DIFFS) {
     const state = setup(d === 'easy' || d === 'hard' ? 'agrar' : 'temple', d === 'easy' || d === 'hard' ? 'temple' : 'agrar');

@@ -75,7 +75,7 @@ import {
 } from './game';
 import { getUnitThumbnail } from './unitThumbnails';
 import { createMenuScene, MenuScene, MenuPlace } from './menuScene';
-import { runAiTurn, difficultyLabel, AiDifficulty } from './ai';
+import { runAiTurn, difficultyLabel, normalizeDifficulty, AiDifficulty } from './ai';
 import { MultiplayerClient } from './multiplayer';
 import { serialize, deserialize, SerializedGameState, IncompatibleRulesVersionError } from './serializer';
 import type { ServerMessage } from './protocol';
@@ -109,11 +109,11 @@ const UNIT_ART: Record<UnitType, string> = {
 const AI_DELAY_MS = 600;
 
 // Per-slot controller kind for the current LOCAL game (index === player slot).
-// 'human' = a local seat, 'normal'/'hard' = an AI seat of that difficulty. This
+// 'human' = a local seat, 'easy'/'medium'/'hard' = an AI seat of that difficulty. This
 // generalizes the old single "AI is slot 1" assumption to N players with any mix
 // of humans and AIs (1 human + 3 AI, hotseat N humans, etc.).
 type ControllerKind = 'human' | AiDifficulty;
-let controllers: ControllerKind[] = ['human', 'normal'];
+let controllers: ControllerKind[] = ['human', 'medium'];
 
 // Is the given local slot controlled by an AI? (Never true in online play — the
 // server is authoritative there and no local AI runs.)
@@ -996,8 +996,9 @@ interface SavedGame {
 
 // Reconstruct the controller layout from a save, mapping legacy 2-player saves.
 function controllersFromSave(save: SavedGame): ControllerKind[] {
-  if (save.controllers && save.controllers.length) return save.controllers;
-  const aiKind: ControllerKind = save.aiDifficulty === 'hard' ? 'hard' : 'normal';
+  // Saves from before the three-level split may hold 'normal'/'expert'.
+  if (save.controllers && save.controllers.length) return save.controllers.map(k => k === 'human' ? k : normalizeDifficulty(k));
+  const aiKind: ControllerKind = normalizeDifficulty(save.aiDifficulty);
   return save.aiEnabled ? ['human', aiKind] : ['human', 'human'];
 }
 
@@ -1171,7 +1172,7 @@ function startLocalGame(kinds: ControllerKind[]): void {
 }
 
 // Back-compat wrapper for the classic 2-player quick-start buttons.
-function startGame(vsAI: boolean, difficulty: AiDifficulty = 'normal'): void {
+function startGame(vsAI: boolean, difficulty: AiDifficulty = 'medium'): void {
   startLocalGame(vsAI ? ['human', difficulty] : ['human', 'human']);
 }
 
@@ -1181,7 +1182,7 @@ menuContinueBtn.addEventListener('click', () => {
 });
 menu2P.addEventListener('click', () => startGame(false));
 for (const btn of Array.from(document.querySelectorAll<HTMLButtonElement>('.difficulty-btn'))) {
-  btn.addEventListener('click', () => startGame(true, btn.dataset.difficulty as AiDifficulty));
+  btn.addEventListener('click', () => startGame(true, normalizeDifficulty(btn.dataset.difficulty)));
 }
 difficultyBack.addEventListener('click', () => showLobbyPanel('main'));
 menuBtn.addEventListener('click', () => showMenu());
@@ -1195,7 +1196,7 @@ const menuStack = document.getElementById('menuStack')!;
 const menuNewSheet = document.getElementById('menuNewSheet')!;
 const menuMpSheet = document.getElementById('menuMpSheet')!;
 let menuTribe: FactionId = 'agrar';
-let menuOpp: 'friend' | AiDifficulty = 'normal';
+let menuOpp: 'friend' | AiDifficulty = 'medium';
 function showMenuSheet(which: 'main' | 'new' | 'mp'): void {
   menuStack.classList.toggle('hidden', which !== 'main');
   menuNewSheet.classList.toggle('hidden', which !== 'new');
@@ -1213,7 +1214,7 @@ for (const el of Array.from(document.querySelectorAll<HTMLButtonElement>('#menuN
 }
 for (const el of Array.from(document.querySelectorAll<HTMLButtonElement>('#menuOppPills .mpill'))) {
   el.addEventListener('click', () => {
-    menuOpp = el.dataset.opp as 'friend' | AiDifficulty;
+    menuOpp = el.dataset.opp === 'friend' ? 'friend' : normalizeDifficulty(el.dataset.opp);
     document.querySelectorAll('#menuOppPills .mpill').forEach(x => x.classList.toggle('on', x === el));
   });
 }
@@ -1236,14 +1237,14 @@ const setupStartBtn = document.getElementById('setupStartBtn')!;
 const setupBack = document.getElementById('setupBack')!;
 
 // Working controller layout for the setup screen. Slot 0 defaults to human, the
-// rest to normal AI — the classic "1 human vs N AIs" default.
-let setupKinds: ControllerKind[] = ['human', 'normal'];
+// rest to Medium AI — the classic "1 human vs N AIs" default.
+let setupKinds: ControllerKind[] = ['human', 'medium'];
 
 function renderSetupSlots(): void {
   setupPlayersCountEl.textContent = String(setupKinds.length);
   setupSlotsEl.innerHTML = '';
   const KIND_LABELS: [ControllerKind, string][] = [
-    ['human', 'Human'], ['easy', 'AI — Easy'], ['normal', 'AI — Normal'], ['hard', 'AI — Hard'], ['expert', 'AI — Expert'],
+    ['human', 'Human'], ['easy', 'AI — Easy'], ['medium', 'AI — Medium'], ['hard', 'AI — Hard'],
   ];
   setupKinds.forEach((kind, i) => {
     const row = document.createElement('div');

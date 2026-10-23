@@ -247,10 +247,13 @@ async function runTurn(s: ChatSession, text: string, model: string, effort: Effo
 export const chatRouter = express.Router();
 
 // This agent can edit and commit to the live deployment, so it's gated behind
-// a shared passphrase (checked as ?pass= on GET, body.pass on POST) rather
-// than being open to anyone who finds the URL.
-const CHAT_PASSWORD: string = process.env.CHAT_PASSWORD || (() => { throw new Error('CHAT_PASSWORD environment variable is required'); })();
+// a shared passphrase (CHAT_PASSWORD, checked as ?pass= on GET, body.pass on
+// POST) rather than being open to anyone who finds the URL. With no
+// passphrase configured the chat is off; the game server (and the test
+// suite, which loads it) still starts.
+const CHAT_PASSWORD = process.env.CHAT_PASSWORD ?? '';
 chatRouter.use((req, res, next) => {
+  if (!CHAT_PASSWORD) { res.status(503).json({ error: 'chat is disabled on this server' }); return; }
   const pass = req.method === 'GET' ? req.query.pass : req.body?.pass;
   if (pass !== CHAT_PASSWORD) { res.status(401).json({ error: 'wrong passphrase' }); return; }
   next();

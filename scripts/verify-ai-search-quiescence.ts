@@ -50,7 +50,7 @@ console.log('\n=== quiescence with 0 plies left just returns the stand-pat evalu
   const a = createUnit('warrior', 0, chain[1]!, state.playerTech[0], 'agrar');
   const b = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   state.units.push(a, b);
-  const ctx = makeSearchCtx(0, 'expert');
+  const ctx = makeSearchCtx(0, 'hard');
   const q = quiescence(state, ctx, -Infinity, Infinity, 'me', a.pos, [], 0);
   const flat = evaluateState(state, 0);
   check('matches a plain evaluateState call', q === flat, `q=${q} flat=${flat}`);
@@ -69,7 +69,7 @@ console.log('\n=== quiescence extends through an unresolved free kill left at th
   const target = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   target.hp = 1;
   state.units.push(attacker, target);
-  const ctx = makeSearchCtx(0, 'expert');
+  const ctx = makeSearchCtx(0, 'hard');
   const flat = evaluateState(state, 0);
   const extended = quiescence(state, ctx, -Infinity, Infinity, 'me', attacker.pos, [], QUIESCENCE_MAX_PLIES);
   check('quiescence scores at least as good as the flat (horizon-blind) evaluation',
@@ -91,7 +91,7 @@ console.log('\n=== quiescence is bounded by its own ply budget, even on a busy b
     createUnit('archer', 1, chain[5]!, state.playerTech[1], 'temple'),
   ];
   state.units.push(...mine, ...theirs);
-  const ctx = makeSearchCtx(0, 'expert', 2000);
+  const ctx = makeSearchCtx(0, 'hard', 2000);
   const before = ctx.nodes;
   const start = Date.now();
   quiescence(state, ctx, -Infinity, Infinity, 'me', mine[0]!.pos, [mine[1]!], QUIESCENCE_MAX_PLIES);
@@ -110,14 +110,14 @@ console.log('\n=== quiescence never mutates the live state ===');
   target.hp = 1;
   state.units.push(attacker, target);
   const before = state.units.map(u => ({ id: u.id, pos: { ...u.pos }, hp: u.hp }));
-  const ctx = makeSearchCtx(0, 'expert');
+  const ctx = makeSearchCtx(0, 'hard');
   quiescence(state, ctx, -Infinity, Infinity, 'me', attacker.pos, [], QUIESCENCE_MAX_PLIES);
   const after = state.units.map(u => ({ id: u.id, pos: { ...u.pos }, hp: u.hp }));
   check('units are exactly where/how they were before', JSON.stringify(before) === JSON.stringify(after));
 }
 
 console.log('\n=== end-to-end: searchBestAction (which now calls quiescence at every leaf) still finds the free kill and stays within budget ===');
-for (const difficulty of ['hard', 'expert'] as const) {
+for (const difficulty of ['hard'] as const) {
   const state = setup();
   const cap = getPlayerCapital(state, 0)!;
   const chain = onMapChain(state, cap.pos, 3);

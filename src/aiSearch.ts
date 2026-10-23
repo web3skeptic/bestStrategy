@@ -139,15 +139,16 @@ export function simulateAction(state: GameState, action: AiAction): { state: Gam
 // Reuses the EXISTING heuristics as generators rather than reinventing
 // "which move is plausible" (§3, §33): pickObjective/scoreMoveHex/
 // chooseStrategicPlan/computeThreatMap are the exact same functions
-// actCombatUnit itself already uses for the heuristic fallback (Normal and
+// actCombatUnit itself already uses for the heuristic fallback (Medium and
 // below) — the search layer just gets to see MORE of the ranked candidates
 // and compare their simulated outcomes instead of committing to the
 // single top-ranked one outright.
 import {
   pickObjective, scoreMoveHex, select, currentAttackTargets, currentStructureAttackHexes,
   chooseStrategicPlan, computeThreatMap, revealedEnemies, effectiveDest,
-  AI_DIFFICULTY, type AiDifficulty, evaluateState,
+  difficultyConfig, type AiDifficulty, evaluateState,
 } from './ai';
+import { activeGenome } from './aiGenome';
 import { hexDistance } from './hex';
 import type { Unit } from './types';
 
@@ -180,10 +181,15 @@ export const SEARCH_CONFIG: Record<AiDifficulty, {
   enabled: boolean; candidateWidth: number; maxDepthPlies: number; timeBudgetMs: number; perTurnBudgetMs: number;
 }> = {
   easy:   { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
-  normal: { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
+  medium: { enabled: false, candidateWidth: 0, maxDepthPlies: 0, timeBudgetMs: 0, perTurnBudgetMs: 0 },
   hard:   { enabled: true, candidateWidth: 10, maxDepthPlies: 4, timeBudgetMs: 400, perTurnBudgetMs: 700 },
-  expert: { enabled: true, candidateWidth: 16, maxDepthPlies: 6, timeBudgetMs: 1200, perTurnBudgetMs: 1400 },
 };
+
+// Search runs when the difficulty allows it and the genome in effect hasn't
+// switched it off.
+export function searchOn(difficulty: AiDifficulty): boolean {
+  return SEARCH_CONFIG[difficulty].enabled && activeGenome().tactics.search >= 0.5;
+}
 
 function actionKey(a: AiAction): string {
   switch (a.kind) {
@@ -244,7 +250,7 @@ export function generateCandidateActions(state: GameState, unit: Unit, aiPlayerI
 
   if (unit.hasMoved) return dedupeActions(candidates);
 
-  const cfg = AI_DIFFICULTY[difficulty];
+  const cfg = difficultyConfig(difficulty);
   const searchCfg = SEARCH_CONFIG[difficulty];
   const plan = cfg.useStrategicPlanning ? chooseStrategicPlan(state, aiPlayerId) : null;
   const threatMap = cfg.useThreatMap ? computeThreatMap(state, aiPlayerId) : null;
@@ -317,7 +323,7 @@ function emptyTelemetry(): DifficultyTelemetry {
   return { calls: 0, totalNodes: 0, totalElapsedMs: 0, maxElapsedMs: 0, timeouts: 0, depthReachedSum: 0 };
 }
 const telemetry: Record<AiDifficulty, DifficultyTelemetry> = {
-  easy: emptyTelemetry(), normal: emptyTelemetry(), hard: emptyTelemetry(), expert: emptyTelemetry(),
+  easy: emptyTelemetry(), medium: emptyTelemetry(), hard: emptyTelemetry(),
 };
 
 export interface SearchTelemetrySummary {
@@ -389,7 +395,7 @@ export interface SearchOutcome {
 //
 // Only once Phase 4 was measured and working in real play (per the brief's
 // own §100 gate) — see the free-kill/reachability/time-budget checks in
-// scripts/verify-ai-search-engine.ts and the Hard/Expert integration this
+// scripts/verify-ai-search-engine.ts and the Hard integration this
 // builds on.
 //
 // The TT's hash-inclusion list is deliberately narrow: this search's action
@@ -674,7 +680,7 @@ export function searchBestAction(
   maxTimeBudgetMs?: number,
 ): SearchOutcome | null {
   const searchCfg = SEARCH_CONFIG[difficulty];
-  if (!searchCfg.enabled) return null;
+  if (!searchOn(difficulty)) return null;
   const timeBudgetMs = maxTimeBudgetMs === undefined ? searchCfg.timeBudgetMs : Math.min(searchCfg.timeBudgetMs, maxTimeBudgetMs);
   if (timeBudgetMs <= 0) return null;
 
@@ -792,7 +798,7 @@ export function searchBestActivation(
   maxTimeBudgetMs?: number,
 ): ActivationOutcome | null {
   const searchCfg = SEARCH_CONFIG[difficulty];
-  if (!searchCfg.enabled) return null;
+  if (!searchOn(difficulty)) return null;
   const timeBudgetMs = maxTimeBudgetMs === undefined ? searchCfg.timeBudgetMs : Math.min(searchCfg.timeBudgetMs, maxTimeBudgetMs);
   if (timeBudgetMs <= 0) return null;
   const eligible = pendingUnits.filter(u => u.hp > 0 && !u.hasAttacked);

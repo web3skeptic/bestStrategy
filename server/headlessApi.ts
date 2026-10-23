@@ -7,7 +7,7 @@ import {
   getPlayerVisible, isForestUnitRevealed,
   PlayerConfig,
 } from '../src/game';
-import { runAiTurn } from '../src/ai';
+import { runAiTurn, normalizeDifficulty, type AiDifficulty } from '../src/ai';
 import { resyncCounters } from './stateUtils';
 import {
   GameState, UnitType, TechId,
@@ -44,9 +44,9 @@ export type HeadlessAction =
 export type HeadlessActionType = HeadlessAction['action'];
 
 // Per-seat controller for headless auto-play. 'human' seats are driven by
-// external POST /action calls; 'normal' / 'hard' seats can be auto-played by the
-// built-in AI (POST /ai-turn, POST /auto-play).
-export type HeadlessController = 'human' | 'normal' | 'hard';
+// external POST /action calls; 'easy' / 'medium' / 'hard' seats can be
+// auto-played by the built-in AI (POST /ai-turn, POST /auto-play).
+export type HeadlessController = 'human' | AiDifficulty;
 
 interface HeadlessActionRequestBody {
   playerId: number;
@@ -236,10 +236,12 @@ export const headlessRouter = Router();
 //   { player1Name, player2Name }                        — classic 2-player game
 //   { numPlayers: 2..6 }                                 — N players, generated names
 //   { players: [{ name?, controller? }, ...] }           — full per-seat control
-// `controller` ('human' | 'normal' | 'hard', default 'hard') is only used by the
-// AI auto-play endpoints; any seat can still be driven directly via POST /action.
+// `controller` ('human' | 'easy' | 'medium' | 'hard', default 'hard'; the old
+// 'normal'/'expert' still work as Medium/Hard) is only used by the AI
+// auto-play endpoints; any seat can still be driven directly via POST /action.
 function normalizeController(c: unknown): HeadlessController {
-  return c === 'human' || c === 'normal' || c === 'hard' ? c : 'hard';
+  if (c === 'human') return c;
+  return c === undefined || c === null ? 'hard' : normalizeDifficulty(c);
 }
 
 headlessRouter.post('/new-game', (req: Request, res: Response) => {
@@ -515,8 +517,8 @@ function playAiSeat(session: HeadlessSession): { seat: number; difficulty: Headl
   const state = session.gameState;
   const seat = state.currentPlayerIndex;
   const difficulty = session.controllers[seat] ?? 'hard';
-  // 'hard' (and any auto-played 'human') seats use the strong AI; 'normal' uses the light one.
-  const actions = runAiTurn(state, difficulty === 'normal' ? 'normal' : 'hard', seat);
+  // An auto-played 'human' seat uses the strongest AI.
+  const actions = runAiTurn(state, difficulty === 'human' ? 'hard' : difficulty, seat);
   executeAction(state, seat, 'end-turn', {});
   session.tick++;
   return { seat, difficulty, actions: actions.length };

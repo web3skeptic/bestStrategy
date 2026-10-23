@@ -745,9 +745,8 @@
     .opp-meter { display: flex; gap: 4px; margin-top: 8px; }
     .opp-meter i { width: 14px; height: 12px; background: rgba(255,244,220,.14); clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%); }
     .opp-easy   { --tint: #8fe0a3; } .opp-easy   .opp-meter i:nth-child(-n+1) { background: var(--tint); }
-    .opp-normal { --tint: #8fc8f0; } .opp-normal .opp-meter i:nth-child(-n+2) { background: var(--tint); }
-    .opp-hard   { --tint: #f08fae; } .opp-hard   .opp-meter i:nth-child(-n+3) { background: var(--tint); }
-    .opp-expert { --tint: #f5c451; } .opp-expert .opp-meter i:nth-child(-n+4) { background: var(--tint); box-shadow: 0 0 6px var(--tint); }
+    .opp-medium { --tint: #8fc8f0; } .opp-medium .opp-meter i:nth-child(-n+2) { background: var(--tint); }
+    .opp-hard   { --tint: #f5c451; grid-column: 1 / -1; } .opp-hard .opp-meter i:nth-child(-n+3) { background: var(--tint); box-shadow: 0 0 6px var(--tint); }
     @media (min-width: 761px) {
       .opp-sheet { left: 5vw; right: auto; bottom: 7vh; width: 480px; border-radius: 26px; border-width: 1px; padding: 18px; }
       .opp-sheet::before { display: none; }
@@ -1537,9 +1536,8 @@
           <div class="mpills" id="menuOppPills">
             <button class="mpill" data-opp="friend">Friend, same device</button>
             <button class="mpill" data-opp="easy">Easy</button>
-            <button class="mpill on" data-opp="normal">Normal</button>
+            <button class="mpill on" data-opp="medium">Medium</button>
             <button class="mpill" data-opp="hard">Hard</button>
-            <button class="mpill" data-opp="expert">Expert</button>
           </div>
           <button class="mbtn gold" id="menuStart">Start</button>
           <button class="mbtn quiet" data-menu-back>Back</button>
@@ -1584,28 +1582,21 @@
             <span class="opp-name">The Farmhand</span>
             <span class="opp-tier">Easy</span>
             <span class="opp-desc">Basic tactics, a little random. Learn the ropes.</span>
-            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+            <span class="opp-meter"><i></i><i></i><i></i></span>
           </button>
-          <button class="difficulty-btn opp-card opp-normal" data-difficulty="normal" data-art="archer:temple">
+          <button class="difficulty-btn opp-card opp-medium" data-difficulty="medium" data-art="archer:temple">
             <img class="opp-art" alt="" draggable="false">
             <span class="opp-name">The Captain</span>
-            <span class="opp-tier">Normal</span>
+            <span class="opp-tier">Medium</span>
             <span class="opp-desc">Reads threats, runs a sensible economy.</span>
-            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+            <span class="opp-meter"><i></i><i></i><i></i></span>
           </button>
           <button class="difficulty-btn opp-card opp-hard" data-difficulty="hard" data-art="heavyknight:agrar">
             <img class="opp-art" alt="" draggable="false">
             <span class="opp-name">The Warlord</span>
             <span class="opp-tier">Hard</span>
-            <span class="opp-desc">Plans ahead and moves as one army.</span>
-            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
-          </button>
-          <button class="difficulty-btn opp-card opp-expert" data-difficulty="expert" data-art="catapult:temple">
-            <img class="opp-art" alt="" draggable="false">
-            <span class="opp-name">The Oracle</span>
-            <span class="opp-tier">Expert</span>
-            <span class="opp-desc">Searches your replies and judges the future.</span>
-            <span class="opp-meter"><i></i><i></i><i></i><i></i></span>
+            <span class="opp-desc">Trained by evolution over thousands of games. Uses every unit and tech, and goes for your Capital.</span>
+            <span class="opp-meter"><i></i><i></i><i></i></span>
           </button>
         </div>
         <div class="lobby-back" id="difficultyBack">← Back</div>

@@ -73,7 +73,7 @@ console.log('\n=== Benchmark: take a free kill sitting right in front of you ===
   const target = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   target.hp = 1;
   state.units.push(attacker, target);
-  const outcome = searchBestAction(state, attacker, 0, 'expert');
+  const outcome = searchBestAction(state, attacker, 0, 'hard');
   check('an outcome is returned', !!outcome);
   check(`does NOT settle for doing nothing (chose: ${outcome ? describeAction(outcome.action) : 'n/a'})`,
     !!outcome && outcome.action.kind !== 'endActivation' && outcome.action.kind !== 'move');
@@ -91,7 +91,7 @@ console.log('\n=== Benchmark: do not walk a fragile unit into a static enemy arc
   mine.hp = 1;
   const archer = createUnit('archer', 1, chain[4]!, state.playerTech[1], 'temple');
   state.units.push(mine, archer);
-  const outcome = searchBestAction(state, mine, 0, 'expert');
+  const outcome = searchBestAction(state, mine, 0, 'hard');
   check('an outcome is returned', !!outcome);
   const catastrophic = !!outcome && outcome.action.kind === 'move' && hexDistance(outcome.action.to, archer.pos) <= 2;
   check(`does NOT walk into the archer's range (chose: ${outcome ? describeAction(outcome.action) : 'n/a'})`, !catastrophic);
@@ -110,7 +110,7 @@ console.log('\n=== Benchmark: finish the enemy Capital instead of settling for a
   state.units.push(attacker, distraction);
   check('setup sanity: the attacker is adjacent to both the Capital and the distraction',
     hexDistance(attacker.pos, cap1.pos) === 1 && hexDistance(attacker.pos, distraction.pos) === 1);
-  const outcome = searchBestAction(state, attacker, 0, 'expert');
+  const outcome = searchBestAction(state, attacker, 0, 'hard');
   check('an outcome is returned', !!outcome);
   check(`chooses attackStructure over the trivial unit kill (chose: ${outcome ? describeAction(outcome.action) : 'n/a'})`,
     !!outcome && outcome.action.kind === 'attackStructure');
@@ -136,7 +136,7 @@ console.log('\n=== Benchmark: prefer the higher-value guaranteed kill when more 
   const valuable = createUnit('horserider', 1, valuablePos!, state.playerTech[1], 'temple');
   valuable.hp = 1;
   state.units.push(attacker, cheap, valuable);
-  const outcome = searchBestAction(state, attacker, 0, 'expert');
+  const outcome = searchBestAction(state, attacker, 0, 'hard');
   check('an outcome is returned', !!outcome);
   const targetsValuable = !!outcome && outcome.action.kind === 'attack' && hexEqual(outcome.action.targetPos, valuable.pos);
   const targetsCheap = !!outcome && outcome.action.kind === 'attack' && hexEqual(outcome.action.targetPos, cheap.pos);

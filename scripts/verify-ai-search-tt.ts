@@ -66,7 +66,7 @@ console.log('\n=== search still finds a free kill with the TT enabled ===');
   const target = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   target.hp = 1;
   state.units.push(attacker, target);
-  const outcome = searchBestAction(state, attacker, 0, 'expert');
+  const outcome = searchBestAction(state, attacker, 0, 'hard');
   check('the free kill is still found', !!outcome
     && (outcome.action.kind === 'attack' || outcome.action.kind === 'moveAttack')
     && 'targetPos' in outcome.action && hexEqual(outcome.action.targetPos, target.pos));
@@ -75,7 +75,7 @@ console.log('\n=== search still finds a free kill with the TT enabled ===');
 console.log('\n=== deeper iterative-deepening passes reuse the TT (nodes/depth should not blow up) ===');
 {
   const { state, mine } = busyBoard();
-  const outcome = searchBestAction(state, mine[0]!, 0, 'expert', mine.slice(1));
+  const outcome = searchBestAction(state, mine[0]!, 0, 'hard', mine.slice(1));
   check('an outcome is returned', !!outcome);
   check('at least depth 2 completed', !!outcome && outcome.depthReached >= 2, outcome ? `depthReached=${outcome.depthReached}` : '');
   // A crude but meaningful sanity bound: without ANY pruning/caching, node
@@ -93,7 +93,7 @@ console.log('\n=== search never mutates the live state, even with the TT active 
 {
   const { state, mine } = busyBoard();
   const before = state.units.map(u => ({ id: u.id, pos: { ...u.pos }, hp: u.hp }));
-  searchBestAction(state, mine[0]!, 0, 'expert', mine.slice(1));
+  searchBestAction(state, mine[0]!, 0, 'hard', mine.slice(1));
   const after = state.units.map(u => ({ id: u.id, pos: { ...u.pos }, hp: u.hp }));
   check('every unit is exactly where/how it was before search ran', JSON.stringify(before) === JSON.stringify(after));
 }

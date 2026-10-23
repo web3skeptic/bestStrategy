@@ -66,9 +66,9 @@ console.log('\n=== searchBestActivation is disabled on Easy/Normal, needs 2+ eli
   target.hp = 1;
   state.units.push(a, target);
   check('easy -> null', searchBestActivation(state, [a], 0, 'easy') === null);
-  check('normal -> null', searchBestActivation(state, [a], 0, 'normal') === null);
+  check('normal -> null', searchBestActivation(state, [a], 0, 'medium') === null);
   check('a single pending unit still resolves (not required to have 2+ to call this directly)',
-    searchBestActivation(state, [a], 0, 'expert') !== null);
+    searchBestActivation(state, [a], 0, 'hard') !== null);
 }
 
 console.log('\n=== picks a free kill from whichever of several eligible units can take it ===');
@@ -91,7 +91,7 @@ console.log('\n=== picks a free kill from whichever of several eligible units ca
   attacker.hasMoved = true;
   idle.hasMoved = true;
   state.units.push(attacker, idle, target);
-  const outcome = searchBestActivation(state, [attacker, idle], 0, 'expert');
+  const outcome = searchBestActivation(state, [attacker, idle], 0, 'hard');
   check('an outcome is returned', !!outcome);
   check(`chooses the unit that can actually take the free kill (chose: ${outcome ? `${outcome.unitId} ${describeAction(outcome.action)}` : 'n/a'})`,
     !!outcome && outcome.unitId === attacker.id && outcome.action.kind === 'attack');
@@ -109,7 +109,7 @@ console.log('\n=== searchBestActivation never mutates the live state ===');
   target.hp = 1;
   state.units.push(attacker, idle, target);
   const before = state.units.map(u => ({ id: u.id, pos: { ...u.pos }, hp: u.hp, hasMoved: u.hasMoved, hasAttacked: u.hasAttacked }));
-  searchBestActivation(state, [attacker, idle], 0, 'expert');
+  searchBestActivation(state, [attacker, idle], 0, 'hard');
   const after = state.units.map(u => ({ id: u.id, pos: { ...u.pos }, hp: u.hp, hasMoved: u.hasMoved, hasAttacked: u.hasAttacked }));
   check('every unit is exactly as it was before the call', JSON.stringify(before) === JSON.stringify(after));
 }
@@ -126,16 +126,16 @@ console.log('\n=== a maxTimeBudgetMs override is respected (per-turn search ceil
   target.hp = 1;
   state.units.push(attacker, idle, target);
   check('a budget of 0 disables the call entirely (returns null, never throws)',
-    searchBestActivation(state, [attacker, idle], 0, 'expert', 0) === null);
+    searchBestActivation(state, [attacker, idle], 0, 'hard', 0) === null);
   const start = Date.now();
-  const outcome = searchBestActivation(state, [attacker, idle], 0, 'expert', 50);
+  const outcome = searchBestActivation(state, [attacker, idle], 0, 'hard', 50);
   const elapsed = Date.now() - start;
   check('a tight override budget is honored (well under the full 1200ms default)', elapsed < 500, `elapsed=${elapsed}ms`);
   check('still returns a usable outcome even under a tight budget', !!outcome);
 }
 
 console.log('\n=== end-to-end: a full AI turn never blows past its per-turn search ceiling ===');
-for (const difficulty of ['hard', 'expert'] as const) {
+for (const difficulty of ['hard'] as const) {
   const state = setup('temple', 'temple');
   const cap0 = getPlayerCapital(state, 0)!;
   const cap1 = getPlayerCapital(state, 1)!;

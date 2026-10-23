@@ -34,3 +34,6 @@ dist-app/
 ios-build/
 ios-build.log
 android-build.log
+
+# AI evolution working files (populations, per-generation scores)
+ai-evolve/out/

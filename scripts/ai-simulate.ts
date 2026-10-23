@@ -6,7 +6,7 @@
 // Usage:
 //   npx tsx scripts/ai-simulate.ts                          # default sweep
 //   npx tsx scripts/ai-simulate.ts --games=20 --maxRounds=200
-//   npx tsx scripts/ai-simulate.ts --pairs=normal:hard,hard:expert
+//   npx tsx scripts/ai-simulate.ts --pairs=easy:medium,medium:hard
 //   npx tsx scripts/ai-simulate.ts --factions=agrar:temple
 import { createGameState, chooseFaction, endTurn, getCurrentPlayer, getPlayerCapital, getPlayerIncome } from '../src/game';
 import { runAiTurn, AiDifficulty } from '../src/ai';
@@ -52,10 +52,10 @@ function playOneGame(d0: AiDifficulty, d1: AiDifficulty, f0: 'agrar' | 'temple',
 const args = parseArgs();
 const gamesPerPair = Number(args.games ?? 10);
 const maxRounds = Number(args.maxRounds ?? 300);
-const ALL: AiDifficulty[] = ['easy', 'normal', 'hard', 'expert'];
+const ALL: AiDifficulty[] = ['easy', 'medium', 'hard'];
 const pairs: [AiDifficulty, AiDifficulty][] = args.pairs
   ? args.pairs.split(',').map(p => { const [a, b] = p.split(':') as [AiDifficulty, AiDifficulty]; return [a, b]; })
-  : [['easy', 'normal'], ['normal', 'hard'], ['hard', 'expert'], ['easy', 'expert']];
+  : [['easy', 'medium'], ['medium', 'hard'], ['easy', 'hard']];
 const [fA, fB] = (args.factions ?? 'agrar:temple').split(':') as ['agrar' | 'temple', 'agrar' | 'temple'];
 
 console.log(`AI-vs-AI simulation: ${pairs.length} pairing(s) x ${gamesPerPair} games, maxRounds=${maxRounds}, factions=${fA} vs ${fB}\n`);

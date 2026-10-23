@@ -20,7 +20,7 @@ import {
   canStartFarm, startFarm, getValidFarmHexes, getAllValidFarmSpots, canStartTempleUpgrade, startTempleUpgrade,
   canBuildRoad, buildRoadPath, getValidRoadHexes, isLegalRoadTile, canPillageRoad, pillageRoad,
   canClaimFertileSite, claimFertileSite,
-  getUnlockedUnits, getPopulationCap, getPopulationCount,
+  getUnlockedUnits, getPopulationCap, getPopulationCount, getUnitCommandCost,
   getEffectiveRange, getEffectiveAttack, getEffectiveDefense, getEffectiveSpeed,
   calculateEncirclement, isForestUnitRevealed, endTurn,
   getUnitTypeMultiplier,
@@ -36,7 +36,12 @@ export { evaluateState, evaluateStateDetailed, AI_EVAL_WEIGHTS, MATE_SCORE };
 // the resulting import cycle is safe in practice (a common, well-supported
 // pattern for two tightly-coupled modules — see aiSearch.ts's own header
 // comment for the layering this preserves everywhere else).
-import { searchBestAction, searchBestActivation, applyAiAction, generateCandidateActions, SEARCH_CONFIG, type AiAction } from './aiSearch';
+import { searchBestAction, searchBestActivation, applyAiAction, generateCandidateActions, SEARCH_CONFIG, searchOn, type AiAction } from './aiSearch';
+import {
+  activeGenome, withGenome, branchChoice, MIX_SLOTS,
+  type AiGenome, type FactionGenes,
+} from './aiGenome';
+import { LEVEL_GENOMES } from './aiGenomes';
 
 export interface AIAction {
   type: 'spawn' | 'move' | 'attack' | 'move+attack' | 'upgrade';
@@ -48,12 +53,25 @@ export interface AIAction {
 // Single canonical source of truth for AI strength — replaces the old
 // `hard: boolean` split. Every difficulty-dependent decision anywhere in this
 // file reads from an AiDifficultyConfig, never a raw string/bool comparison.
-export type AiDifficulty = 'easy' | 'normal' | 'hard' | 'expert';
+export type AiDifficulty = 'easy' | 'medium' | 'hard';
+export const AI_DIFFICULTIES: readonly AiDifficulty[] = ['easy', 'medium', 'hard'];
+
+// Saves, rooms and API clients from before the three-level split may still
+// say 'normal' (now Medium) or 'expert' (folded into Hard).
+export function normalizeDifficulty(d: unknown): AiDifficulty {
+  if (d === 'easy') return 'easy';
+  if (d === 'hard' || d === 'expert') return 'hard';
+  return 'medium';
+}
 
 export interface AiDifficultyConfig {
   // Chance of taking the 2nd/3rd-best legal candidate instead of the best —
   // always still a REASONABLE legal move, never a random/self-destructive one.
   randomness: number;
+  // Play the whole game: research, Farms/Roads/Temple upgrades, pillaging,
+  // and the genome's army mix. Every level does — the levels differ in how
+  // well, not in which parts of the game they use.
+  economy: boolean;
   // Save Energy toward the next research/Temple-upgrade goal instead of
   // spending down to 0 on recruits every round (see computeReservation).
   useResourceReservation: boolean;
@@ -73,29 +91,49 @@ export interface AiDifficultyConfig {
   searchDepth: number;
 }
 
+// Hard's candidateLimit is a ceiling — the genome's `lookahead` gene picks
+// the actual width (see difficultyConfig).
 export const AI_DIFFICULTY: Record<AiDifficulty, AiDifficultyConfig> = {
-  easy:   { randomness: 0.35, useResourceReservation: false, useThreatMap: false, useStrategicPlanning: false, candidateLimit: 1, searchDepth: 0 },
-  normal: { randomness: 0.15, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: false, candidateLimit: 1, searchDepth: 0 },
-  hard:   { randomness: 0.04, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 3, searchDepth: 1 },
-  expert: { randomness: 0,    useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 6, searchDepth: 2 },
+  easy:   { randomness: 0.35, economy: true, useResourceReservation: false, useThreatMap: false, useStrategicPlanning: false, candidateLimit: 1, searchDepth: 0 },
+  medium: { randomness: 0.2,  economy: true, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: false, candidateLimit: 1, searchDepth: 0 },
+  hard:   { randomness: 0,    economy: true, useResourceReservation: true,  useThreatMap: true,  useStrategicPlanning: true,  candidateLimit: 6, searchDepth: 1 },
 };
 
+// The difficulty's config narrowed by the genome in effect — a genome can
+// switch planning/lookahead off, but never exceed what the difficulty allows.
+export function difficultyConfig(d: AiDifficulty): AiDifficultyConfig {
+  const base = AI_DIFFICULTY[d];
+  const t = activeGenome().tactics;
+  if (base.searchDepth === 0) return { ...base, useStrategicPlanning: base.useStrategicPlanning && t.planning >= 0.5 };
+  return {
+    ...base,
+    useStrategicPlanning: base.useStrategicPlanning && t.planning >= 0.5,
+    candidateLimit: Math.max(1, Math.round(t.lookahead)),
+    searchDepth: t.lookahead >= 1 ? base.searchDepth : 0,
+  };
+}
+
 export function difficultyLabel(d: AiDifficulty): string {
-  return d === 'easy' ? 'Easy AI' : d === 'normal' ? 'Normal AI' : d === 'hard' ? 'Hard AI' : 'Expert AI';
+  return d === 'easy' ? 'Easy AI' : d === 'medium' ? 'Medium AI' : 'Hard AI';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Best-Strategy AI
 //
-// Four difficulties (see AiDifficulty/AI_DIFFICULTY) share one engine-routed
-// core via runAiTurn(state, difficulty, aiPlayerId?):
-//   • easy   — no reservation/threat-map/planning, high randomness.
-//   • normal — resource reservation + threat-aware movement, low randomness.
-//   • hard   — + a per-turn strategic plan bias, minimal randomness.
-//   • expert — + a shallow cloned-state lookahead on its top move candidates.
-// All four ALWAYS spend equal Energy/Command/production/movement/costs and
-// see only what's actually visible to that AI player — every difference is
-// decision quality, never a hidden advantage.
+// Three difficulties (see AiDifficulty/AI_DIFFICULTY) share one engine-routed
+// core via runAiTurn(state, difficulty, aiPlayerId?, genome?). Each is a
+// config (how carefully it plays) plus a genome (what it plays: army mix,
+// research order, economy, aggression, move weights — see aiGenome.ts),
+// evolved by self-play (ai-evolve/) and stored in aiGenomes.ts:
+//   • easy   — no saving, no threat map, frequent second-best moves.
+//   • medium — saves for its goals and reads threats, some randomness.
+//   • hard   — the evolved genome with no randomness; may use the strategic
+//              plan, lookahead and tactical search if its genome switches
+//              them on.
+// Every level plays the whole game — every unit type, tech, Farm/Road/
+// Temple action — and all ALWAYS spend equal Energy/Command/production/
+// movement/costs and see only what's actually visible to that AI player —
+// every difference is decision quality, never a hidden advantage.
 //
 // CONSISTENCY: every move/attack/spawn/capture/upgrade/research/teleport goes
 // through the SAME src/game.ts mutators the human UI and the headless action
@@ -117,6 +155,12 @@ const SUPPORT_TYPES = new Set<UnitType>(['healer', 'damageBooster', 'rangeBooste
 const isSupport = (t: UnitType): boolean => SUPPORT_TYPES.has(t);
 // §16 — line-fighting/melee-adjacent classes that should screen the backline.
 const FRONTLINE_TYPES = new Set<UnitType>(['warrior', 'spearsman', 'horserider', 'heavyknight']);
+
+// The genome in effect for this turn (see aiGenome.ts / runAiTurn).
+function genesFor(state: GameState, aiPlayerId: number): FactionGenes {
+  return activeGenome()[state.players[aiPlayerId]?.faction ?? 'agrar'];
+}
+const tactics = () => activeGenome().tactics;
 
 // ── AI observer hook (additive; ZERO behavior when unset) ────────────────────
 // Used ONLY by the ML behavioural-cloning recorder (ml/bcRecord.ts). When an
@@ -230,7 +274,8 @@ export function scoreMoveHex(
   // moves are already vetoed hard elsewhere (chooseBestCandidateByLookahead's
   // explicit lethal-exposure penalty), so this only needs to be a real
   // driver of progress, not a suicidal one.
-  let s = objective ? -hexDistance(dest, objective) * 4 : 0;
+  const T = tactics();
+  let s = objective ? -hexDistance(dest, objective) * T.objectivePull : 0;
   // Extra penalty for ACTIVELY GIVING UP ground toward the objective, on
   // top of the plain distance term above — found by tracing a real,
   // continuing oscillation directly: even at 4x weighting, a unit would
@@ -246,17 +291,17 @@ export function scoreMoveHex(
   if (objective) {
     const currentDist = hexDistance(unit.pos, objective);
     const destDist = hexDistance(dest, objective);
-    if (destDist > currentDist) s -= (destDist - currentDist) * 6;
+    if (destDist > currentDist) s -= (destDist - currentDist) * T.retreatPenalty;
   }
   const rng = unit.stats.range + (state.hills.has(hexKey(dest)) && unit.stats.range > 1 ? 1 : 0);
   for (const e of enemies) {
     const d = hexDistance(dest, e.pos);
     if (d >= 1 && d <= rng) {
       const kill = estimateDamage(state, unit, e) >= e.hp;
-      s += (kill ? 60 : 12) + unitValue(e.type);
+      s += (kill ? T.killBonus : T.hitBonus) + unitValue(e.type);
     }
   }
-  if (state.hills.has(hexKey(dest))) s += 1.5; // prefer defensible terrain
+  if (state.hills.has(hexKey(dest))) s += T.hillBonus; // prefer defensible terrain
   // §16-17 — formation as a scoring PREFERENCE, never a hard constraint
   // (a better kill/objective always wins if one exists): a squishy
   // backline unit (archer/siege) scores a hex worse the closer it lands
@@ -267,7 +312,7 @@ export function scoreMoveHex(
   // actually screening them, not leaving them exposed out front.
   if ((unit.type === 'archer' || unit.type === 'catapult') && enemies.length > 0) {
     const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
-    if (nearestEnemyDist < rng) s -= (rng - nearestEnemyDist) * 2;
+    if (nearestEnemyDist < rng) s -= (rng - nearestEnemyDist) * T.backlineShy;
   }
   if (FRONTLINE_TYPES.has(unit.type) && enemies.length > 0) {
     const nearestEnemyDist = Math.min(...enemies.map(e => hexDistance(dest, e.pos)));
@@ -277,11 +322,41 @@ export function scoreMoveHex(
     if (backline.length > 0) {
       const avgBacklineDist = backline.reduce((sum, b) =>
         sum + Math.min(...enemies.map(e => hexDistance(b.pos, e.pos))), 0) / backline.length;
-      if (nearestEnemyDist < avgBacklineDist) s += 2;
+      if (nearestEnemyDist < avgBacklineDist) s += T.screenBonus;
     }
   }
-  if (threatMap) s -= (threatMap.get(hexKey(dest)) ?? 0) * 1.5;
+  if (threatMap) s -= (threatMap.get(hexKey(dest)) ?? 0) * T.threatWeight;
+  // Recruits deploy ONTO the Capital/Temple hex, one per round and only while
+  // it's empty — a unit parked there (a guard, a catapult shooting from home)
+  // silently stops all production. Guard from next door instead.
+  if (isOwnSpawnHex(state, aiPlayerId, dest)) s -= SPAWN_HEX_PENALTY;
   return s;
+}
+
+const SPAWN_HEX_PENALTY = 30;
+function isOwnSpawnHex(state: GameState, aiPlayerId: number, hex: HexCoord): boolean {
+  return getOwnedStructures(state, aiPlayerId).some(s => hexEqual(s.pos, hex));
+}
+
+// End-of-turn: anyone still standing on one of this player's spawn hexes
+// with their move unused steps off (attacking first is fine — the move/attack
+// order is free), so next round's recruit can deploy and this turn's last
+// recruiting pass isn't skipped.
+function clearSpawnHexes(state: GameState, aiPlayerId: number, cfg: AiDifficultyConfig, actions: AIAction[]): void {
+  for (const structure of getOwnedStructures(state, aiPlayerId)) {
+    const unit = getUnitAt(state, structure.pos);
+    if (!unit || unit.playerId !== aiPlayerId || unit.hasMoved || state.phase !== 'playing') continue;
+    if (!select(state, unit)) continue;
+    const objective = pickObjective(state, unit, aiPlayerId, null, cfg);
+    const enemies = revealedEnemies(state, aiPlayerId);
+    const dest = bestBy(state.moveHexes.filter(h => !isOwnSpawnHex(state, aiPlayerId, effectiveDest(state, h))),
+      h => scoreMoveHex(state, unit, aiPlayerId, h, objective, enemies, null));
+    if (!dest) continue;
+    observe(state, 'move', { unitId: unit.id, to: dest });
+    if (moveUnit(state, dest).moved) {
+      actions.push({ type: 'move', pos: { ...unit.pos }, description: `AI ${unit.type} clears the recruiting hex` });
+    }
+  }
 }
 
 // Select a unit and expose the engine-computed highlight sets (moveHexes /
@@ -408,7 +483,6 @@ const GARRISON_RADIUS = 3;
 // showed a single early unit routinely being sent clear across a 14-hex-
 // apart map alone; a real player masses up first. Generic (applies to any
 // faction/matchup) — this is decision-quality, not a per-faction special case.
-const MIN_ARMY_TO_ATTACK = 4;
 const RALLY_SLACK = 2; // how much further than GARRISON_RADIUS still counts as "near home"
 
 // A garrison assignment that only lasted for the ONE turn it was picked
@@ -496,8 +570,12 @@ function claimNearestOpenSite<T extends { id: string; pos: HexCoord }>(
     const mine = openSites.find(s => s.id === myClaimId);
     if (mine) return mine;
   }
+  // One claimant per site. Falling back to an already-claimed site sent the
+  // WHOLE army (Builder included) to the same contested site whenever every
+  // open site had a claimant — in the Agrar mirror, an enemy-held Fertile
+  // Site became every unit's objective for the rest of the game.
   const unclaimed = openSites.filter(s => !claims.has(s.id));
-  const target = bestBy(unclaimed.length > 0 ? unclaimed : openSites, s => -hexDistance(unit.pos, s.pos));
+  const target = bestBy(unclaimed, s => -hexDistance(unit.pos, s.pos));
   if (target) claims.set(target.id, unit.id);
   return target;
 }
@@ -577,14 +655,14 @@ function chooseReservePosition(state: GameState, aiPlayerId: number, capitalPos:
 
 // How good is actually pursuing this objective, right now? Finds the
 // unit's best move toward it (the exact same scoreMoveHex ranking
-// actCombatUnit itself uses for the real move) and — for Hard/Expert —
+// actCombatUnit itself uses for the real move) and — for Hard —
 // the resulting whole-state evaluateState() score from actually
 // simulating that move, via the same chooseBestCandidateByLookahead
 // machinery already used to pick between move candidates. Used below to
 // let besiege-the-enemy-structure and hunt-the-weakest-enemy settle by
 // comparing actual simulated outcomes instead of a fixed priority order
 // with a hand-tuned distance margin — the fixed order still exists as the
-// fallback for Normal/Easy (cfg.searchDepth === 0), which don't get this
+// fallback for Medium/Easy (cfg.searchDepth === 0), which don't get this
 // heavier evaluation.
 // Reward an objective the army is ALREADY converging on. Found by tracing a
 // genuine stalemate directly: a lone attacker kept probing a heavily
@@ -613,6 +691,64 @@ function scoreObjectiveCandidate(
       - scoreMoveHex(state, unit, aiPlayerId, a, objective, enemies, null));
   const best = chooseBestCandidateByLookahead(state, unit, aiPlayerId, ranked.slice(0, cfg.candidateLimit), cfg.searchDepth);
   return (best?.score ?? evaluateState(state, aiPlayerId)) + massBonus(state, unit, aiPlayerId, objective);
+}
+
+// Raid duty (genome `raiders`): up to that many fast units go after the
+// enemy's economy — Farms and Temples on hexes this player has explored —
+// instead of marching with the army. A unit keeps the job until it dies or
+// there is nothing left to raid.
+// Raids and pressing are the deciding player's own strategy — search also
+// predicts the OPPONENT's replies through pickObjective, and there they must
+// stay plain tactics (a simulated enemy "leaving to raid" mid-fight would
+// make every exchange look safer than it is).
+let decidingPlayer: number | null = null;
+
+const raidMemory = new WeakMap<GameState, Map<number, Set<string>>>();
+function raidTarget(state: GameState, unit: Unit, aiPlayerId: number, genes: FactionGenes): HexCoord | null {
+  if (aiPlayerId !== decidingPlayer || genes.raiders <= 0 || isSupport(unit.type) || unit.type === 'founder') return null;
+  let byPlayer = raidMemory.get(state);
+  if (!byPlayer) { byPlayer = new Map(); raidMemory.set(state, byPlayer); }
+  let raiders = byPlayer.get(aiPlayerId);
+  if (!raiders) { raiders = new Set(); byPlayer.set(aiPlayerId, raiders); }
+  for (const id of [...raiders]) if (!state.units.some(u => u.id === id && u.hp > 0)) raiders.delete(id);
+  const explored = state.explored[aiPlayerId];
+  const targets = [
+    ...state.farms.filter(f => f.ownerId !== aiPlayerId).map(f => f.pos),
+    ...state.strategicSites.filter(s => s.ownerId !== null && s.ownerId !== aiPlayerId && s.state !== 'ruins').map(s => s.pos),
+  ].filter(p => explored?.has(hexKey(p)));
+  if (targets.length === 0) { raiders.clear(); return null; }
+  if (!raiders.has(unit.id)) {
+    if (raiders.size >= genes.raiders || getEffectiveSpeed(state, unit) < 2) return null;
+    if (getGarrisonMemory(state, aiPlayerId).has(unit.id)) return null;
+    raiders.add(unit.id);
+  }
+  return bestBy(targets, p => -hexDistance(unit.pos, p));
+}
+
+// Is the fighting army big enough to leave home? Measured in Command — the
+// genome's attackAtPop share of the current cap.
+function armyReady(state: GameState, aiPlayerId: number, genes: FactionGenes, combat: Unit[]): boolean {
+  const faction = state.players[aiPlayerId]?.faction;
+  const command = combat.reduce((s, u) => s + getUnitCommandCost(u.type, faction), 0);
+  return command >= genes.attackAtPop * getPopulationCap(state, aiPlayerId);
+}
+
+// Press (genome `pressRatio`): once the army is ready (armyReady) and
+// outweighs everything visible of the enemy's by pressRatio (cost x
+// health), stop chasing units and march on the Capital. With the genome's
+// siegeCapital switch on, siege units head there as soon as it's ready.
+function pressTarget(state: GameState, unit: Unit, aiPlayerId: number, genes: FactionGenes, combat: Unit[]): HexCoord | null {
+  if (aiPlayerId !== decidingPlayer || isSupport(unit.type) || unit.type === 'founder' || !armyReady(state, aiPlayerId, genes, combat)) return null;
+  const capital = bestBy(state.capitals.filter(c => c.playerId !== aiPlayerId && c.hp > 0), c => -hexDistance(unit.pos, c.pos));
+  if (!capital) return null;
+  if (genes.siegeCapital >= 0.5 && unit.type === 'catapult') return capital.pos;
+  const faction = state.players[aiPlayerId]?.faction;
+  const mine = combat.reduce((s, u) => s + getUnitCost(u.type, faction) * (u.hp / u.stats.maxHp), 0);
+  const theirs = revealedEnemies(state, aiPlayerId)
+    .filter(e => !isSupport(e.type) && e.type !== 'founder')
+    .reduce((s, e) => s + getUnitCost(e.type, state.players[e.playerId]?.faction) * (e.hp / e.stats.maxHp), 0);
+  if (mine < genes.pressRatio * theirs) return null;
+  return capital.pos;
 }
 
 export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, plan: AiPlan | null = null, cfg: AiDifficultyConfig = AI_DIFFICULTY.easy): HexCoord | null {
@@ -660,7 +796,7 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
     // "how many more do we actually need" — it counts real credible threats
     // instead of blanket-escalating the garrison further, which would just
     // lock down units the reserve system might not find necessary at all.
-    const desiredGuards = capital.hp < capital.maxHp ? 2 : 1;
+    const desiredGuards = tactics().guards + (capital.hp < capital.maxHp ? 1 : 0);
     if (garrison.size < desiredGuards) {
       const closest = bestBy(combatUnitsAll.filter(u => !garrison.has(u.id)), u => -hexDistance(u.pos, capital.pos));
       if (closest) {
@@ -715,8 +851,8 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
   // reacting only once a structure is already in imminent reach (step 1
   // below still exists as a fallback). Dynamically sized and released the
   // moment it's no longer justified — see findCredibleMobilityThreats.
-  // Hard/Expert only (`plan` is null below that tier, see
-  // chooseStrategicPlan/AI_DIFFICULTY.useStrategicPlanning) — Normal keeps
+  // Hard only (`plan` is null below that tier, see
+  // chooseStrategicPlan/AI_DIFFICULTY.useStrategicPlanning) — Medium keeps
   // its existing simpler "one guard, once threatened" behavior from the
   // garrison step above; this is the more expensive, anticipatory layer.
   if (plan !== null && capital && combatUnitsAll.length > 0) {
@@ -765,6 +901,13 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
     if (defenderValue < threatValue) return s.pos;
   }
 
+  // Raid duty and pressing the Capital (both genome-driven, see below).
+  const genes = genesFor(state, aiPlayerId);
+  const raid = raidTarget(state, unit, aiPlayerId, genes);
+  if (raid) return raid;
+  const press = pressTarget(state, unit, aiPlayerId, genes, combatUnitsAll);
+  if (press) return press;
+
   // RAID_ECONOMY plan — a Raider heading for an exposed enemy Farm takes
   // priority over the general besiege/hunt chain below.
   if (plan === 'RAID_ECONOMY' && unit.type === 'horserider') {
@@ -773,12 +916,12 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
     if (farm) return farm.pos;
   }
 
-  // Mass before attacking: below MIN_ARMY_TO_ATTACK combat units, don't
+  // Mass before attacking: until the army fills the genome's attackAtPop share of Command, don't
   // trickle this one deep into enemy territory alone — rally back toward
   // home instead, overriding even an already-remembered offensive target
   // (an army that just took losses should regroup, not keep splintering).
   // Already-close units are left alone (nothing to rally back FROM). A hard
-  // gate for EVERY difficulty, including the Hard/Expert evaluation branch
+  // gate for EVERY difficulty, including the Hard evaluation branch
   // below — an early attempt let "rally home" compete freely against
   // besiege/hunt via scoreObjectiveCandidate, but a 1-2 ply evaluation has
   // no way to see the multi-turn value of massing up first, and a lone
@@ -792,13 +935,13 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
   // progress, never something regrouping "preserves". Observed directly: a
   // small army would reach a critically damaged enemy Capital (built Roads
   // the whole way there) and then just turn around and go home because its
-  // total unit count never crossed MIN_ARMY_TO_ATTACK, abandoning an
+  // army never filled its attackAtPop share, abandoning an
   // almost-won siege indefinitely while the opponent used the free time to
   // reinforce. A real player finishes a nearly-dead Capital regardless of
   // how "thin" their force feels in the moment.
   const finishableCapital = state.capitals.find(c =>
     c.playerId !== aiPlayerId && c.hp / c.maxHp < 0.5 && hexDistance(unit.pos, c.pos) <= 8);
-  if (capital && !finishableCapital && combatUnitsAll.length < MIN_ARMY_TO_ATTACK
+  if (capital && !finishableCapital && !armyReady(state, aiPlayerId, genes, combatUnitsAll)
     && hexDistance(unit.pos, capital.pos) > GARRISON_RADIUS + RALLY_SLACK) {
     return capital.pos;
   }
@@ -829,7 +972,7 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
   const nearestStructure = siegeCapital ?? bestBy(enemyStructures, s => -hexDistance(unit.pos, s.pos));
   const enemyTarget = weakestEnemyTarget(state, unit, aiPlayerId);
 
-  // Hard/Expert: rather than settle "besiege vs hunt" with a fixed priority
+  // Hard: rather than settle "besiege vs hunt" with a fixed priority
   // order and a hand-tuned distance margin, gather both genuine candidates
   // and let simulated outcomes (scoreObjectiveCandidate) decide which is
   // actually better right now — this is the one part of pickObjective that
@@ -839,7 +982,7 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
   // decision is already made above (a hard gate, not a comparison): a 1-2
   // ply evaluation has no way to see the multi-turn value of massing up
   // first, and a lone unit heading home always looks safer in the moment
-  // regardless of whether there's an actual reason to retreat. Normal/Easy
+  // regardless of whether there's an actual reason to retreat. Medium/Easy
   // keep the original fixed-margin logic below unchanged (cfg.searchDepth
   // === 0 for both).
   if (cfg.searchDepth > 0 && (nearestStructure || enemyTarget)) {
@@ -865,8 +1008,7 @@ export function pickObjective(state: GameState, unit: Unit, aiPlayerId: number, 
   // such hesitation converging on OUR Capital. Require the individual
   // target to be MEANINGFULLY closer, not just closer-or-equal, before
   // preferring it over the structure.
-  const STRUCTURE_COMMIT_MARGIN = 3;
-  if (nearestStructure && structureDist <= enemyDist + STRUCTURE_COMMIT_MARGIN) {
+  if (nearestStructure && structureDist <= enemyDist + tactics().commitMargin) {
     memory.set(unit.id, { kind: 'structure', id: nearestStructure.id });
     return nearestStructure.pos;
   }
@@ -887,7 +1029,7 @@ function tryAttackStructure(state: GameState, unit: Unit, difficulty: AiDifficul
   const scored = bestBy(hexes, h => {
     const ref = getStructureAt(state, h);
     if (!ref) return -Infinity;
-    if (ref.kind === 'capital') return 1000 - ref.capital.hp;
+    if (ref.kind === 'capital') return 500 * tactics().capitalFocus + 500 - ref.capital.hp;
     if (ref.kind === 'farm') return 200 - ref.farm.hp;
     return 500 - ref.site.hp;
   });
@@ -899,7 +1041,7 @@ function tryAttackStructure(state: GameState, unit: Unit, difficulty: AiDifficul
   return true;
 }
 
-// Expert's shallow lookahead: simulate each candidate move on a CLONED state
+// The shallow lookahead (Hard, genome `lookahead` > 0): simulate each candidate move on a CLONED state
 // (the live state is never touched here) and re-rank by the resulting
 // evaluateState() score, penalized by how exposed the landing hex is to
 // enemy threat right after the move — a cheap stand-in for "the opponent's
@@ -957,13 +1099,13 @@ function chooseBestCandidateByLookahead(
       if (!simUnit) continue;
       selectUnit(sim, simUnit.id);
       if (!moveUnit(sim, hex).moved) continue;
-      // depth >= 2 (Expert): actually simulate the single most threatening
+      // depth >= 2: actually simulate the single most threatening
       // enemy reply before scoring, not just a static post-move threat read.
       if (depth >= 2) applyBestEnemyReply(sim, aiPlayerId);
       const postThreat = computeThreatMap(sim, aiPlayerId).get(hexKey(simUnit.pos)) ?? 0;
       const lethalExposure = simUnit.hp > 0 && anyEnemyHasLethalShot(sim, simUnit, aiPlayerId);
-      let score = evaluateState(sim, aiPlayerId) - postThreat * 2;
-      if (lethalExposure) score -= getUnitCost(simUnit.type, sim.players[aiPlayerId]?.faction) * 4;
+      let score = evaluateState(sim, aiPlayerId) - postThreat * tactics().lookaheadThreat;
+      if (lethalExposure) score -= getUnitCost(simUnit.type, sim.players[aiPlayerId]?.faction) * tactics().lethalExposure;
       if (score > bestScore) { bestScore = score; best = hex; }
     } catch { /* a failed simulation just drops this one candidate */ }
   }
@@ -1004,12 +1146,12 @@ function hasTacticalContent(state: GameState, unit: Unit, aiPlayerId: number, di
 // move/attack candidate, since generateCandidateActions doesn't know about
 // any of them.
 function isEligibleForActivationSearch(state: GameState, unit: Unit, aiPlayerId: number, difficulty: AiDifficulty): boolean {
-  const cfg = AI_DIFFICULTY[difficulty];
+  const cfg = difficultyConfig(difficulty);
   const player = state.players.find(p => p.id === aiPlayerId);
   if (unit.type === 'founder' && player?.faction === 'agrar') return false;
   if (canStartFounding(state, unit)) return false;
   if (canClaimFertileSite(state, unit)) return false;
-  if (cfg.useResourceReservation && canPillageRoad(state, unit)) return false;
+  if (cfg.economy && canPillageRoad(state, unit)) return false;
   return hasTacticalContent(state, unit, aiPlayerId, difficulty);
 }
 
@@ -1071,8 +1213,8 @@ function actCombatUnit(
   turnSearchDeadline: number = Infinity,
 ): void {
   if (state.phase !== 'playing' || unit.hp <= 0) return;
-  const cfg = AI_DIFFICULTY[difficulty];
-  const advanced = cfg.useResourceReservation; // "normal and above" — matches the old hard-only gate for these
+  const cfg = difficultyConfig(difficulty);
+  const advanced = cfg.economy;
 
   // Founding/reconstructing a neutral/ruined site it's standing on (no-op —
   // canStartFounding returns null — for every other case, e.g. an active
@@ -1096,7 +1238,7 @@ function actCombatUnit(
   }
 
   // v14 — pillage an enemy Road the unit happens to be standing on, rather
-  // than leave it for a later, separate move (Normal+ — a simple
+  // than leave it for a later, separate move (Medium+ — a simple
   // opportunistic check, not a dedicated demolition planner).
   if (advanced && canPillageRoad(state, unit)) {
     observe(state, 'pillage-road', { unitId: unit.id });
@@ -1255,7 +1397,7 @@ function actCombatUnit(
   if (unit.hasAttacked) return;
   if (!select(state, unit)) return;
 
-  // Hard/Expert — let real search choose this unit's whole activation
+  // Hard — let real search choose this unit's whole activation
   // (attack-now / move / move+attack / retreat / hold) whenever THIS unit
   // specifically has real tactical content to weigh, rather than the fixed
   // heuristic priority order below. evaluateState has no notion of "closer
@@ -1274,7 +1416,7 @@ function actCombatUnit(
   // difficulty, finds nothing, or (defensively) throws — never a stall or
   // a skipped activation.
   const remainingTurnBudget = turnSearchDeadline - Date.now();
-  if (SEARCH_CONFIG[difficulty].enabled && remainingTurnBudget > 0 && hasTacticalContent(state, unit, aiPlayerId, difficulty)) {
+  if (searchOn(difficulty) && remainingTurnBudget > 0 && hasTacticalContent(state, unit, aiPlayerId, difficulty)) {
     try {
       const outcome = searchBestAction(state, unit, aiPlayerId, difficulty, [], remainingTurnBudget);
       if (outcome && applySearchAction(state, unit, aiPlayerId, difficulty, outcome.action, actions)) return;
@@ -1303,11 +1445,11 @@ function actCombatUnit(
       scoreMoveHex(state, unit, aiPlayerId, hex, objective, enemies, threatMap);
 
     const rankedHexes = [...moveHexes].sort((a, b) => scoreHex(b) - scoreHex(a));
-    // Hard/Expert — shallow lookahead: rather than trust the heuristic's top
+    // Hard — shallow lookahead: rather than trust the heuristic's top
     // pick outright, actually simulate the top `candidateLimit` candidates on
     // a CLONED state (never the live one) and re-rank by the resulting
     // evaluateState() score, an explicit "would this hand the opponent a
-    // guaranteed kill" check, and (Expert, searchDepth>=2 only) the single
+    // guaranteed kill" check, and (searchDepth>=2 only) the single
     // most threatening enemy reply actually simulated — not a full
     // recursive search.
     const scored = cfg.searchDepth > 0
@@ -1377,7 +1519,7 @@ function actSupportUnit(state: GameState, unit: Unit, aiPlayerId: number, action
       const d = hexDistance(pos, e.pos);
       if (d <= 1) danger += 3; else if (d <= 2) danger += 1;
     }
-    return value * 2 - danger * 3;
+    return value * tactics().supportValue - danger * tactics().supportDanger;
   };
 
   let bestHex: HexCoord | null = null;
@@ -1397,60 +1539,40 @@ function actSupportUnit(state: GameState, unit: Unit, aiPlayerId: number, action
 
 // ── Economy (hard AI) ──
 
-// Coherent tech build: siege core, a force-multiplier support unit, then
-// splash and the elite/anti-cavalry line (which now needs its prerequisite
-// first — see TECH_NODES). Siege/elite lines are faction-specific (phase 11
-// §33-34); canResearch also enforces branch exclusivity and faction gating,
-// so unreachable picks are skipped automatically.
-// command_1 is deliberately FIRST, ahead of the siege/support techs it used
-// to follow: the starting population cap (6 command points) saturates with
-// cheap 1-cost Warriors/Spearsmen within the first ~20 rounds, well before
-// any of the pricier unlocks (Catapult/Heavy Knight/support) finish
-// researching — so those units had no population room left to ever actually
-// get recruited, freezing the whole army composition at "all cheap melee"
-// for the rest of the game regardless of tech or aura. Command I is also the
-// cheapest, fastest item on either plan (12 aura, 1 round), so front-loading
-// it costs very little.
-const HARD_RESEARCH_PLAN: Record<'agrar' | 'temple', TechId[]> = {
-  agrar: [
-    'command_1',
-    'agrar_siegecraft',
-    'longrange_hp',
-    'unlock_damagebooster',
-    'agrar_siegecraft_splash',
-    'agrar_heavy_armor',
-    'agrar_heavy_knight_tech',
-  ],
-  temple: [
-    'command_1',
-    'temple_mobile_siege_tech',
-    'longrange_hp',
-    'unlock_damagebooster',
-    'temple_mobile_siege_splash',
-    'temple_warrior_rite',
-    'temple_champion_rite',
-  ],
-};
-
-// The AI's actual next savings/research goal: the first item on its
-// faction's priority-ordered plan whose PREREQS are already met (regardless
-// of whether it's currently affordable) — shared by doResearch (don't skip
-// ahead to a cheaper later item just because the priority one isn't
-// affordable yet) and computeReservation (save toward that same item).
+// Research order comes from the genome's per-tech priorities: the AI's next
+// savings/research goal is the highest-priority tech it could start once it
+// has the Energy (faction, prerequisites, branch and Command II's "two other
+// techs" rule all met) — shared by doResearch (don't skip ahead to a cheaper
+// tech just because the priority one isn't affordable yet) and
+// computeReservation (save toward that same tech). Every tech has a
+// priority, so given time the AI researches all of them; of each mutually
+// exclusive branch it takes the one rolled for this game (branchChoice).
+const COMMAND_2_OTHER_TECHS = 2;
 function nextPlannedTech(state: GameState, aiPlayerId: number): typeof TECH_NODES[number] | null {
   const player = state.players[aiPlayerId];
   const tech = state.playerTech[aiPlayerId];
   if (!player?.faction || !tech) return null;
-  for (const techId of HARD_RESEARCH_PLAN[player.faction]) {
-    if (tech.researched.has(techId)) continue;
-    const node = TECH_NODES.find(n => n.id === techId);
-    if (!node) continue;
-    const prereqsMet = node.prereqs.every(p => tech.researched.has(p as TechId))
-      && (!node.faction || node.faction === player.faction);
-    if (!prereqsMet) continue;
-    return node;
-  }
-  return null;
+  const genes = genesFor(state, aiPlayerId);
+  const support = branchChoice(state, aiPlayerId, 'support', genes);
+  const stat = branchChoice(state, aiPlayerId, 'stat', genes);
+  const reachable = TECH_NODES.filter(node => {
+    if (tech.researched.has(node.id)) return false;
+    if (node.faction && node.faction !== player.faction) return false;
+    if (node.branch === 'support' && node.id !== support) return false;
+    if (node.branch === 'stat_bonus' && node.id !== stat) return false;
+    if (!node.prereqs.every(p => tech.researched.has(p))) return false;
+    if (node.id === 'command_2') {
+      const others = [...tech.researched].filter(id => id !== 'command_1' && id !== 'command_2').length;
+      if (others < COMMAND_2_OTHER_TECHS) return false;
+    }
+    return true;
+  });
+  // A branch tech carries its branch's best priority: the genome decides how
+  // early to take "a support unit", the per-game roll decides which one.
+  const priority = (node: typeof TECH_NODES[number]): number => node.branch
+    ? Math.max(...TECH_NODES.filter(n => n.branch === node.branch).map(n => genes.tech[n.id] ?? 0))
+    : genes.tech[node.id] ?? 0;
+  return bestBy(reachable, priority);
 }
 
 function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
@@ -1471,7 +1593,9 @@ function doResearch(state: GameState, aiPlayerId: number, actions: AIAction[]): 
 // actCombatUnit instead (it's Builder-driven, not site-driven — see §6-9).
 function doEconomy(state: GameState, aiPlayerId: number, actions: AIAction[]): void {
   for (const site of getOwnedSites(state, aiPlayerId)) {
-    if (site.state === 'temple' && canStartTempleUpgrade(state, site.id)) {
+    const floor = genesFor(state, aiPlayerId).upgradeFloor;
+    if (site.state === 'temple' && canStartTempleUpgrade(state, site.id)
+      && state.players[aiPlayerId]!.aura - TEMPLE_UPGRADE_COST >= floor) {
       observe(state, 'upgrade-temple', { templeId: site.id });
       if (startTempleUpgrade(state, site.id)) {
         actions.push({ type: 'upgrade', pos: { ...site.pos }, description: `Hard AI starts Temple upgrade at (${site.pos.q},${site.pos.r})` });
@@ -1489,7 +1613,7 @@ function getOwnedSites(state: GameState, aiPlayerId: number) {
 // deleted so callers/imports don't need to change.
 function doTeleport(_state: GameState, _aiPlayerId: number, _actions: AIAction[]): void {}
 
-// ── Resource reservation (Normal+) ──────────────────────────────────────────
+// ── Resource reservation (Medium+) ──────────────────────────────────────────
 // The old "spend everything the instant it's affordable" behavior is
 // strategically wrong once research/Temple-upgrades exist: recruiting one
 // more cheap unit instead of saving 2 more rounds toward Command I (or
@@ -1529,7 +1653,11 @@ function computeFarmReservation(state: GameState, aiPlayerId: number): number {
   const player = state.players[aiPlayerId];
   if (player?.faction !== 'agrar') return 0;
   const farmCount = state.farms.filter(f => f.ownerId === aiPlayerId).length;
-  return farmCount < MAX_ACTIVE_FARMS ? AGRAR_FARM_COST : 0;
+  return farmCount < farmGoal(state, aiPlayerId) ? AGRAR_FARM_COST : 0;
+}
+
+function farmGoal(state: GameState, aiPlayerId: number): number {
+  return Math.min(MAX_ACTIVE_FARMS, genesFor(state, aiPlayerId).farmTarget);
 }
 
 // Emergencies override saving/planning — a Capital in real danger, or an
@@ -1576,7 +1704,7 @@ function hasEmergency(state: GameState, aiPlayerId: number): boolean {
   return false;
 }
 
-// ── Threat map (Normal+) ─────────────────────────────────────────────────────
+// ── Threat map (Medium+) ─────────────────────────────────────────────────────
 // A coarse spatial "how much could a visible enemy hurt me here" model, used
 // to weigh movement destinations (see actCombatUnit) instead of only scoring
 // distance-to-objective/attack-opportunity. Deliberately approximate — it's a
@@ -1686,7 +1814,7 @@ function planRoadArteryPath(state: GameState, unit: Unit, destination: HexCoord)
 // pickObjective instead of replacing it — the underlying tactical logic
 // (kill-first, defend-threatened, besiege, hunt-weakest) still runs
 // regardless of plan, this just changes which objective gets first refusal.
-// Search (Hard/Expert's searchBestAction/searchBestActivation) never even
+// Search (Hard's searchBestAction/searchBestActivation) never even
 // reads `plan` — its candidates are ranked purely by simulated
 // evaluateState outcomes — so a genuinely better tactical line ALWAYS wins
 // over whatever the macro-plan is biasing toward; `plan` only steers the
@@ -1758,11 +1886,10 @@ export function cloneStateForSim(state: GameState): GameState {
 
 // ── Recruiting ──
 
-function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<UnitType>, aura: number, advanced: boolean): UnitType | null {
+function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<UnitType>, aura: number): UnitType | null {
   const mine = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId);
   const queued = state.trainingQueue.filter(o => o.playerId === aiPlayerId);
   const count = (t: UnitType) => mine.filter(u => u.type === t).length + queued.filter(o => o.unitType === t).length;
-  const army = mine.length;
   const combat = mine.filter(u => !isSupport(u.type)).length;
   const faction = state.players[aiPlayerId]?.faction;
   const cost = (t: UnitType) => getUnitCost(t, faction);
@@ -1781,42 +1908,35 @@ function chooseSpawnType(state: GameState, aiPlayerId: number, unlocked: Set<Uni
   // to fill. Cheap (2⚡, 1 Command point) relative to the payoff; stops
   // being worth recruiting more of once Farms are maxed (a 3rd+ Builder
   // would just be idle Road/pillage-repair labor, not double economy).
+  const genes = genesFor(state, aiPlayerId);
   const farmCount = state.farms.filter(f => f.ownerId === aiPlayerId).length;
-  const desiredFounders = faction === 'agrar' && farmCount < MAX_ACTIVE_FARMS ? 2 : 1;
+  const desiredFounders = faction === 'agrar' && farmCount < farmGoal(state, aiPlayerId) ? genes.builders : 1;
   if (unlocked.has('founder') && count('founder') < desiredFounders && aura >= cost('founder')) {
     return 'founder';
   }
 
-  if (advanced) {
-    // Keep exactly one damage booster as a force multiplier once a core exists.
-    if (unlocked.has('damageBooster') && count('damageBooster') === 0 && combat >= 3 && aura >= cost('damageBooster')) {
-      return 'damageBooster';
-    }
-    // Buy the best affordable unit, but cap the priciest types so the army stays
-    // mixed (share = max fraction of the army that type may occupy).
-    const prefs: [UnitType, number][] = [
-      ['heavyknight', 0.35], ['catapult', 0.35], ['horserider', 0.5],
-      ['spearsman', 0.6], ['archer', 1], ['warrior', 1],
-    ];
-    for (const [t, maxShare] of prefs) {
-      if (!unlocked.has(t) || aura < cost(t)) continue;
-      if (count(t) > Math.ceil(army * maxShare)) continue;
-      return t;
-    }
-    if (unlocked.has('warrior') && aura >= cost('warrior')) return 'warrior';
-    return null;
-  }
-
-  // Easy AI: cheap, simple mix.
-  if (unlocked.has('horserider') && aura >= cost('horserider') && Math.random() < 0.3) return 'horserider';
-  if (unlocked.has('archer') && aura >= cost('archer') && Math.random() < 0.5) return 'archer';
-  if (unlocked.has('warrior') && aura >= cost('warrior')) return 'warrior';
-  if (unlocked.has('archer') && aura >= cost('archer')) return 'archer';
-  return null;
+  // Recruit toward the genome's target army mix: the unlocked type the
+  // army is furthest short of. Support units wait for a fighting core to
+  // stand behind. If the most-wanted type is unaffordable but within
+  // `patience` rounds of income, save for it instead of buying filler.
+  const slots = MIX_SLOTS.filter(t => unlocked.has(t) && (!isSupport(t) || combat >= 2));
+  const total = slots.reduce((s, t) => s + genes.mix[t], 0);
+  if (total <= 0) return null;
+  const fielded = slots.reduce((s, t) => s + count(t), 0);
+  // Every unlocked type gets fielded at least once (research isn't wasted,
+  // and the AI uses the whole roster); support once there are 3 fighters.
+  const missing = bestBy(slots.filter(t => count(t) === 0 && (!isSupport(t) || combat >= 3) && aura >= cost(t)), t => genes.mix[t]);
+  if (missing) return missing;
+  const ranked = [...slots].sort((a, b) =>
+    (genes.mix[b] / total) * (fielded + 1) - count(b) - ((genes.mix[a] / total) * (fielded + 1) - count(a)));
+  const wanted = ranked[0];
+  if (wanted && aura >= cost(wanted)) return wanted;
+  if (wanted && aura + getPlayerIncome(state, aiPlayerId) * genes.patience >= cost(wanted)) return null;
+  return ranked.find(t => aura >= cost(t)) ?? null;
 }
 
 function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficulty, actions: AIAction[]): void {
-  const cfg = AI_DIFFICULTY[difficulty];
+  const cfg = difficultyConfig(difficulty);
   const player = state.players[aiPlayerId]!;
   // §9-10 — resource reservation: don't recruit past the point of dropping
   // below the aura reserved for the AI's next research/Temple-upgrade goal
@@ -1830,7 +1950,10 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
   // "I'm 1 recruit away from also affording my tech goal next round" — never
   // "stockpile from turn one no matter how far away the goal is".
   const reservation = cfg.useResourceReservation ? computeReservation(state, aiPlayerId) : 0;
-  const withinReachNextRound = reservation > 0 && player.aura + getPlayerIncome(state, aiPlayerId) >= reservation;
+  const genes = genesFor(state, aiPlayerId);
+  const armySize = state.units.filter(u => u.hp > 0 && u.playerId === aiPlayerId && !isSupport(u.type) && u.type !== 'founder').length;
+  const withinReachNextRound = reservation > 0 && armySize >= genes.minArmyForTech
+    && player.aura + getPlayerIncome(state, aiPlayerId) * genes.saveHorizon >= reservation;
   // The Farm reservation (see computeFarmReservation) is NOT gated behind
   // "within reach" the same way — it's cheap enough that saving from turn
   // one never risks the "zero units for 10+ rounds" scenario the gate above
@@ -1853,7 +1976,7 @@ function spawnPass(state: GameState, aiPlayerId: number, difficulty: AiDifficult
     // aura beyond the Farm reservation" would be self-defeating (a 2nd
     // Builder recruit needing 2⚡ PLUS the already-reserved 6⚡ on top is a
     // much higher bar than the 2nd Builder actually needs to clear).
-    const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura, cfg.useResourceReservation);
+    const type = chooseSpawnType(state, aiPlayerId, unlocked, player.aura);
     if (!type) continue;
     if (effectiveFloor > 0 && !emergency && type !== 'founder') {
       const cost = getUnitCost(type, player.faction);
@@ -1872,13 +1995,12 @@ function runTurn(state: GameState, aiPlayerId: number, difficulty: AiDifficulty)
   const actions: AIAction[] = [];
   const player = state.players.find(p => p.id === aiPlayerId);
   if (!player || state.phase !== 'playing' || getCurrentPlayer(state).id !== aiPlayerId) return actions;
-  const cfg = AI_DIFFICULTY[difficulty];
+  const cfg = difficultyConfig(difficulty);
 
-  // 1. Economy (Normal+ — Easy keeps things simple and skips Farms/Temple-
-  // upgrades/research/teleport; its surplus aura goes straight to recruiting
-  // below). Resource reservation (spawnPass) means Normal+ won't necessarily
-  // spend everything down to 0 either — see computeReservation.
-  if (cfg.useResourceReservation) {
+  // 1. Economy — Temple upgrades and research. Resource reservation
+  // (spawnPass) means Medium+ won't necessarily spend everything down to 0
+  // either — see computeReservation; Easy spends as it goes.
+  if (cfg.economy) {
     doEconomy(state, aiPlayerId, actions);
     doResearch(state, aiPlayerId, actions);
     doTeleport(state, aiPlayerId, actions);
@@ -1895,7 +2017,7 @@ function runTurn(state: GameState, aiPlayerId: number, difficulty: AiDifficulty)
 
   // 3. Manoeuvre — combat units first (so support can then tuck in behind them).
   //
-  // Hard/Expert — before falling into the fixed per-unit order below,
+  // Hard — before falling into the fixed per-unit order below,
   // let search itself pick WHICH eligible unit acts next, not just what it
   // does (§ "who acts next", deliberately deferred until the single-unit
   // search — Phase 4-7 — was already measured working). Only kicks in when
@@ -1917,7 +2039,7 @@ function runTurn(state: GameState, aiPlayerId: number, difficulty: AiDifficulty)
   // stall, worst case just falls back to the heuristic path early.
   const turnSearchDeadline = Date.now() + SEARCH_CONFIG[difficulty].perTurnBudgetMs;
   const MAX_ACTIVATION_SEARCHES_PER_TURN = 3;
-  if (SEARCH_CONFIG[difficulty].enabled) {
+  if (searchOn(difficulty)) {
     for (let i = 0; i < MAX_ACTIVATION_SEARCHES_PER_TURN && state.phase === 'playing'; i++) {
       const remainingTurnBudget = turnSearchDeadline - Date.now();
       if (remainingTurnBudget <= 0) break;
@@ -1945,9 +2067,12 @@ function runTurn(state: GameState, aiPlayerId: number, difficulty: AiDifficulty)
     actSupportUnit(state, unit, aiPlayerId, actions);
   }
 
-  // 4. Recruit again (pass 2) — units have vacated their structures, so this is
-  //    the multi-spawn-per-structure pass that spends leftover aura (Normal+).
-  if (cfg.useResourceReservation && state.phase === 'playing') spawnPass(state, aiPlayerId, difficulty, actions);
+  // 4. Recruit again (pass 2) — units have vacated their structures (anyone
+  //    still parked on one steps off first), so this pass spends leftover aura.
+  if (cfg.economy && state.phase === 'playing') {
+    clearSpawnHexes(state, aiPlayerId, cfg, actions);
+    spawnPass(state, aiPlayerId, difficulty, actions);
+  }
 
   deselectAll(state);
   return actions;
@@ -1961,12 +2086,24 @@ function runTurn(state: GameState, aiPlayerId: number, difficulty: AiDifficulty)
 // essentially never chooses to recruit, so it builds no army at all. Left
 // disconnected deliberately (per the current task's scope) — do not wire it
 // back in until a checkpoint is retrained against the current rules AND the
-// current 4-tier difficulty split below: `import { runRLHardTurn } from
+// current 3-level difficulty split below: `import { runRLHardTurn } from
 // '../ml/botClient';` and call `runRLHardTurn(state, s =>
-// { runTurn(s, getCurrentPlayer(s).id, 'expert'); if (s.phase === 'playing') endTurn(s); })`.
+// { runTurn(s, getCurrentPlayer(s).id, 'hard'); if (s.phase === 'playing') endTurn(s); })`.
 //
 // Contract: mutate `state` with the AI's completed turn, return AIAction[]
 // for the combat log, and do NOT end the turn — the caller does that.
-export function runAiTurn(state: GameState, difficulty: AiDifficulty, aiPlayerId: number = getCurrentPlayer(state).id): AIAction[] {
-  return runTurn(state, aiPlayerId, difficulty);
+//
+// `genome` overrides the difficulty's own decision parameters (evolution
+// candidates are evaluated this way, see ai-evolve/).
+export function runAiTurn(state: GameState, difficulty: AiDifficulty, aiPlayerId: number = getCurrentPlayer(state).id, genome?: AiGenome): AIAction[] {
+  const prev = decidingPlayer;
+  decidingPlayer = aiPlayerId;
+  try {
+    return withGenome(genome ?? DIFFICULTY_GENOMES[difficulty], () => runTurn(state, aiPlayerId, difficulty));
+  } finally {
+    decidingPlayer = prev;
+  }
 }
+
+// Each level's evolved genome (generated — see ai-evolve/export.ts).
+const DIFFICULTY_GENOMES: Record<AiDifficulty, AiGenome> = LEVEL_GENOMES;

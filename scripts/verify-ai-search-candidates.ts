@@ -45,7 +45,7 @@ console.log('\n=== generateCandidateActions always includes the quiet "endActiva
   const cap = getPlayerCapital(state, 0)!;
   const unit = createUnit('warrior', 0, onMapChain(state, cap.pos, 2)[1]!, state.playerTech[0], 'agrar');
   state.units.push(unit);
-  const candidates = generateCandidateActions(state, unit, 0, 'expert');
+  const candidates = generateCandidateActions(state, unit, 0, 'hard');
   check('endActivation is present', candidates.some(c => c.kind === 'endActivation' && c.unitId === unit.id));
 }
 
@@ -56,7 +56,7 @@ console.log('\n=== a dead unit (hp <= 0) produces no actionable candidates ===')
   const unit = createUnit('warrior', 0, onMapChain(state, cap.pos, 2)[1]!, state.playerTech[0], 'agrar');
   unit.hp = 0;
   state.units.push(unit);
-  const candidates = generateCandidateActions(state, unit, 0, 'expert');
+  const candidates = generateCandidateActions(state, unit, 0, 'hard');
   check('only endActivation remains', candidates.length === 1 && candidates[0]!.kind === 'endActivation');
 }
 
@@ -67,7 +67,7 @@ console.log('\n=== a unit that already attacked produces no move/attack candidat
   const unit = createUnit('warrior', 0, onMapChain(state, cap.pos, 2)[1]!, state.playerTech[0], 'agrar');
   unit.hasAttacked = true;
   state.units.push(unit);
-  const candidates = generateCandidateActions(state, unit, 0, 'expert');
+  const candidates = generateCandidateActions(state, unit, 0, 'hard');
   check('no move/attack/moveAttack candidates for an already-spent unit',
     candidates.every(c => c.kind === 'endActivation'));
 }
@@ -81,7 +81,7 @@ console.log('\n=== a unit that already moved (but not attacked) can still attack
   attacker.hasMoved = true;
   const target = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   state.units.push(attacker, target);
-  const candidates = generateCandidateActions(state, attacker, 0, 'expert');
+  const candidates = generateCandidateActions(state, attacker, 0, 'hard');
   check('an in-range attack is offered', candidates.some(c => c.kind === 'attack' && hexEqual(c.targetPos, target.pos)));
   check('no move/moveAttack candidates once already moved',
     candidates.every(c => c.kind !== 'move' && c.kind !== 'moveAttack'));
@@ -95,25 +95,24 @@ console.log('\n=== a fresh unit with an adjacent enemy offers attack, move, and 
   const attacker = createUnit('warrior', 0, chain[1]!, state.playerTech[0], 'agrar');
   const target = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   state.units.push(attacker, target);
-  const candidates = generateCandidateActions(state, attacker, 0, 'expert');
+  const candidates = generateCandidateActions(state, attacker, 0, 'hard');
   check('a from-current-position attack is offered', candidates.some(c => c.kind === 'attack'));
   check('at least one move candidate is offered', candidates.some(c => c.kind === 'move'));
   check('endActivation is still offered alongside real options', candidates.some(c => c.kind === 'endActivation'));
 }
 
-console.log('\n=== candidate width respects SEARCH_CONFIG per difficulty (Expert >= Hard) ===');
+console.log('\n=== candidate width respects SEARCH_CONFIG per difficulty ===');
 {
   const state = setup();
   const cap = getPlayerCapital(state, 0)!;
   const unit = createUnit('horserider', 0, onMapChain(state, cap.pos, 2)[1]!, state.playerTech[0], 'agrar');
   state.units.push(unit);
   const hardCandidates = generateCandidateActions(state, unit, 0, 'hard');
-  const expertCandidates = generateCandidateActions(state, unit, 0, 'expert');
-  check('expert candidate pool is at least as wide as hard\'s',
-    expertCandidates.length >= hardCandidates.length,
-    `hard=${hardCandidates.length} expert=${expertCandidates.length}`);
-  check('SEARCH_CONFIG marks easy/normal as not search-enabled', !SEARCH_CONFIG.easy.enabled && !SEARCH_CONFIG.normal.enabled);
-  check('SEARCH_CONFIG marks hard/expert as search-enabled', SEARCH_CONFIG.hard.enabled && SEARCH_CONFIG.expert.enabled);
+  const moves = hardCandidates.filter(a => a.kind === 'move').length;
+  check('hard offers no more move candidates than its candidateWidth (+ the head-home move)',
+    moves <= SEARCH_CONFIG.hard.candidateWidth + 1, `moves=${moves}`);
+  check('SEARCH_CONFIG marks easy/medium as not search-enabled', !SEARCH_CONFIG.easy.enabled && !SEARCH_CONFIG.medium.enabled);
+  check('SEARCH_CONFIG marks hard as search-enabled', SEARCH_CONFIG.hard.enabled);
 }
 
 console.log('\n=== candidates never repeat the exact same action twice (dedup) ===');
@@ -124,7 +123,7 @@ console.log('\n=== candidates never repeat the exact same action twice (dedup) =
   const attacker = createUnit('archer', 0, chain[1]!, state.playerTech[0], 'agrar');
   const target = createUnit('warrior', 1, chain[2]!, state.playerTech[1], 'temple');
   state.units.push(attacker, target);
-  const candidates = generateCandidateActions(state, attacker, 0, 'expert');
+  const candidates = generateCandidateActions(state, attacker, 0, 'hard');
   const keys = candidates.map(c => JSON.stringify(c));
   check('no duplicate action entries', new Set(keys).size === keys.length, `count=${keys.length} unique=${new Set(keys).size}`);
 }
@@ -137,7 +136,7 @@ console.log('\n=== a "head toward home" retreat candidate is offered distinct fr
   // visible enemy" are guaranteed to diverge.
   const unit = createUnit('warrior', 0, onMapChain(state, cap.pos, 2)[1]!, state.playerTech[0], 'agrar');
   state.units.push(unit);
-  const candidates = generateCandidateActions(state, unit, 0, 'expert');
+  const candidates = generateCandidateActions(state, unit, 0, 'hard');
   const moveCandidates = candidates.filter(c => c.kind === 'move');
   check('at least one move candidate exists to evaluate', moveCandidates.length > 0);
   const capital = getPlayerCapital(state, 0)!;

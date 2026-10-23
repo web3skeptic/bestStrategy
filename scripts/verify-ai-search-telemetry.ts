@@ -7,8 +7,9 @@
 // Run with: npx tsx scripts/verify-ai-search-telemetry.ts
 import { createGameState, chooseFaction, getCurrentPlayer, endTurn } from '../src/game';
 import { runAiTurn } from '../src/ai';
+import { DEFAULT_GENOME } from '../src/aiGenome';
 import {
-  getSearchTelemetry, resetSearchTelemetry, setSearchObserver, type SearchTelemetryEvent,
+  getSearchTelemetry, resetSearchTelemetry, setSearchObserver, SEARCH_CONFIG, type SearchTelemetryEvent,
 } from '../src/aiSearch';
 
 let failures = 0;
@@ -17,12 +18,14 @@ function check(name: string, cond: boolean, detail?: string): void {
   else { failures++; console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-function playTurns(difficulty: 'hard' | 'expert', turns: number): void {
+// Search is a genome switch, and evolution may leave it off for the shipped
+// Hard genome — play with one that has it on (the defaults) to exercise it.
+function playTurns(difficulty: 'hard', turns: number): void {
   const state = createGameState();
   chooseFaction(state, 0, 'temple');
   chooseFaction(state, 1, 'temple');
   for (let i = 0; i < turns && state.phase === 'playing'; i++) {
-    runAiTurn(state, difficulty, getCurrentPlayer(state).id);
+    runAiTurn(state, difficulty, getCurrentPlayer(state).id, DEFAULT_GENOME);
     endTurn(state);
   }
 }
@@ -30,32 +33,30 @@ function playTurns(difficulty: 'hard' | 'expert', turns: number): void {
 console.log('\n=== telemetry starts empty and resetSearchTelemetry clears it ===');
 {
   resetSearchTelemetry();
-  const before = getSearchTelemetry('expert');
+  const before = getSearchTelemetry('hard');
   check('calls=0 before any search has run', before.calls === 0);
-  playTurns('expert', 60);
-  const afterPlay = getSearchTelemetry('expert');
+  playTurns('hard', 60);
+  const afterPlay = getSearchTelemetry('hard');
   check('calls > 0 after real play', afterPlay.calls > 0, `calls=${afterPlay.calls}`);
   resetSearchTelemetry();
-  const afterReset = getSearchTelemetry('expert');
+  const afterReset = getSearchTelemetry('hard');
   check('reset brings calls back to 0', afterReset.calls === 0);
 }
 
-console.log('\n=== aggregates look sane after a real Hard/Expert run ===');
+console.log('\n=== aggregates look sane after a real Hard run ===');
 {
   resetSearchTelemetry();
-  playTurns('hard', 60);
-  playTurns('expert', 60);
+  playTurns('hard', 120);
   const hard = getSearchTelemetry('hard');
-  const expert = getSearchTelemetry('expert');
+  const budget = SEARCH_CONFIG.hard.timeBudgetMs;
   check('hard recorded at least one real search call', hard.calls > 0, `calls=${hard.calls}`);
-  check('expert recorded at least one real search call', expert.calls > 0, `calls=${expert.calls}`);
   check('hard: avgNodesVisited is positive', hard.avgNodesVisited > 0, `avg=${hard.avgNodesVisited}`);
-  check('expert: avgDepthReached is at least 2 (one full iterative-deepening pass)', expert.avgDepthReached >= 2, `avg=${expert.avgDepthReached}`);
-  check('hard: avgElapsedMs is well under its own per-call time budget (400ms)', hard.avgElapsedMs < 400, `avg=${hard.avgElapsedMs}`);
-  check('expert: maxElapsedMs never exceeds its own per-call time budget by an unreasonable margin',
-    expert.maxElapsedMs < 1200 + 700, `max=${expert.maxElapsedMs}`);
-  check('timeoutRate is a fraction between 0 and 1 for both', hard.timeoutRate >= 0 && hard.timeoutRate <= 1 && expert.timeoutRate >= 0 && expert.timeoutRate <= 1);
-  // Easy/Normal never search — telemetry for them should stay untouched.
+  check('hard: avgDepthReached is at least 2 (one full iterative-deepening pass)', hard.avgDepthReached >= 2, `avg=${hard.avgDepthReached}`);
+  check(`hard: avgElapsedMs is well under its own per-call time budget (${budget}ms)`, hard.avgElapsedMs < budget, `avg=${hard.avgElapsedMs}`);
+  check('hard: maxElapsedMs never exceeds its own per-call time budget by an unreasonable margin',
+    hard.maxElapsedMs < budget + 700, `max=${hard.maxElapsedMs}`);
+  check('timeoutRate is a fraction between 0 and 1', hard.timeoutRate >= 0 && hard.timeoutRate <= 1);
+  // Easy/Medium never search — telemetry for them should stay untouched.
   const easy = getSearchTelemetry('easy');
   check('easy has zero calls (search is disabled for it)', easy.calls === 0);
 }
@@ -65,15 +66,15 @@ console.log('\n=== the observer hook fires once per real search call, with a san
   resetSearchTelemetry();
   const events: SearchTelemetryEvent[] = [];
   setSearchObserver(e => events.push(e));
-  playTurns('expert', 60);
+  playTurns('hard', 60);
   setSearchObserver(null);
-  const summary = getSearchTelemetry('expert');
+  const summary = getSearchTelemetry('hard');
   check('observer fired at least once', events.length > 0, `events=${events.length}`);
   check('observer call count matches the aggregate call count', events.length === summary.calls,
     `events=${events.length} summary.calls=${summary.calls}`);
   check('every event has a sane shape', events.every(e =>
     (e.kind === 'searchBestAction' || e.kind === 'searchBestActivation')
-    && e.difficulty === 'expert' && e.nodesVisited >= 0 && e.depthReached >= 0 && e.elapsedMs >= 0));
+    && e.difficulty === 'hard' && e.nodesVisited >= 0 && e.depthReached >= 0 && e.elapsedMs >= 0));
 }
 
 console.log('\n=== setSearchObserver(null) actually detaches — no further calls after that ===');
